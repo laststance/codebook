@@ -5908,7 +5908,8 @@ function isPendingStale(
  * Writes the receipt for an entry an interrupted run published; called by {@link settlePending}.
  * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), and while the rollback journal's name still shows what settlement left there (`assertLeft`), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say), or a rollback record of that setup it puts back, never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
  * The record then ends only while that look still holds too, and once it ended, `pending.json` is read again through the thread pool and looked at once more synchronously ({@link adoptedRecordCheck}): it must show what the record's end left there (nothing, or what stays of it), so a record a backup or sync tool puts there while the adopted one stands at its dropping name ({@link deleteThroughDroppingName}) is never left beside this receipt. When a record it rests on changed by then (it came back or changed after the receipt's rename): a rollback record at its name, or another file, nothing or a name that cannot be read again at `pending.json` (a same-generation record with the take-back mark, say), anywhere in the cause chain of what the record's end or that last look threw ({@link hasRecordConflictCause}), the record that stands stays and the receipt this call published goes back out ({@link withdrawAdoptedReceipt}), so the next run settles those records first and takes the setup back when they say so.
- * Limit: a record put at `pending.json` after that last look, or after the run, is decided without this run, like one restored after the run.
+ * The record ends only while `receipt.json` still shows the receipt this call published, too: once the receipt's write (and its cleanup of the staged name) returned, that name is read again through the thread pool, and its synchronous look joins the record's last looks ({@link adoptedReceiptCheck}), so a receipt another program moved away, replaced or made unreadable meanwhile keeps the record, and the next run decides that setup again; nothing goes back out then, since that receipt is no longer this call's file.
+ * Limit: a record put at `pending.json` after that last look, or after the run, is decided without this run, like one restored after the run; so is a receipt moved away after the record's last look.
  * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
@@ -5916,7 +5917,7 @@ function isPendingStale(
  * @param retained - What stays of the record after recovery; undefined when nothing stays.
  * @param assertLeft - The synchronous look at the other names the adoption rests on (the old record's private name, the rollback journal's name: {@link retiredNameCheck}, {@link journalLeftCheck}), run right before the receipt's rename after the publish record's own look, and right before the record's rename or unlink; undefined when nothing else must hold.
  * @returns The receipt that was written.
- * @throws A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when such a conflict stops the record's end or the look after it (`changed` for a file at `pending.json` after its delete). The {@link receiptConflictError} when `receipt.json` no longer shows the record this run read there ({@link writeReceipt}): that file stays and no receipt is written. What the receipt's write and {@link retirePending} throw otherwise.
+ * @throws The {@link adoptedReceiptConflictError} when `receipt.json` no longer shows the receipt this call published before the record ends; the record stays. A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when such a conflict stops the record's end or the look after it (`changed` for a file at `pending.json` after its delete). The {@link receiptConflictError} when `receipt.json` no longer shows the record this run read there ({@link writeReceipt}): that file stays and no receipt is written. What the receipt's write and {@link retirePending} throw otherwise.
  * @example
  * await adoptPending(run, pending, pending.entrySha256, look.identity, undefined, await journalLeftCheck(run, undefined)) // => the adopted receipt; it rejects, leaving no receipt and both records, once a backup put the rollback record of that setup back
  */
@@ -5952,7 +5953,13 @@ async function adoptPending(
     bothLooks(await adoptedRecordCheck(context), assertLeft),
   )
   try {
-    await retirePending(context, retained, assertLeft)
+    // The receipt must still stand as its write published it once that write's awaited cleanup of its staged name ended, also right before the record ends: a receipt another program moved away or replaced meanwhile never lets the only record of this setup go.
+    const assertReceiptLeft = await adoptedReceiptCheck(context)
+    await retirePending(
+      context,
+      retained,
+      bothLooks(assertLeft, assertReceiptLeft),
+    )
     // The record's own name must still show what its retirement left there (nothing, or what stays of it): a record a backup put there while the adopted one stood at its dropping name, one that marks the same setup's take-back, say, never stays beside this receipt.
     const assertRecordLeft = await adoptedRecordCheck(context)
     assertRecordLeft.assert()
@@ -5981,6 +5988,100 @@ function withKeptAdoptedReceipt(context: Context, error: unknown): unknown {
   if (!(error instanceof Error)) return error
   error.message = `${error.message} Codebook also could not delete its record of the "${SERVER_NAME}" entry at ${context.receiptPath}, which it had just written for that setup, so that file stays there; the next run still takes that setup back when a record of that setup asks for it.`
   return error
+}
+
+/** What the read of `receipt.json` after an adoption's receipt write found ({@link adoptedReceiptCheck}): the file there (none for an empty name), or the failure of that read. */
+type AdoptedReceiptRead =
+  { standing: InspectedCopy | undefined } | { cause: unknown }
+
+/**
+ * Reads `receipt.json` through the thread pool once an adoption's receipt write returned, and gives the synchronous look that must still find there the version that write published ({@link Context.receiptVersion}) right before the adopted record ends; called only by {@link adoptPending}, which joins it after the other looks its record's end rests on ({@link retirePending}), so a receipt another program moved away, replaced or made unreadable during that write's awaited cleanup of its staged name ({@link dropStagedRecord}), or after it, never lets the only record of that setup go.
+ * The read decides nothing by itself: its verdict comes at the synchronous look ({@link adoptedReceiptVerdict}), after the looks at the records the adoption rests on, so a rollback record or setup record that changed meanwhile is what the run says first, and the adoption then takes back out a receipt that may still be its own ({@link withdrawAdoptedReceipt}).
+ * Limit: a receipt moved away or replaced after the record's last look before its rename or unlink, or after the run, is decided without this run, like one moved after the run.
+ * @param context - The run; its receipt version is the one the adoption's write published.
+ * @returns The look at `receipt.json` ({@link StillLook}); right before the record's rename or unlink it throws the {@link adoptedReceiptConflictError} of the kind {@link adoptedReceiptVerdict} tells when that name does not show the receipt the write published. Nothing is written or deleted then.
+ * @example
+ * await retirePending(run, retained, bothLooks(assertLeft, await adoptedReceiptCheck(run))) // throws, keeping pending.json, once a sync tool moved receipt.json away after the adoption published it
+ */
+async function adoptedReceiptCheck(context: Context): Promise<StillLook> {
+  const path = context.receiptPath
+  const written = context.receiptVersion.current
+  const read: AdoptedReceiptRead = await inspectCopy(path).then(
+    (standing) => ({ standing }),
+    (cause: unknown) => ({ cause }),
+  )
+  return {
+    names: [path],
+    assert: (): void => {
+      const kind = adoptedReceiptVerdict(path, written, read)
+      if (kind === undefined) return
+      throw adoptedReceiptConflictError(
+        context,
+        kind,
+        'cause' in read ? read.cause : undefined,
+      )
+    },
+  }
+}
+
+/**
+ * Tells, from the read after an adoption's receipt write and one synchronous look right after it, whether `receipt.json` still shows the receipt that write published; called only by the look {@link adoptedReceiptCheck} gives.
+ * @param path - `receipt.json`.
+ * @param written - The version the write published ({@link Context.receiptVersion}).
+ * @param read - What the read through the thread pool found ({@link AdoptedReceiptRead}).
+ * @returns
+ * - undefined while the read found that inode and those bytes and the name still shows that file (its inode, size and times: {@link isStagedNameStill})
+ * - `gone` when the read found the name empty, or the look finds it empty now
+ * - `changed` when either found another file or other bytes, or the read found something that is no record at all ({@link isOtherFileCause})
+ * - `unread` when the read failed otherwise
+ * @example
+ * adoptedReceiptVerdict(receiptPath, written, { standing: undefined }) // => 'gone'
+ */
+function adoptedReceiptVerdict(
+  path: string,
+  written: RecordVersion | undefined,
+  read: AdoptedReceiptRead,
+): JournalConflictError['kind'] | undefined {
+  if ('cause' in read)
+    return isOtherFileCause(read.cause) ? 'changed' : 'unread'
+  const { standing } = read
+  if (!standing) return 'gone'
+  // Only the very file and bytes the write published let the record end.
+  if (standing.ino !== written?.ino || standing.sha256 !== written.sha256)
+    return 'changed'
+  if (isStagedNameStill(path, standing)) return undefined
+  return isNameEmptyNow(path) ? 'gone' : 'changed'
+}
+
+/**
+ * Builds the refusal of an adoption whose receipt no longer stands at `receipt.json` as its write published it ({@link adoptedReceiptCheck}): the record of that setup stays, and so does what stands at `receipt.json`, and the next run decides that setup again (it adopts it again while the config still holds that entry); a {@link ReceiptConflictError}, so it names its own file and way out and never takes the adoption's receipt back out ({@link hasRecordConflictCause}).
+ * @param context - The run; its paths and retry are named.
+ * @param kind - `gone` for an empty name, `changed` for another file or other bytes, `unread` for a read that failed.
+ * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw adoptedReceiptConflictError(run, 'gone') // 'Codebook wrote its record of the "codebook" entry in Devin Desktop's MCP config at … to …/receipt.json while it adopted a setup that ended early, and then found nothing there …'
+ */
+function adoptedReceiptConflictError(
+  { path, receiptPath, pendingPath, retry }: Context,
+  kind: JournalConflictError['kind'],
+  cause?: unknown,
+): ReceiptConflictError {
+  const found = {
+    gone: 'found nothing there (a backup or sync tool may have moved that record away)',
+    changed:
+      'found another file or other bytes there (a backup or sync tool may have put another one there)',
+    unread: 'could not read that name again',
+  }[kind]
+  // A name that could not be read asks for a readable file, one another program changed for that program to finish.
+  const wayOut =
+    kind === 'unread'
+      ? 'make that file readable by you if it is not'
+      : 'wait until that tool is done'
+  return new ReceiptConflictError(
+    `Codebook wrote its record of the "${SERVER_NAME}" entry in Devin Desktop's MCP config at ${path} to ${receiptPath} while it adopted a setup that ended early, and then ${found}, so it kept its record of that setup at ${pendingPath}, left ${receiptPath} as it is and went no further; ${wayOut}, ${retry}, and that run decides that setup again.`,
+    cause === undefined ? undefined : { cause },
+  )
 }
 
 /**

@@ -11185,6 +11185,67 @@ test("A receipt that a refresh adopting an older build's interrupted setup canno
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A receipt a sync tool moves away right after a refresh published it to adopt an interrupted setup keeps that setup record, so the next refresh adopts the setup again instead of leaving its entry without a record', async (context) => {
+  // Value: protects=a refresh that adopts an interrupted setup ends that setup's record only while receipt.json still shows the receipt its write published, after that write's cleanup of its staged name, so a receipt a sync tool moves away meanwhile keeps the record, the refresh says so, and the next refresh adopts the setup again (Cycle 0149 task 48); fails_when=the first refresh resolves or says anything but the adopted-receipt sentence for an empty name, the setup record changes or is gone after it, a receipt stands after it, or the second refresh answers anything but current or leaves the setup record or no receipt of that setup; no_claim=a real sync tool (the config module is loaded with a link that, once, right after the adoption's link claimed the empty receipt.json resolved, moves receipt.json away), a move after the retirement's last look at receipt.json (decided as one after the run), what the sync tool does with the moved file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  await mkdir(folder, { recursive: true })
+  // The record of an update whose run stopped right after its config was published: it names the installation id its receipt was to carry.
+  const updateRecordText = JSON.stringify({
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000004801',
+    installationId: 'c0ffee00-0000-4000-8000-000000004802',
+    stagedIno: (await stat(configPath)).ino,
+  })
+  await writeFile(pendingPath, updateRecordText)
+  const movedReceiptPath = join(home, 'receipt-moved-by-sync.json')
+  let hasMoved = false
+  const moving = await loadWithAfterRename((_from, to) => {
+    if (to !== receiptPath || hasMoved) return
+    hasMoved = true
+    // A sync tool moves the receipt away right after the adoption published it, while that write cleans up its staged name.
+    renameSync(receiptPath, movedReceiptPath)
+  })
+
+  // Act
+  const firstOutcome = await moving
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+  const isReceiptAfterFirst = existsSync(receiptPath)
+  // A record the first refresh deleted reads as 'absent', so the assertion below names it.
+  const recordAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMoved, true)
+  assert.equal(recordAfterFirst, updateRecordText)
+  assert.equal(
+    firstOutcome,
+    `Codebook wrote its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath} to ${receiptPath} while it adopted a setup that ended early, and then found nothing there (a backup or sync tool may have moved that record away), so it kept its record of that setup at ${pendingPath}, left ${receiptPath} as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run decides that setup again.`,
+  )
+  assert.equal(isReceiptAfterFirst, false)
+  assert.equal(second.status, 'current')
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(
+    JSON.parse(readFileSync(receiptPath, 'utf8')).generation,
+    'c0ffee00-0000-4000-8000-000000004801',
+  )
+})
+
 test('A setup leaves a record a backup restores at pending.json after the setup wrote its receipt, instead of deleting it with its own record, and still reports the entry installed', async (context) => {
   // Value: protects=a setup deletes its own record of the change only as the version it last wrote, so a record a backup or sync tool put at pending.json after that write stays for the next run (Cycle 0148 task 33); fails_when=the record put at pending.json is gone or changes, the setup does not answer installed without a cleanup notice, or the config or the receipt is not the setup's; no_claim=a real backup tool (seam.beforeRecordWrite renames another record over pending.json once, right before the receipt's rename, after the setup's completed record was written), a restore between the last look and the unlink (no Node primitive unlinks by inode), what the next run does with that record
   // Arrange
