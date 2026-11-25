@@ -21141,7 +21141,7 @@ test("A later setup whose put-back link puts another program's file at receipt.j
 })
 
 test("A later setup that stops right after its put-back link put another installation's record at receipt.json leaves its publish record's note that receipt.json is unverified, so the bridge never takes that record for the setup", async (context) => {
-  // Value: protects=the publish record notes that receipt.json is unverified, naming the bytes of the old record the put-back links, before the put-back's link (Cycle 0149 task 43), so the folder a run leaves when it stops right after that link (here: the moment the link stood, held there) already keeps the bridge's reader from taking a file swapped in at the private name for the setup's receipt; fails_when=the bridge's reader answers anything but removed as unverified for receipt.json at that moment, pending.json lacks the note naming the old record's bytes then, or receipt.json is not the swapped-in record; no_claim=a real stop of the editor (the run is held right after the link stood and the folder is read then; afterwards it goes on and refuses), a real sync tool (the config module is loaded with a link that, for the put-back's link to receipt.json, first swaps another installation's record in at the private name with the owner-only mode a receipt has, then links), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), and a release that reads receipt.json alone (0.2.142.0 to 0.2.144.0 never read the note: the stated residual)
+  // Value: protects=the publish record notes that receipt.json is unverified, naming the bytes of the old record the put-back links, before the put-back's link (Cycle 0149 task 43), so the folder a run leaves when it stops right after that link (here: the moment the link stood, held there) already keeps the bridge's reader from taking a file swapped in at the private name for the setup's receipt; fails_when=the bridge's reader answers anything but removed as unverified for receipt.json at that moment, pending.json lacks the note naming the old record's bytes then, or receipt.json is not the swapped-in record (a wait or read at the held link that throws fails the test with its own error once the held setup was released and has ended, Cycle 0149 final-range review); no_claim=a real stop of the editor (the run is held right after the link stood and the folder is read then; afterwards it goes on and refuses), a real sync tool (the config module is loaded with a link that, for the put-back's link to receipt.json, first swaps another installation's record in at the private name with the owner-only mode a receipt has, then links), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), and a release that reads receipt.json alone (0.2.142.0 to 0.2.144.0 never read the note: the stated residual)
   // Arrange
   const { home, storage, receiptPath, receiptBefore, retiredPath } =
     await arrangeFailedPutBack(context)
@@ -21185,12 +21185,18 @@ test("A later setup that stops right after its put-back link put another install
       () => undefined,
       (error: unknown) => error,
     )
-  await waitUntil(() => isLinkHeld, 'the put-back link that stood', 10_000)
-  const receiptStateAfterLink = await readReceiptState(receiptPath)
-  const noteAfterLink = (await readRecordFile(storage, 'pending.json'))
-    .retiresReceipt
-  release.resolve()
-  await attempt
+  let receiptStateAfterLink: unknown
+  let noteAfterLink: unknown
+  try {
+    await waitUntil(() => isLinkHeld, 'the put-back link that stood', 10_000)
+    receiptStateAfterLink = await readReceiptState(receiptPath)
+    noteAfterLink = (await readRecordFile(storage, 'pending.json'))
+      .retiresReceipt
+  } finally {
+    // The held link is released and the setup's end awaited whether the wait and the reads answered or threw, so a failed read fails the test with its own error and leaves no setup held while the test's folder goes.
+    release.resolve()
+    await attempt
+  }
 
   // Assert
   assert.equal(readFileSync(receiptPath, 'utf8'), swappedText)
