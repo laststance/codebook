@@ -4330,7 +4330,7 @@ async function unlinkProvenReceiptDelete(
 
 /**
  * Finishes the interrupted delete of Codebook's record of the entry only when deleting the moved receipt cannot orphan the entry it owns; called only by {@link finishProvenStep} for the receipt's dropping name.
- * The moved bytes themselves are parsed as receipt A. The delete is safe exactly when A does not own the config's current `codebook` entry, or when the receipt B standing at `receipt.json` is bound to this config ({@link receiptTargetsConfig}) and owns that same entry; unreadable or unparsable bytes, an unreadable config, a receipt of another config, and a config or standing receipt that changes before the unlink all keep both files and refuse, because they prove neither half of that disjunction.
+ * The moved bytes themselves are parsed as receipt A. The delete is safe exactly when A is bound to this config ({@link receiptTargetsConfig}) and either A does not own the config's current `codebook` entry, or the receipt B standing at `receipt.json` is bound to this config and owns that same entry; unreadable or unparsable bytes, an unreadable config, a moved or standing receipt of another config, and a config or standing receipt that changes before the unlink all keep both files and refuse, because they prove neither half of that disjunction.
  * @param context - The run; its pending path is `receipt.json` here.
  * @param aside - The moved receipt at its dropping name.
  * @throws The {@link unfinishedReceiptDeleteError} when ownership cannot be proven safe; what {@link unlinkProvenReceiptDelete} throws.
@@ -4348,6 +4348,9 @@ async function finishProvenReceiptDelete(
   )
   // Without the moved record's own bytes there is no ownership proof; deleting on the note alone could orphan the entry.
   if (!moved) throw unfinishedReceiptDeleteError(context)
+  // A copied storage folder may hold another config's interrupted delete: only this config's own moved record can be finished here.
+  if (!receiptTargetsConfig(context, moved.receipt))
+    throw unfinishedReceiptDeleteError(context)
   let look: ConfigLook
   try {
     look = await lookAtConfig(context)
@@ -11715,6 +11718,8 @@ type Inspection = {
   pendingVersion?: RecordVersion
   /** Set when the record this run read and left standing is that of a removal of this config that took the entry out and never recorded its completion ({@link isUnrecordedRemoval}): the removal retry ends it and reports the entry removed. Judged on the record this inspection itself processed, never on an earlier separate read, so a record a backup or sync tool put at that name after the run started is the one the retry answers for. */
   unrecordedRemoval?: boolean
+  /** The unrecorded removal's record as this inspection read it, kept so the retry can put its proof back when the removal outcome is refused before the point of no return ({@link removeManagedDevinMcpEntry}). */
+  unrecordedRemovalRecord?: Pending
 }
 
 /**
@@ -11781,15 +11786,17 @@ async function inspect(context: Context): Promise<Inspection> {
     throw mergeWithLeftover(run, cause, phase, reported, isHandedNow)
   })
   if (pending && reported) throw unsettledRefusal(run, phase, reported)
+  // Judged on the record this inspection itself read, only while that record still stands (a record this run retired itself answers for nothing): the removal retry ends exactly the unrecorded removal this inspection left for it, never one an earlier separate read found where a backup or sync tool put another record meanwhile.
+  const isRemovalUnrecorded =
+    pending !== undefined &&
+    run.journalVersion?.current !== undefined &&
+    isUnrecordedRemoval(run, pending)
   // The rest of the run writes and deletes its own record only from the version this run left at that name ({@link ownRecordContext}).
   return {
     ...inspection,
     pendingVersion: run.journalVersion?.current,
-    // Judged on the record this inspection itself read, only while that record still stands (a record this run retired itself answers for nothing): the removal retry ends exactly the unrecorded removal this inspection left for it, never one an earlier separate read found where a backup or sync tool put another record meanwhile.
-    unrecordedRemoval:
-      pending !== undefined &&
-      run.journalVersion?.current !== undefined &&
-      isUnrecordedRemoval(run, pending),
+    unrecordedRemoval: isRemovalUnrecorded,
+    unrecordedRemovalRecord: isRemovalUnrecorded ? pending : undefined,
   }
 }
 
@@ -12498,7 +12505,7 @@ export type DevinMcpRemovalOptions = {
  * @param seam - Test hook, see {@link DevinMcpTestSeam}.
  * @param options - See {@link DevinMcpRemovalOptions}.
  * @returns `removed`, `file-removed`, `not-managed` (no receipt, or the entry is already gone), `changed` or `superseded` (a newer setup's receipt; nothing touched); and the config path. A failure to delete the receipt or a private copy after the config changed is returned as `cleanupFailure`, not thrown.
- * @throws The refusals of {@link writeManagedDevinMcpEntry} for an unreadable config or a file that changed during the removal; they end with the removal command. A retry of an unrecorded removal throws the record's {@link JournalConflictError} before touching the receipt when another program changed, moved away or made that record unreadable.
+ * @throws The refusals of {@link writeManagedDevinMcpEntry} for an unreadable config or a file that changed during the removal; they end with the removal command. A retry of an unrecorded removal throws the record's {@link JournalConflictError} when another program changed, moved away or made that record unreadable; for a retry whose entry is already out, that proof is written back when a refusal before them leaves the removal unconfirmed, so the next run can still answer for it.
  * @example
  * await removeManagedDevinMcpEntry(storageRoot) // => { status: 'removed', path }
  */
@@ -12517,19 +12524,30 @@ export async function removeManagedDevinMcpEntry(
       const inspected = await inspect(context)
       // From here the removal writes and deletes its own record only from the version inspect left there.
       const run = ownRecordContext(context, inspected)
-      // The retry ends the unrecorded removal's record now, only as the version inspect read ({@link inspect} leaves an unrecorded removal's record for this end, and judges it on the record it read itself, so a record a backup or sync tool put at that name after the run started is the one ended here).
-      // A conflict can mean a backup restored the entry too, so this retry stops before touching the receipt.
+      // The retry ends the unrecorded removal's record before it acts on it, only as the version inspect read ({@link inspect} leaves that record for this end, and judges it on the record it read itself, so a record a backup or sync tool put at that name after the run started is the one ended here). A conflict can mean a backup restored the entry too, so this retry stops before touching the receipt.
       if (inspected.unrecordedRemoval)
         await dropPending(run, { onConflict: 'throw' })
       const ownership = removalOwnership(inspected, options.expectedGeneration)
       // Not Codebook's entry to take out (gone, changed, or a newer setup's): answer without touching the config.
-      if ('status' in ownership)
-        return answerRemovalWithoutTakeOut(
-          context,
-          ownership.status,
-          inspected,
-          inspected.unrecordedRemoval === true,
-        )
+      if ('status' in ownership) {
+        try {
+          return await answerRemovalWithoutTakeOut(
+            context,
+            ownership.status,
+            inspected,
+            inspected.unrecordedRemoval === true,
+          )
+        } catch (error) {
+          // A refusal before the removal's point of no return must not lose the only proof that its entry ever went out. The tracked write never replaces a record another program put there meanwhile; when even that proof cannot be written back, the original refusal is the one the learner needs.
+          if (inspected.unrecordedRemovalRecord)
+            await writeRecord(
+              run,
+              run.pendingPath,
+              inspected.unrecordedRemovalRecord,
+            ).catch(() => undefined)
+          throw error
+        }
+      }
       const { status, keptLeft } = await takeEntryOut(run, ownership)
       return dropReceiptAfterRemoval(
         context,
