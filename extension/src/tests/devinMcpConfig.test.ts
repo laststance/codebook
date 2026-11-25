@@ -15966,6 +15966,61 @@ test('Set Up AI Chat puts the previous config back when the config path is empty
   })
 })
 
+test('Set Up AI Chat keeps a substituted displaced copy out of the config when the empty path restore cannot prove it, and keeps the recovery record', async (context) => {
+  // Value: protects=the empty-path put-back links only the moved-aside file the setup compared, never another program's file swapped in at its private name after the comparison, so substituted content neither stands at the config path nor is reported as the restored previous config, and the file and publish record stay for the next run (Cycle 0149 round-6 review MAJOR-2797); fails_when=the substituted bytes stand at the config path, the file at the displaced name is gone or changed, the record is gone or handed/completed, a receipt stands, or the refusal says the previous config was put back; no_claim=a real sync tool (the config module is loaded with a link that deletes the new config once, and its openWithoutFollowing swaps another file in at the displaced name when the post-link read finds the empty path), a swap in the syscall gap after the put-back's last look (its own post-link check), what the next run settles from the record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const substitutedText = '{"mcpServers":{"beta":{"command":"substituted"}}}\n'
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let displacedPath = ''
+  let hasSubstituted = false
+  const { module: emptyAfterLink, emptied } =
+    await loadWithEmptyConfigAfterLink(configPath, () => {
+      if (displacedPath === '' || hasSubstituted) return
+      hasSubstituted = true
+      // The post-link read found the config path empty: a sync tool swaps its own file in at the displaced name before the put-back.
+      swapFile(displacedPath, substitutedText)
+    })
+
+  // Act
+  const error = await emptyAfterLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterMoveAside: (path) => {
+        displacedPath = path
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // Names the first run left empty read as 'absent', so the assertions name them.
+  const configAfter = existsSync(configPath)
+    ? readFileSync(configPath, 'utf8')
+    : 'absent'
+  const copyAfter = existsSync(displacedPath)
+    ? readFileSync(displacedPath, 'utf8')
+    : 'absent'
+  const recordAfter = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+
+  // Assert
+  assert.equal(hasSubstituted, true)
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook did not put your previous config back at ${configPath}, because the private copy at ${displacedPath} was no longer the file it had compared (another program may have replaced or changed it), so Codebook left that file untouched and did not record that change as finished; its record of that change at ${pendingPath} stays, and the next run reads it first; look at that file before you use or delete it, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(emptied.count, 1)
+  assert.equal(configAfter, 'absent')
+  assert.equal(copyAfter, substitutedText)
+  assert.equal(recordAfter.phase, undefined)
+  assert.equal(recordAfter.keptName, basename(displacedPath))
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('Set Up AI Chat does not record a first config when its path is empty right after the link, and the retry installs', async (context) => {
   // Value: protects=a first write whose linked config is moved away before the post-link read is never mistaken for a published config: no receipt or completed record follows, and the next run settles the attempt before installing; fails_when=a receipt or completed record stands after the refusal, the staged config is adopted, or the retry does not install; no_claim=a real sync tool (the config module is loaded with a link that deletes the new config once, right after linking it) or a replacement's moved-aside config (its own tests)
   // Arrange

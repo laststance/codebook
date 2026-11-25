@@ -1252,6 +1252,69 @@ function isPublishedReadStill(context: Context, read: InspectedCopy): boolean {
   }
 }
 
+/**
+ * Reads a displaced copy once through one open file as the byte proof that its name still shows the file the replacement compared; called by {@link restoreDisplaced} before an empty-config put-back links that name.
+ * The compared file is the one whose handle the replacement read ({@link readHeld}), not whatever the displaced name happens to reach after a sync tool's swap: inode and bytes both have to match. The read is also the awaited look at that name that the synchronous look right before the link re-proves.
+ * @param context - The run; its seam is called inside the read.
+ * @param displacedPath - The private name of the displaced copy.
+ * @param held - The copy as the replacement compared it.
+ * @returns The read, whose size and times the last look before the link re-proves, when the name still shows the compared file with the compared bytes; undefined when it shows another file, other bytes, nothing or a file that cannot be read.
+ * @example
+ * await readComparedDisplaced(context, displacedPath, held) // => undefined once a sync tool renamed its own file over the displaced name
+ */
+async function readComparedDisplaced(
+  context: Context,
+  displacedPath: string,
+  held: HeldCopy,
+): Promise<InspectedCopy | undefined> {
+  // A read that failed proves nothing about the file there, exactly as other bytes or another file do: nothing is linked.
+  const read = await inspectCopy(displacedPath, context.seam).catch(
+    () => undefined,
+  )
+  if (
+    read === undefined ||
+    read.ino !== held.ino ||
+    read.sha256 !== held.sha256
+  )
+    return undefined
+  return read
+}
+
+/**
+ * Tells, by one synchronous look, whether a name still shows the file a read of it just found (inode, size and times); called by {@link restoreDisplaced} immediately before the put-back link and again for the config the link made, the same re-proof {@link isPublishedReadStill} gives the published config.
+ * Limit: a swap or a write between this look and the link, or after this look at the linked config, is not seen; no Node primitive links or unlinks by inode.
+ * @param context - The run; its seam is called around the look ({@link nameStateNow}).
+ * @param path - The name to look at.
+ * @param read - The file as it was just read.
+ * @returns `true` when the name still shows that read; `false` when it shows another file, other size or times, nothing, or the look failed, which proves nothing.
+ * @example
+ * isInspectedReadStill(context, displacedPath, compared) // => false once a sync tool put another file at the displaced name after the read
+ */
+function isInspectedReadStill(
+  context: Context,
+  path: string,
+  read: InspectedCopy,
+): boolean {
+  return nameStateNow(context, path, read) === 'still'
+}
+
+/**
+ * The refusal for an empty-config put-back whose displaced name no longer proves the file the replacement compared; called by {@link restoreDisplaced}, which keeps both that file and the publish record and never words this as a restoration.
+ * @param context - The run; gives the config path, the record's path and the command to run again.
+ * @param copyPath - The displaced name that could not be proven.
+ * @returns The error, not thrown yet.
+ * @example
+ * unverifiedRestoreRefusal(context, displacedPath) // => 'Codebook did not put your previous config back at …, because the private copy at … was no longer the file it had compared …'
+ */
+function unverifiedRestoreRefusal(
+  { path, pendingPath, retry }: Context,
+  copyPath: string,
+): Error {
+  return new Error(
+    `Codebook did not put your previous config back at ${path}, because the private copy at ${copyPath} was no longer the file it had compared (another program may have replaced or changed it), so Codebook left that file untouched and did not record that change as finished; its record of that change at ${pendingPath} stays, and the next run reads it first; look at that file before you use or delete it, ${retry}.`,
+  )
+}
+
 /** What {@link discardDisplaced} did with the displaced copy: `deleted` (also when a copy that changed is gone from its private name by the time it would be kept, so nothing stays to name); `kept` (it changed or could not be deleted, so it stays and is reported); `unrecorded` (the completed record could not be written, so nothing was deleted). */
 type DiscardOutcome = 'deleted' | 'kept' | 'unrecorded'
 
@@ -1514,22 +1577,75 @@ function lookAtComparedName(
 
 /**
  * Gives the config name its file back when a write is abandoned before its publish completes (the comparison found another file than the one read, or nothing stood at the config name right after the link): a link never replaces a config that appeared meanwhile, only then does the file get its own permissions back through its handle, and the displaced name is unlinked. A copy that cannot go back stays private.
+ * An empty-config put-back after a successful comparison passes `compared`: the displaced name is then read again, and the name is linked only while the read and a synchronous look immediately before the link still show the compared inode with the compared bytes; the config the link made is read and looked at again before its mode or the displaced name is touched. When either proof fails the file at the displaced name and the recovery record stay, no restoration is reported, and a config name the link itself gave another file goes again only while both names still show that same unverified file.
+ * Limits: those of the synchronous looks ({@link isInspectedReadStill}); a swap in the syscall gap can put another file at the config name for an instant, which the post-link read then refuses.
  * @param context - The run.
  * @param displacedPath - The private name of the displaced file.
  * @param opened - The handle of that file with the mode it had before it was made private; undefined when it could not be opened.
  * @param dropsRecord - Whether the pending record goes once the file is back; `false` while that record still has the rest of an abandoned publish to settle, or names a stale receipt that could not go back ({@link UnrestoredReceiptError}), so the next run settles those first.
- * @throws A {@link leftCopyRefusal} naming the displaced file when it cannot go back (a new config stands there, or the link failed); an {@link extraNameRefusal} when the file is back but its displaced name could not be deleted (the record stays, so the next run deletes that name).
+ * @param compared - The displaced file as the replacement compared it, passed by the empty-config put-back after a successful comparison; undefined for a put-back of a file whose own change or sharing already ended the publish, which is restored as it stands.
+ * @throws A {@link leftCopyRefusal} naming the displaced file when it cannot go back (a new config stands there, or the link failed); an {@link extraNameRefusal} when the file is back but its displaced name could not be deleted (the record stays, so the next run deletes that name); the {@link unverifiedRestoreRefusal} when the displaced name or the linked config no longer proves the compared file, in which case the recovery record stays.
  */
 async function restoreDisplaced(
   context: Context,
   displacedPath: string,
   opened: DisplacedHandle | undefined,
   dropsRecord = true,
+  compared?: HeldCopy,
 ): Promise<void> {
+  if (compared !== undefined) {
+    const comparedRead = await readComparedDisplaced(
+      context,
+      displacedPath,
+      compared,
+    )
+    // Nothing is linked unless the displaced name still is the compared file with the compared bytes right before the link.
+    if (
+      comparedRead === undefined ||
+      !isInspectedReadStill(context, displacedPath, comparedRead)
+    )
+      throw unverifiedRestoreRefusal(context, displacedPath)
+  }
   try {
     await link(displacedPath, context.path)
   } catch (error) {
     throw leftCopyRefusal(context, displacedPath, error)
+  }
+  if (compared !== undefined) {
+    // The link reaches whatever stood at the displaced name in the syscall gap: the config must still be the compared file with its bytes before anything else happens.
+    const linkedRead = await readComparedDisplaced(
+      context,
+      context.path,
+      compared,
+    )
+    if (
+      linkedRead === undefined ||
+      !isInspectedReadStill(context, context.path, linkedRead)
+    ) {
+      // Both names showing one wrong file prove the link this run made: take the config name away again, best effort, so the substituted file does not stand there; anything else stays for the learner and the record.
+      let shownConfig: BigIntStats | undefined
+      let shownDisplaced: BigIntStats | undefined
+      try {
+        shownConfig = lstatSync(context.path, {
+          bigint: true,
+          throwIfNoEntry: false,
+        })
+        shownDisplaced = lstatSync(displacedPath, {
+          bigint: true,
+          throwIfNoEntry: false,
+        })
+      } catch {
+        // A look that fails proves nothing: nothing is unlinked.
+      }
+      if (
+        shownConfig !== undefined &&
+        shownDisplaced !== undefined &&
+        shownConfig.ino === shownDisplaced.ino &&
+        isLeftoverStill(context, context.path, { ino: shownConfig.ino })
+      )
+        await unlink(context.path).catch(() => undefined)
+      throw unverifiedRestoreRefusal(context, displacedPath)
+    }
   }
   // The name is back: the same inode gets the mode it had, never another file; a shared file never had its mode changed.
   if (opened && !opened.isShared)
@@ -2794,7 +2910,7 @@ async function replaceConfig(
       throw unreadAfterLinkRefusal(context, displaced.path)
     // Nothing stands at the config name: the moved-aside original goes back there without replacing anything. The record written before the link stays either way, so the next run settles the staged file and any retired receipt when this put-back cannot finish.
     if (linkedState.state === 'empty') {
-      await restoreDisplaced(context, displaced.path, opened, false)
+      await restoreDisplaced(context, displaced.path, opened, false, held)
       throw emptyAfterLinkRefusal(context)
     }
     // The config is not the file this run wrote (a file swapped in at the staged name right before the link): the moved-aside original, maybe the only copy of the other servers' settings, is handed to the learner, and no receipt follows. The old record's private name stays as the link left it: nothing confirmed this publish.
