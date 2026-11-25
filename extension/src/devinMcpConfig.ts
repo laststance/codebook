@@ -414,12 +414,39 @@ function newConfigRefusal(
   )
 }
 
-/** The refusal, said once, for a leftover of a publish or removal that already finished and that Codebook cannot prove unchanged or cannot delete. */
+/**
+ * Tells whether a folder stands where a refusal is about to name a private file; called by {@link completedLeftRefusal} and {@link bothFilesRefusal} at the refusal's construction, so the sentence is worded for what stands there then: another program or the learner may have put a folder where Codebook's private file stood, and the advice to delete that file, followed recursively on a folder, can destroy the learner's files.
+ * The look is synchronous and runs in the same uninterrupted step as the refusal's construction, as at a record's name ({@link receiptConflictSentence}); a look that fails proves nothing, so the file sentence stays.
+ * @param path - The private name the refusal names.
+ * @returns `true` only when a folder stands there; `false` when nothing or a non-folder stands there or the look throws.
+ * @example
+ * isFolderAt('/h/.config/devin/mcp_config.json.<generation>.tmp') // => true when a folder stands at that name
+ */
+function isFolderAt(path: string): boolean {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The refusal, said once, for a leftover of a publish or removal that already finished and that Codebook cannot prove unchanged or cannot delete. When a folder stands where the leftover's file stood ({@link isFolderAt}), the sentence names a private folder instead and its way out moves that folder to another folder, never delete it, because it may hold files of yours — the way out a folder at a record's name already gets ({@link receiptConflictSentence}): Codebook never wrote a folder there, so the sentence never claims it holds a copy of the config, and deleting it recursively could destroy the learner's files.
+ */
 function completedLeftRefusal(
   { path, retry }: Context,
   copyPath: string,
   cause?: unknown,
 ): Error {
+  // A folder where the leftover's file stood is never Codebook's: it is moved aside intact, never deleted.
+  if (isFolderAt(copyPath))
+    return refusal(
+      `a private folder at ${copyPath} that Codebook left after its last change and could not delete`,
+      path,
+      'move that folder to another folder, never delete it, because it may hold files of yours',
+      retry,
+      cause,
+    )
   return refusal(
     `a private file at ${copyPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers)`,
     path,
@@ -5690,7 +5717,7 @@ function unsettledRefusal(
 
 /**
  * Words a leftover whose own failure text names both files and what stays ({@link namesBothFiles}); called by {@link unsettledRefusal}.
- * That text says what this run did. One sentence follows when what happens to the copy next differs from what it implies: a handover whose record could not be written (a later run may check the copy again), or a leftover of a finished or handed change, which recovery reports once and never puts back, so the learner may delete it.
+ * That text says what this run did. One sentence follows when what happens to the copy next differs from what it implies: a handover whose record could not be written (a later run may check the copy again), or a leftover of a finished or handed change, which recovery reports once and never puts back, so the learner may delete it — unless a folder stands where its file stood ({@link isFolderAt}), which the sentence asks to move to another folder, never delete it, because it may hold files of yours.
  * @param cause - The failure's own error ({@link PutBackCheckError} or {@link ConfigChangedError}).
  * @param copyPath - The private copy it names.
  * @param phase - The phase recovery read the record in ({@link leftoverPhaseOf}).
@@ -5713,10 +5740,14 @@ function bothFilesRefusal(
       `${cause.message} Codebook could not record that it leaves both paths to you, so a later run may check them again and removes ${copyPath} only while the config holds the bytes Codebook kept.`,
       { cause },
     )
-  // A finished or handed change's leftover is reported once and never put back.
+  // A finished or handed change's leftover is reported once and never put back; a folder where its file stood is moved aside intact, never deleted ({@link isFolderAt}).
   if (phase)
     return new Error(
-      `${cause.message} Codebook left ${copyPath} from a change that had already finished, so delete that file when you no longer need it.`,
+      `${cause.message} Codebook left ${copyPath} from a change that had already finished, so ${
+        isFolderAt(copyPath)
+          ? 'move that folder to another folder, never delete it, because it may hold files of yours'
+          : 'delete that file when you no longer need it'
+      }.`,
       { cause },
     )
   return cause

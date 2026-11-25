@@ -4371,6 +4371,67 @@ test('A private copy of a finished change that stays because the config changed 
   assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
 })
 
+test('A folder another program put where a finished change left its private copy, found when the config changed during its cleanup, is named with the advice to move it aside, never to delete it', async (context) => {
+  // Value: protects=a leftover of a finished change whose private name a folder took after Codebook checked the copy there is never named with the advice to delete that file, which followed recursively on a folder can destroy the learner's files: the refusal names a folder and asks to move it to another folder, never delete it, because it may hold files of yours (Cycle 0149 exact-head review minor); fails_when=the refusal advises deleting the path, omits the move-aside advice or the private path, the folder or what it holds is deleted or changed, or the record keeps tracking the copy; no_claim=the order of the sentences, a folder put there before the run's first look at the copy (the copy then never verifies, and the finished change's own sentence names the folder); seam=hand-written completed pending record whose displaced name is a second name of the config, seam.beforeLeftoverCheck saves another file over the config name and puts a folder at the private name right before the private name would be deleted
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, PUT_BACK_BYTES)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  linkSync(configPath, keptPath)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(keptPath),
+    keptIno: statSync(keptPath).ino,
+    keptSha256: sha256(PUT_BACK_BYTES),
+  })
+  const folderContentPath = 'learner-file.txt'
+  const folderContent = 'learner content that must survive\n'
+  let isSaved = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== configPath || isSaved) return
+      isSaved = true
+      swapFile(configPath, '{"editor":"saved"}\n')
+      // Another program puts a folder where the copy stood after Codebook checked it.
+      rmSync(keptPath)
+      mkdirSync(keptPath)
+      writeFileSync(join(keptPath, folderContentPath), folderContent)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(
+      error.message.includes('never copy the private file over the config'),
+      error.message,
+    )
+    assert.ok(
+      error.message.includes(
+        `Codebook left ${keptPath} from a change that had already finished, so move that folder to another folder, never delete it, because it may hold files of yours.`,
+      ),
+      error.message,
+    )
+    assert.ok(
+      !error.message.includes('delete that file when you no longer need it'),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(isSaved, true)
+  assert.equal(readFileSync(configPath, 'utf8'), '{"editor":"saved"}\n')
+  assert.equal(
+    readFileSync(join(keptPath, folderContentPath), 'utf8'),
+    folderContent,
+  )
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
   // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
   // Arrange
@@ -8864,7 +8925,7 @@ test("A setup record a sync tool moves away during a refresh's own read of it be
   assert.equal(pendingReadCount >= 2, true)
   assert.equal(
     firstError instanceof Error ? firstError.message : firstError,
-    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private file at ${stagedPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private folder at ${stagedPath} that Codebook left after its last change and could not delete in Devin Desktop's MCP config at ${configPath} and left that file untouched; move that folder to another folder, never delete it, because it may hold files of yours, then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(journalAfterFirst, journalText)
   assert.equal(isPendingAfterFirst, false)
@@ -8970,7 +9031,7 @@ test('A setup record a sync tool moves away right after a refresh beside a held 
   assert.equal(hasMovedPending, true)
   assert.equal(
     refreshError instanceof Error ? refreshError.message : refreshError,
-    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private file at ${stagedPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private folder at ${stagedPath} that Codebook left after its last change and could not delete in Devin Desktop's MCP config at ${configPath} and left that file untouched; move that folder to another folder, never delete it, because it may hold files of yours, then run Codebook: Set Up AI Chat again.`,
   )
   // A journal the refresh retired reads as 'absent', so the assertion names it.
   assert.equal(
@@ -9033,7 +9094,7 @@ test('A copy of a setup record a sync tool renames over the record a refresh bes
   assert.notEqual(copiedText, '')
   assert.equal(
     firstError instanceof Error ? firstError.message : firstError,
-    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} changed while Codebook was settling it (a backup or sync tool may have put another one there), so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand now (${pendingPath}, ${journalPath}), so the next run decides on them again; wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private file at ${stagedPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} changed while Codebook was settling it (a backup or sync tool may have put another one there), so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand now (${pendingPath}, ${journalPath}), so the next run decides on them again; wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private folder at ${stagedPath} that Codebook left after its last change and could not delete in Devin Desktop's MCP config at ${configPath} and left that file untouched; move that folder to another folder, never delete it, because it may hold files of yours, then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(
     existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
@@ -9328,7 +9389,7 @@ test("A refresh beside a held legacy rollback journal that meets another journal
 
   // Assert
   await assert.rejects(refresh, {
-    message: `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook found a private file at ${stagedPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+    message: `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook found a private folder at ${stagedPath} that Codebook left after its last change and could not delete in Devin Desktop's MCP config at ${configPath} and left that file untouched; move that folder to another folder, never delete it, because it may hold files of yours, then run Codebook: Set Up AI Chat again.`,
   })
   assert.equal(configReadCount >= 2, true)
   assert.equal(
@@ -14412,7 +14473,7 @@ test("A setup record a sync tool moves away at a held run's last look at it befo
   assert.equal(hasMovedPending, true)
   assert.equal(
     refreshError instanceof Error ? refreshError.message : refreshError,
-    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private file at ${stagedPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again. Codebook found a private folder at ${stagedPath} that Codebook left after its last change and could not delete in Devin Desktop's MCP config at ${configPath} and left that file untouched; move that folder to another folder, never delete it, because it may hold files of yours, then run Codebook: Set Up AI Chat again.`,
   )
   // A journal the refresh retired reads as 'absent', so the assertion names it.
   assert.equal(
