@@ -2281,6 +2281,48 @@ test('A removal that cannot write its completed record warns that Codebook still
   })
 })
 
+test('A removal that cannot write its completed record also names the file it wrote for the config without its entry when changes written into that config right before a backup put another config back live only there', async (context) => {
+  // Value: protects=the refusal of a removal whose completed record failed names, besides the moved-aside copy of the previous config, the staged name of the config it wrote without its entry when that name holds changes written into that config in place after the link while another config stands at the config path, so the learner is told where the only copy of those changes is, and that file stays (Cycle 0149 final-range review CRF2, task 52's edited-apart file on the removal's unrecorded route); fails_when=the refusal is not the full-disk refusal with the copy's tracked sentence followed by the edited-apart sentence for that staged name, the staged name is gone or no longer holds the edit, or the config is not the restored file; no_claim=a real Devin Desktop write, a real backup tool and a real ENOSPC (seam.afterPublish writes the edit into the config without the entry in place and then renames an older config over the config path, once, right after the link; seam.beforeRecordWrite fails only the removal's completed record), a record another program changed (the same sentence follows that refusal's ending), what the retry does with that file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const editedText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' } }, theme: 'edited in place' })}\n`
+  const restoredText = '{"mcpServers":{"alpha":{"command":"restored"}}}\n'
+  let copyPath = ''
+  let stagedPath = ''
+
+  // Act
+  const removalOutcome = await removeManagedDevinMcpEntry(storage, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'completed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      if (stagedPath !== '') return
+      copyPath = displacedPath ?? ''
+      stagedPath = stagedConfigPathBeside(configPath)
+      // The config without the entry stands: an edit lands in it in place, and then a backup puts an older config back at the config path.
+      writeFileSync(configPath, editedText)
+      swapFile(configPath, restoredText)
+    },
+  }).then(
+    (result) => JSON.stringify(result),
+    (error: Error) => error.message,
+  )
+  // A name the removal left empty reads as 'absent', so the assertion below names it.
+  const stagedAfterRemoval = existsSync(stagedPath)
+    ? readFileSync(stagedPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.equal(
+    removalOutcome,
+    `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it; make room for that record, then run Codebook: Remove Devin Desktop Setup again. ${editedApartSentence(stagedPath)}`,
+  )
+  assert.equal(stagedAfterRemoval, editedText)
+  assert.equal(readFileSync(configPath, 'utf8'), restoredText)
+})
+
 test('A removal whose record another program replaced with a folder does not promise that Codebook still tracks the moved-aside copy', async (context) => {
   // Value: protects=a removal whose completed record failed says that Codebook still tracks the moved-aside copy only while its record on disk still names that copy, so a record another program replaced never backs a promise that no journal can keep; fails_when=the refusal says that Codebook still tracks the copy, leaves it to the learner at will, or omits its path, or the copy is gone; no_claim=a real program that replaces the record (seam.afterPublish puts a folder where pending.json was once, right after the publish), and what a later run does with that folder
   // Arrange

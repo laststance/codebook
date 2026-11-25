@@ -442,7 +442,7 @@ function replacedCopySentence(path: string): string {
 }
 
 /**
- * Says that the staged name of the config Codebook just published stays because it holds changes written into that config after the link while another file, or none, stands at the config path ({@link KeptFile.isEditedApart}), so it may hold the only copy of those changes; used by {@link keptFileSentence} and {@link alsoKeptSentence}.
+ * Says that the staged name of the config Codebook just published stays because it holds changes written into that config after the link while another file, or none, stands at the config path ({@link KeptFile.isEditedApart}), so it may hold the only copy of those changes; used by {@link keptFileSentence}, {@link alsoKeptSentence} and {@link unrecordedRemovalRefusal}.
  * @param path - The staged name.
  * @returns One sentence that names the path and asks the learner to look at the file before deleting it, moving only the settings they need into the config.
  * @example
@@ -11552,7 +11552,7 @@ export class DevinMcpUnrecordedRemovalError extends Error {}
 
 /**
  * Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses; called by {@link takeEntryOut}.
- * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back as one of this config that names the copy and is not handed over ({@link recordedCopyFateOf} answers `tracked`), and the {@link UNCONFIRMED_CLAUSE} when another program replaced, removed or restored the record. What kept the completed record from being written picks the rest ({@link unrecordedRemovalWording}): a full disk asks for room, another program's change at that record's name names that record and asks for no room.
+ * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back as one of this config that names the copy and is not handed over ({@link recordedCopyFateOf} answers `tracked`), and the {@link UNCONFIRMED_CLAUSE} when another program replaced, removed or restored the record. What kept the completed record from being written picks the rest ({@link unrecordedRemovalWording}): a full disk asks for room, another program's change at that record's name names that record and asks for no room. A staged name kept because it holds changes the config name no longer reaches ({@link KeptFile.isEditedApart}) gets its {@link editedApartSentence} after that ending.
  * @param context - The run; gives the paths and the command to run again.
  * @param keptLeft - The files the publish left.
  * @param recordConflict - What stood at the record's name when another program kept the completed record from being written, or Codebook's own step at its dropping name refused ({@link Published.recordConflict}); undefined for a write that failed (a full disk).
@@ -11575,8 +11575,13 @@ async function unrecordedRemovalRefusal(
       : UNCONFIRMED_CLAUSE
   const copy = previous ? ` and ${keptCopyPhrase(previous.path)}, ${fate}` : ''
   const { because, ending } = unrecordedRemovalWording(context, recordConflict)
+  // The staged name of the config without the entry that holds changes no config name reaches any more may hold the only copy of them: it is named after the way out.
+  const editedApart = keptLeft
+    .filter(({ isEditedApart }) => isEditedApart === true)
+    .map((kept) => ` ${editedApartSentence(kept.path)}`)
+    .join('')
   return new DevinMcpUnrecordedRemovalError(
-    `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step${because}, so it kept its receipt${copy}${ending}`,
+    `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step${because}, so it kept its receipt${copy}${ending}${editedApart}`,
   )
 }
 
