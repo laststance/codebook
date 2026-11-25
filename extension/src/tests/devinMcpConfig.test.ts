@@ -20991,6 +20991,54 @@ test('An update never writes its record of the entry over a record a backup rest
   })
 })
 
+test('An update whose receipt path is replaced by a folder after the update read the receipt says to move that folder aside with its contents', async (context) => {
+  // Value: protects=a folder another program puts at receipt.json after an update read its record is never called a file or overwritten: the known-record refusal says to move that folder to another folder without deleting what it holds and says how a record inside it or a backup goes back (Cycle 0149 exact-head CodeRabbit minor); fails_when=the refusal is the file/sync-tool sentence, the folder or its content is deleted or changed, or the known-record clause is lost; no_claim=a real sync tool (seam.beforeRecordWrite replaces the receipt with a folder once), and the retry after that move (the first-setup folder regression follows it to installed)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const folderContentPath = join(receiptPath, 'learner-file.txt')
+  const folderContent = 'learner content that must survive\n'
+  const asidePath = join(storage, 'devin-mcp', 'receipt-folder-aside')
+  let hasReplaced = false
+
+  // Act
+  const updateError = await writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      beforeRecordWrite: ({ path }) => {
+        if (path !== receiptPath || hasReplaced) return
+        hasReplaced = true
+        rmSync(receiptPath)
+        mkdirSync(receiptPath)
+        writeFileSync(folderContentPath, folderContent)
+      },
+    },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    updateError instanceof Error ? updateError.message : updateError,
+    `Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first.`,
+  )
+  assert.equal(readFileSync(folderContentPath, 'utf8'), folderContent)
+
+  // Act: follow the guidance by moving the folder aside, not by deleting it.
+  renameSync(receiptPath, asidePath)
+
+  // Assert
+  assert.equal(
+    readFileSync(join(asidePath, 'learner-file.txt'), 'utf8'),
+    folderContent,
+  )
+})
+
 test('A refresh that records an entry an interrupted update published never writes that record over a record a backup restored at receipt.json after the refresh read it, says so, and the next refresh records it', async (context) => {
   // Value: protects=the adoption of an entry an interrupted update published replaces receipt.json only while that name still shows the record the run read there, so a record a backup put back at another inode stays, the refresh says so, and the next refresh adopts that entry (Cycle 0149 task 12, D5's adoption writer); fails_when=the refresh resolves or says anything but the changed-record sentence of receipt.json, receipt.json changes, or the next refresh answers anything but current with a receipt of the update's generation; no_claim=a real backup tool (seam.beforeRecordWrite puts a copy of the record the refresh read back at receipt.json, at another inode, once, right before the adoption writes its own), a real full disk (seam.beforeRecordWrite fails the update's receipt write with ENOSPC, which leaves its completed record), a file put there between the last look and the rename
   // Arrange
