@@ -21602,7 +21602,11 @@ test('A removal that found no record of the entry never deletes one a backup res
 
   // Assert
   assert.equal(hasRestored, true)
-  assert.deepEqual(result, { status: 'not-managed', path: configPath })
+  assert.deepEqual(result, {
+    status: 'not-managed',
+    path: configPath,
+    cleanupFailure: `Codebook left the file at ${receiptPath} as it is, because it appeared where no record stood when Codebook read that name (a backup or sync tool may have put a record back there); the next run reads it again.`,
+  })
   assert.equal(
     existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : 'absent',
     restoredReceiptText,
@@ -21888,6 +21892,96 @@ test('A removal never deletes a record a backup renames over receipt.json right 
   })
   assert.deepEqual(next, { status: 'not-managed', path: configPath })
   assert.deepEqual(await recordsIn(storage), [])
+})
+
+test('A removal whose config a backup puts back with the entry right after the reduced config was confirmed keeps its record and refuses, and the next removal takes the entry out', async (context) => {
+  // Value: protects=a removal deletes Codebook's record of the entry only while the entry it just took out is still out of the config when the delete is decided, so a backup that restores the config with the entry after the removal's publish never leaves that entry without the record that owns it, the removal refuses instead of reporting a success that did not last, and the next removal takes the entry out (Cycle 0149 task 73); fails_when=the removal resolves or refuses with another sentence, receipt.json is gone or changed after it, the config does not hold the entry again, or the next removal answers anything but removed; no_claim=a real backup tool (seam.afterPublish writes the config with its entry back in place once, right after the reduced config is confirmed), a restore in the instant after the last synchronous look before the record's unlink, which no Node primitive can close
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const configWithEntry = readFileSync(configPath, 'utf8')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let hasRestored = false
+
+  // Act
+  const removalOutcome = await removeManagedDevinMcpEntry(storage, home, {
+    afterPublish: () => {
+      if (hasRestored) return
+      hasRestored = true
+      // A backup puts the config with the entry back right after the reduced config was confirmed.
+      swapFile(configPath, configWithEntry)
+    },
+  }).then(
+    (result) => `resolved: ${result.status}`,
+    (error: Error) => error.message,
+  )
+  // The refused removal leaves every file as the backup's restore made it, told before the next removal takes the entry out (which rewrites the config and deletes the record).
+  const configAfterFirst = readFileSync(configPath, 'utf8')
+  const receiptAfterFirst = readFileSync(receiptPath, 'utf8')
+  const next = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    removalOutcome,
+    `Codebook took the "codebook" entry out of Devin Desktop's MCP config at ${configPath}, but before it could delete its own record of that entry, that config changed again (a backup or sync tool may have put an earlier config, with the entry, back), so it could not confirm the entry stayed out, left that record and that config as they are and went no further; then run Codebook: Remove Devin Desktop Setup again.`,
+  )
+  assert.equal(configAfterFirst, configWithEntry)
+  assert.equal(receiptAfterFirst, receiptText)
+  assert.equal(next.status, 'removed')
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A removal of an edited entry whose record cannot be deleted says so beside its changed answer', async (context) => {
+  // Value: protects=a removal that leaves an edited entry in place still names Codebook's record of that entry when that record could not be deleted, instead of dropping the failure it computed (Cycle 0149 task 73's review, cleanupFailure minor); fails_when=the removal answers anything but changed with the could-not-delete sentence, or the entry loses the learner's key; no_claim=a real storage failure (the config module is loaded with a link that refuses the record's move to its private name with EIO)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  await addKeyToEntry(configPath, 'timeout', 30)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const failingDrop = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // The link that would give the record its private name fails, so nothing of it ever moves.
+          if (to === droppingPath)
+            throw Object.assign(new Error('input/output error'), {
+              code: 'EIO',
+            })
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  // The loaded module's result comes from another realm; its own fields are compared.
+  const result = {
+    ...(await failingDrop.removeManagedDevinMcpEntry(storage, home)),
+  }
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 'changed',
+    path: configPath,
+    cleanupFailure: `Codebook could not delete its own record of that entry at ${receiptPath}; delete that record by hand.`,
+  })
+  assert.deepEqual(
+    JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.codebook,
+    { ...ENTRY, timeout: 30 },
+  )
 })
 
 test('An update never writes its record of the entry over a record a backup renames over receipt.json right after the update last looked at it, says so, and the next setup records the updated entry', async (context) => {

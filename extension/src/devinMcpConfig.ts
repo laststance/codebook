@@ -4829,6 +4829,7 @@ function receiptConflictSentence(
  * The name is read through the thread pool ({@link receiptNameState}), the version it shows is noted beside it ({@link withDroppingNote}), and the name is then looked at once more synchronously, after an awaited look at it and at its dropping name ({@link lookAheadAt}); the record is never unlinked at its own name: it moves to its dropping name first and is deleted there only once it proves to be that version ({@link deleteThroughDroppingName}), so a record a backup or sync tool renames over `receipt.json` after the last look moves instead, goes back to that name and stays, and a stop in that moment leaves it at the dropping name, where the next run puts it back first while that note names it ({@link settleDroppedRecords}).
  * Limits: those of {@link deleteThroughDroppingName} (a file put at the dropping name between its synchronous look and the move is replaced, and a swap there between its last look and the unlink is not seen: a name only Codebook uses).
  * @param context - The run.
+ * @param assertStill - What else must still hold, looked at right before the move, after an awaited look at its names, and again after the move and before the unlink ({@link deleteThroughDroppingName}).
  * @returns
  * - `gone` when nothing of the receipt stands there any more: this call deleted it, or nothing stood there (also when the run read no receipt, and when another program emptied the name right before the move)
  * - `kept` when the name shows another file or other bytes, any file while the run read none, or cannot be read again, also when that is what the move took, which went back to `receipt.json`; and while the run's read found a record of another config's entry there ({@link Context.receiptVersion}'s `otherConfigPath`): what stands there stays
@@ -4836,7 +4837,10 @@ function receiptConflictSentence(
  * @example
  * await dropReceipt(context) // => 'kept' once a backup put a record back at receipt.json after the removal read it
  */
-async function dropReceipt(context: Context): Promise<'gone' | 'kept'> {
+async function dropReceipt(
+  context: Context,
+  assertStill?: StillLook,
+): Promise<'gone' | 'kept'> {
   // A record of another config's entry is never Codebook's to delete for this config.
   if (context.receiptVersion.otherConfigPath !== undefined) return 'kept'
   const path = context.receiptPath
@@ -4853,15 +4857,20 @@ async function dropReceipt(context: Context): Promise<'gone' | 'kept'> {
     receiptTrackedContextOf(context),
     { moved: standing },
     async () => {
-      // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the receipt's name, then the dropping name the move looks at.
-      await lookAheadAt([path, receiptDroppingPathOf(context)])
+      // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the receipt's name, the caller's names, then the dropping name the move looks at.
+      await lookAheadAt([
+        path,
+        ...(assertStill?.names ?? []),
+        receiptDroppingPathOf(context),
+      ])
       if (!isStagedNameStill(path, standing)) return 'kept'
+      assertStill?.assert()
       try {
-        // Moved aside first and deleted there only as the version the run read; a name another program emptied first is gone, as the delete wanted.
+        // Moved aside first and deleted there only as the version the run read, with the caller's look still holding after the move and before the unlink; a name another program emptied first is gone, as the delete wanted.
         await deleteThroughDroppingName(
           receiptTrackedContextOf(context),
           standing,
-          undefined,
+          assertStill,
         )
       } catch (error) {
         // What moved was not that version (it went back to receipt.json), or that name could not be read: what stands there stays.
@@ -12004,28 +12013,91 @@ async function unrecordedRemovalWording(
   }
 }
 
+/** Thrown when the config a removal just took its entry out of holds that entry again, or changed so that this cannot be confirmed, before the entry's record is deleted: the record stays and the removal refuses, because deleting the record would leave the entry without the one file that proves it Codebook's. */
+class RemovalEntryBackError extends Error {}
+
+/**
+ * Words a {@link RemovalEntryBackError} for the config a backup or sync tool put back while a removal finished; thrown by {@link removalConfigStill}.
+ * @param context - The run; its config path and retry are named.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw removalEntryBackError(context) // 'Codebook took the "codebook" entry out of Devin Desktop's MCP config at …, but before it could delete its own record of that entry, that config changed again …'
+ */
+function removalEntryBackError({
+  path,
+  retry,
+}: Context): RemovalEntryBackError {
+  return new RemovalEntryBackError(
+    `Codebook took the "${SERVER_NAME}" entry out of Devin Desktop's MCP config at ${path}, but before it could delete its own record of that entry, that config changed again (a backup or sync tool may have put an earlier config, with the entry, back), so it could not confirm the entry stayed out, left that record and that config as they are and went no further; ${retry}.`,
+  )
+}
+
+/**
+ * Confirms that the entry a removal just took out is still out of the config, and gives the synchronous look the record's delete passes right before its move and again before its unlink; called by {@link dropReceiptAfterRemoval} before the receipt is dropped.
+ * The config is read again through the thread pool: while it holds the entry the receipt owns, the removal's end state is already undone (a backup or sync tool put an earlier config back), so the record stays and the removal refuses instead of reporting a removal that did not last; the look at the config is then bound and rechecked synchronously, so a restore in the wide window between the take-out's publish and the record's unlink is never answered with a deleted record and an unmanaged entry.
+ * @param context - The run.
+ * @param receipt - The receipt that owns the entry the removal took out ({@link removalOwnership}).
+ * @returns The look at the config ({@link StillLook}).
+ * @throws The {@link RemovalEntryBackError} when the config already holds the entry the receipt owns again, or cannot be read; the returned look throws it too once the config changes before the record's unlink.
+ * @example
+ * await removalConfigStill(context, receipt) // => { names: [configPath], assert }
+ */
+async function removalConfigStill(
+  context: Context,
+  receipt: Receipt,
+): Promise<StillLook> {
+  let look: ConfigLook
+  try {
+    look = await lookAtConfig(context)
+  } catch {
+    // A config that cannot be read again proves nothing: the removal counts as undone.
+    throw removalEntryBackError(context)
+  }
+  // The entry the receipt owns is back: the removal's end state is undone, and the record is the only proof that entry is Codebook's.
+  if (
+    look.kind === 'present' &&
+    ownsEntry(look.servers?.[SERVER_NAME], receipt)
+  )
+    throw removalEntryBackError(context)
+  const bound = look.kind === 'present' ? look.identity : 'absent'
+  return {
+    names: [context.path],
+    assert: (): void => {
+      // A look that fails proves nothing: the config counts as changed.
+      if (!isConfigStill(context, bound)) throw removalEntryBackError(context)
+    },
+  }
+}
+
 /**
  * Drops the receipt of an entry the removal has taken out; called by {@link removeManagedDevinMcpEntry}. The config has already changed, so a receipt or a private copy that cannot be deleted is reported beside the result instead of thrown.
  * The receipt goes only while `receipt.json` still shows the record the removal's own read found there ({@link dropReceipt}), the read its take-out rests on, so a record a backup or sync tool put back there meanwhile stays and the notice says so; when Codebook's own step at that record's dropping name refuses, the notice gives that refusal's sentence, which names both names.
  * @param context - The run; gives the receipt's path, the config path and the version the run read.
+ * @param receipt - The receipt that owns the entry the removal took out.
  * @param status - How the removal changed the config.
  * @param keptLeft - The private files that could not be deleted, if any.
  * @returns The removal's result, with `cleanupFailure` when something stays.
+ * @throws The {@link RemovalEntryBackError} when the entry is back in the config, or the config changed again, before the record's delete: the record stays and nothing is reported.
  * @example
- * await dropReceiptAfterRemoval(context, 'removed', []) // => { status: 'removed', path }
+ * await dropReceiptAfterRemoval(context, receipt, 'removed', []) // => { status: 'removed', path }
  */
 async function dropReceiptAfterRemoval(
   context: Context,
+  receipt: Receipt,
   status: 'file-removed' | 'removed',
   keptLeft: KeptFile[],
 ): Promise<DevinMcpRemovalResult> {
   const { path, receiptPath } = context
   const failures = [cleanupFailureOf(keptLeft)]
   try {
+    // The receipt goes only while the entry the removal took out is still out of the config: a backup or sync tool that put an earlier config back meanwhile undoes the removal, and the record is the only proof the entry is Codebook's, so the removal refuses instead of reporting a success that did not last.
+    const configStill = await removalConfigStill(context, receipt)
     // Another file there, other bytes, or a name that cannot be read again: what stands there stays, and the notice says so.
-    if ((await dropReceipt(context)) === 'kept')
+    if ((await dropReceipt(context, configStill)) === 'kept')
       failures.push(keptReceiptSentence(context))
   } catch (error) {
+    // The entry is back or the config changed again: the removal did not last, so it refuses rather than reporting a removal beside a managed entry.
+    if (error instanceof RemovalEntryBackError) throw error
     // Codebook's own step at the record's dropping name names both names and its way out in its own sentence.
     failures.push(
       error instanceof JournalConflictError
@@ -12073,6 +12145,8 @@ export type DevinMcpRemovalResult =
       path: string
       /** Set with `not-managed` when no receipt is left but the config still holds a `codebook` entry (an orphan), as opposed to no entry at all. */
       entryStays?: true
+      /** Plain sentences (no raw error text) when the receipt of an entry that is gone or changed could not be deleted; each names the file. Never with `superseded`: a newer setup's receipt is never dropped. */
+      cleanupFailure?: string
     }
 
 /** Options of {@link removeManagedDevinMcpEntry}. */
@@ -12139,7 +12213,7 @@ export async function removeManagedDevinMcpEntry(
           wasUnrecorded,
         )
       const { status, keptLeft } = await takeEntryOut(run, ownership)
-      return dropReceiptAfterRemoval(context, status, keptLeft)
+      return dropReceiptAfterRemoval(context, ownership.receipt, status, keptLeft)
     },
   )
 }
@@ -12197,5 +12271,6 @@ async function answerRemovalWithoutTakeOut(
     status,
     path: context.path,
     ...(entryStays && { entryStays: true as const }),
+    ...keptReceipt,
   }
 }
