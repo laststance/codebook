@@ -18185,20 +18185,21 @@ test("A take-back's rewrite of its rollback record waits for an asynchronous loo
   refresh.catch((error: Error) => {
     refreshRejection = error
   })
-  await waitUntil(
-    () => {
-      if (refreshRejection) throw refreshRejection
-      return heldLooks > 0
-    },
-    "the held look at the rollback record's name",
-    10_000,
-  )
-  const isSettledWhileHeld = isSettled
+  let isSettledWhileHeld: boolean | undefined
   let phaseWhileHeld: unknown
   try {
+    await waitUntil(
+      () => {
+        if (refreshRejection) throw refreshRejection
+        return heldLooks > 0
+      },
+      "the held look at the rollback record's name",
+      10_000,
+    )
+    isSettledWhileHeld = isSettled
     phaseWhileHeld = JSON.parse(readFileSync(journalPath, 'utf8')).phase
   } finally {
-    // The held look is released and the refresh's end awaited whether the record's read answered or threw, so a read error fails the test with its own error and leaves no refresh held while the test's folder goes.
+    // The held look is released and the refresh's end awaited whether the wait and the record's read answered or threw, so a timed-out wait or a read error fails the test with its own error and leaves no refresh held on the gate while the test's folder goes.
     release.resolve()
     await refresh.catch(() => undefined)
   }
