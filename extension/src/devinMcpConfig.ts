@@ -4757,6 +4757,7 @@ class ReceiptConflictError extends Error {}
  * - `gone`: the sentence that nothing stands where Codebook had read its record, so it wrote no record there
  * - `changed` with no version known (none was read there, or this run deleted or moved its record away itself): the sentence that a file stands where Codebook expected none
  * - `changed` otherwise: the sentence that the file there is not the record Codebook had read
+ * - either `changed` sentence when a folder stands there instead: the folder is named as one, with the way out that moves it aside intact and puts back a record it or a backup holds
  * @example
  * receiptConflictSentence(context, 'gone') // => 'Codebook found nothing at …/receipt.json, where it keeps its record of the "codebook" entry …, although it had read its record there …'
  */
@@ -4770,6 +4771,21 @@ function receiptConflictSentence(
   // The record the run read is gone: nothing is written in its place.
   if (kind === 'gone')
     return `Codebook found nothing at ${where} although it had read its record there (a backup or sync tool may have moved it away), so it wrote no record there and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`
+  // This synchronous look runs in the same uninterrupted step as the last look that refused the write; a failed look cannot prove a folder, so the regular-file sentence stays.
+  let folder = false
+  try {
+    folder =
+      lstatSync(receiptPath, { throwIfNoEntry: false })?.isDirectory() === true
+  } catch {
+    folder = false
+  }
+  if (folder) {
+    const mismatch =
+      receiptVersion.current === undefined
+        ? 'although it expected none there'
+        : 'that is not the record it had read there'
+    return `Codebook found a folder at ${where} ${mismatch} (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; ${retry}, and that run reads ${receiptPath} first.`
+  }
   // No record the run read stands behind that name: the file found there is none Codebook ever read.
   if (receiptVersion.current === undefined)
     return `Codebook found a file at ${where} although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, ${retry}, and that run reads that file first.`
