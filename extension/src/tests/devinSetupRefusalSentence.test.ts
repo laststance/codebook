@@ -129,6 +129,34 @@ for (const reason of ['not-private', 'permission'] as const) {
   })
 }
 
+// Value: protects=a mode problem of the publish record at its dropping name (pending.json.codebook-dropping, where every rewrite or delete holds that record for a moment and a run that stopped inside one leaves it), as the bridge's check and the receipt state name it, gets the mode-600 repair naming that file, so the learner repairs the file that keeps the receipt from standing (Cycle 0149 ship review, the testing reader's note on the setup record names devinSetupRefusalSentence.ts gained); fails_when=the bridge's answer at that name says only that the setup changed, or either sentence names another file; no_claim=how the record came to stand at that name readable by others (readReceiptState's tests), and the descriptor's own reasons (their own test)
+for (const reason of ['not-private', 'permission'] as const) {
+  test(`a ${reason} answer on the publish record at its dropping name beside the MCP receipt names that file with the mode-600 repair`, () => {
+    // Arrange
+    const bridgeAnswer = {
+      answer: 'removed',
+      reason,
+      path: '/storage/devin-mcp/pending.json.codebook-dropping',
+    } as const
+    const receiptState = {
+      state: 'removed',
+      reason,
+      receiptPath: '/storage/devin-mcp/receipt.json',
+      recordPath: '/storage/devin-mcp/pending.json.codebook-dropping',
+    } as const
+    // Act
+    const sentences = [
+      devinSetupRefusalSentence(bridgeAnswer),
+      devinSetupRefusalSentence(receiptState),
+    ]
+    // Assert
+    assert.deepEqual(sentences, [
+      'Codebook could not use its record at /storage/devin-mcp/pending.json.codebook-dropping, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.',
+      'Codebook could not use its record at /storage/devin-mcp/pending.json.codebook-dropping, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.',
+    ])
+  })
+}
+
 // protects=an answer of no answer, and a receipt state of no answer, say that the records could not be read and offer no mode repair; fails_when=a read that only failed to look sends the learner to change a file mode; no_claim=the replaced answer
 test('a no-answer says the records could not be read, without a mode repair', () => {
   // Arrange

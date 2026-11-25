@@ -330,6 +330,48 @@ test('an installed MCP receipt answers no-answer when the read of its publish re
   })
 })
 
+// Value: protects=a note that receipt.json is unverified at the publish record's dropping name outranks a read of the record's name that failed to look (unverifiedVerdictOf's order: a name that keeps the receipt from standing comes before a read that gave no answer), so a window already marked loses its mark and the bridge refuses the receipt, as every setup, refresh and removal refuses that file (Cycle 0149 ship review, the testing reader's note on readReceiptState.ts:166); fails_when=the failed read decides and the receipt answers no-answer, which keeps a window's mark that the note should take away, or the receipt answers installed or removed with another reason; no_claim=real file timing and which codes count as no answer (scripted reads answer the record's name with no-answer and its dropping name with a record whose note names other bytes; readPrivateJsonState's own tests)
+test("an installed MCP receipt answers removed with the reason unverified when its publish record's dropping name holds the note although the read of the record's name fails to look", async () => {
+  // Arrange
+  const { readReceiptState: readWithFailedRecordName } =
+    await loadWithScriptedRecordReads({
+      'pending.json': [{ state: 'no-answer' }],
+      'pending.json.codebook-dropping': [SCRIPTED_NOTED_RECORD],
+    })
+  // Act
+  const state = await readWithFailedRecordName(
+    '/storage/devin-mcp/receipt.json',
+  )
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=the same order with the names swapped: a note that receipt.json is unverified at the publish record's name outranks a read of its dropping name that failed to look, since unverifiedVerdictOf weighs both names alike, so the receipt never stands and no window keeps its mark beside that note (Cycle 0149 ship review, the testing reader's note on readReceiptState.ts:166, its mirrored case); fails_when=the failed read of the dropping name decides and the receipt answers no-answer, or the receipt answers installed or removed with another reason; no_claim=real file timing and which codes count as no answer (scripted reads answer the record's name with a record whose note names other bytes and its dropping name with no-answer; readPrivateJsonState's own tests)
+test("an installed MCP receipt answers removed with the reason unverified when its publish record holds the note although the read of that record's dropping name fails to look", async () => {
+  // Arrange
+  const { readReceiptState: readWithFailedDroppingName } =
+    await loadWithScriptedRecordReads({
+      'pending.json': [SCRIPTED_NOTED_RECORD],
+      'pending.json.codebook-dropping': [{ state: 'no-answer' }],
+    })
+  // Act
+  const state = await readWithFailedDroppingName(
+    '/storage/devin-mcp/receipt.json',
+  )
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
 // Value: protects=a publish record that stands but cannot be read as a record (here no JSON) keeps the receipt from standing, since Codebook cannot tell that no note stands there (Cycle 0149 ship review, specialist note on unverifiedVerdictOf); fails_when=the unreadable record reads as no note and the receipt answers installed; no_claim=the other unreadable forms (a link, too large), which take the same branch
 test('an installed MCP receipt answers removed with the reason unverified when its publish record is no JSON', async (context) => {
   // Arrange
