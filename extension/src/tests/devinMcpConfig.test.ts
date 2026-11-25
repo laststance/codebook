@@ -27001,6 +27001,86 @@ test('A refresh that decided to delete the old record on the entry a stopped fir
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+test("A refresh that proved a stopped first setup's link from the config's inode keeps the old record when a backup restores the config it covers before the delete", async (context) => {
+  // Value: protects=the config identity whose staged inode proved the link is carried into the delete guard, so a backup restoring the config the old record covers after that look never loses the record owning the restored entry; fails_when=the first refresh answers anything but the changed-config refusal, the old record's private file is gone or changed, pending.json is gone or changed, the restored config changes, or the next refresh does not put the old record back and answer current; no_claim=a real backup tool (seam.afterStat renames the moved-away config back once while Codebook reads the old record before the delete), a real process end (seam.afterPublish throws), why the private name's unlink fails in that setup (unlink stub EBUSY), a swap after the final synchronous look (no Node primitive unlinks by inode)
+  // Arrange
+  const { home, storage, configPath, receiptBefore, oldConfigText, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const busyRetiredName = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path.endsWith('.retired'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    busyRetiredName.writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { generation } = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(generation)}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  const retiredText = readFileSync(retiredPath, 'utf8')
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  let hasRestored = false
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== retiredPath || hasRestored) return
+      // A backup restores the old config after the config's look proved the stopped setup's link, while Codebook reads the old record before the delete.
+      hasRestored = true
+      moveBack()
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const recordsAfterRefusal = await recordsIn(storage)
+  const retiredAfterRefusal = existsSync(retiredPath)
+    ? readFileSync(retiredPath, 'utf8')
+    : 'absent'
+  const pendingAfterRefusal = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, ['pending.json', retiredName])
+  assert.equal(retiredAfterRefusal, retiredText)
+  assert.equal(pendingAfterRefusal, pendingText)
+  assert.equal(configAfterRefusal, oldConfigText)
+  assert.equal(next, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test('A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps another record put at that private name before the delete, and the next refresh keeps that record and names it as one Codebook cannot tell is its old record', async (context) => {
   // Value: protects=the old record is deleted only while its private name still holds the file and the bytes the drop was decided on, so a record put there meanwhile that owns the entry that stands is never deleted, and the next run, which finds that record is not the one the setup's publish record names by its bytes (Cycle 0149 task 1), keeps it and names it instead of deciding on it; fails_when=the refresh deletes the record put there or answers without the refusal that keeps it, a record is gone or changed after it, the config changes, or the next refresh answers anything but the refusal that it cannot tell that file is the record it moved there, with both records kept; no_claim=a real backup tool (seam.afterStat renames another record over the private name once, while Codebook reads the old record there to decide), a real process end (seam.afterPublish throws), why the private name's unlink fails in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the stopped setup's config again at another inode)
   // Arrange
