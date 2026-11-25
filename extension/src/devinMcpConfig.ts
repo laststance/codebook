@@ -3827,7 +3827,7 @@ function inodeNow(path: string): bigint | undefined {
  * @param vacatedPath - The fresh private name.
  * @param linkedIno - The inode of the file the link gave the dropping name.
  * @returns Nothing once that name went, or holds nothing; a failed unlink of that second name is no failure (no build reads such a name).
- * @throws The {@link vacatedRecordKeptError} naming the fresh name when the dropping name no longer shows the moved file at that last look (a backup or sync tool may have moved or replaced it: the fresh name may be the record's last one, so it stays); the refusal naming both names ({@link bothRecordNamesError}) once another file went back to the record's name; a {@link leftoverReplacedError} naming the fresh name when that file was replaced before its unlink, is no regular file or could not go back (it stays there); what the look at the fresh name throws other than for a missing name (the record stays at the dropping name, which the next run puts back).
+ * @throws The {@link vacatedRecordKeptError} naming the fresh name when the dropping name no longer shows the moved file at that last look (a backup or sync tool may have moved or replaced it: the fresh name may be the record's last one, so it stays); the refusal naming both names ({@link bothRecordNamesError}) once another file went back to the record's name; the {@link vacatedFileKeptError} naming the fresh name when the record's name no longer shows that file right after its link back (the fresh name may be that file's last one, so it stays); a {@link leftoverReplacedError} naming the fresh name when that file was replaced before its unlink, is no regular file or could not go back (it stays there); what the look at the fresh name throws other than for a missing name (the record stays at the dropping name, which the next run puts back).
  * @example
  * await settleVacatedName(rollbackContext, vacatedPath, 43n) // '…/pending.json.rollback.<uuid>.tmp' is gone
  */
@@ -3859,6 +3859,9 @@ async function settleVacatedName(
   // The awaited link may have given a sync tool time to replace this name; never unlink that file.
   if (inodeNow(vacatedPath) !== vacated.ino)
     throw leftoverReplacedError(vacatedPath)
+  // The link may also have given a sync tool time to empty the record's name or put another file there: this second name may then be the moved file's last one, so it stays, named. A look that failed proves nothing either, since it cannot tell that the file still has another name.
+  if (inodeNow(context.pendingPath) !== vacated.ino)
+    throw vacatedFileKeptError(context, vacatedPath)
   await unlink(vacatedPath).catch(() => undefined)
   throw bothRecordNamesError(context)
 }
@@ -4249,6 +4252,26 @@ function vacatedRecordKeptError(
   const droppingPath = droppingPathOf(context)
   return new DroppingNameConflictError(
     `Codebook moved its record at ${pendingPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and then could not tell that the file at ${droppingPath} is still that record (a backup or sync tool may have moved or replaced it), so it left the record at ${vacatedPath} and went no further; move the file at ${vacatedPath} back to ${pendingPath} if nothing stands there, ${retry}.`,
+    'changed',
+  )
+}
+
+/**
+ * The refusal of a tracked record's move whose fresh private name is about to go while the record's name no longer shows the file that name was just linked back to ({@link settleVacatedName}'s foreign-file branch): the file the record's name held when the move started was put back there, but that name shows it no more (a backup or sync tool may have moved or replaced it in that instant), so the fresh private name may be that file's last one, no run reads such a name, and it stays where it is, named; the run goes no further.
+ * Its way out moves that file to another folder the learner keeps, after which the next run settles the record at its dropping name.
+ * @param context - The run; its pending path is the record, its retry ends the sentence.
+ * @param vacatedPath - The fresh private name the file at the record's name was renamed to.
+ * @returns The `changed` {@link DroppingNameConflictError}, not thrown yet.
+ * @example
+ * throw vacatedFileKeptError(rollbackContext, vacatedPath) // 'Codebook found another file at …/pending.json.rollback while it rewrote or deleted its record there, moved it aside to …/pending.json.rollback.<uuid>.tmp and put it back at …/pending.json.rollback, but that name no longer shows it now …'
+ */
+function vacatedFileKeptError(
+  context: Context,
+  vacatedPath: string,
+): DroppingNameConflictError {
+  const { pendingPath, retry } = context
+  return new DroppingNameConflictError(
+    `Codebook found another file at ${pendingPath} while it rewrote or deleted its record there, moved it aside to ${vacatedPath} and put it back at ${pendingPath}, but that name no longer shows it now (a backup or sync tool may have moved or replaced it just now), so the file at ${vacatedPath} may be its only copy; Codebook left it there and went no further; move the file at ${vacatedPath} to another folder and keep it, ${retry}.`,
     'changed',
   )
 }
