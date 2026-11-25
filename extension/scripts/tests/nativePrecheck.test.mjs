@@ -383,8 +383,8 @@ test("an editor's TypeScript language server started as tsc --lsp is not counted
   assert.deepEqual(counts, NOTHING_RUNS)
 })
 
-// Value: protects=a clear verdict while an editor's Fallow language server or an agent's Fallow MCP server stays open (`fallow-lsp` and `fallow-mcp` start the native binary as `fallow lsp-server` and `fallow mcp-server` and leave it running for hours), while a Fallow analysis beside them still counts; fails_when=either server is counted as a fallow run, so the check says busy although nothing is analysed, or the skip also drops a `fallow health` run; no_claim=a server started under another program name
-test("an editor's Fallow language server and an agent's Fallow MCP server are not counted, while a Fallow analysis still is", () => {
+// Value: protects=a clear verdict while an editor's Fallow language server or an agent's Fallow MCP server stays open (`fallow-lsp` and `fallow-mcp` start the native binary as `fallow lsp-server` and `fallow mcp-server` and leave it running for hours); fails_when=either server is counted as a fallow run, so the check says busy although nothing is analysed; no_claim=a server started under another program name, and whether a Fallow analysis counts (the next test)
+test("an editor's Fallow language server and an agent's Fallow MCP server are not counted", () => {
   // Arrange
   const node = '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node'
   const modules = '/Users/example/codebook/extension/node_modules'
@@ -394,6 +394,21 @@ test("an editor's Fallow language server and an agent's Fallow MCP server are no
     { pid: 6302, command: nativeFallow, args: ['lsp-server'] },
     { pid: 6303, command: node, args: [`${modules}/fallow/bin/fallow-mcp`] },
     { pid: 6304, command: nativeFallow, args: ['mcp-server'] },
+  ]
+
+  // Act
+  const counts = countProcessKinds(rows, 4242)
+
+  // Assert
+  assert.deepEqual(counts, NOTHING_RUNS)
+})
+
+// Value: protects=a running Fallow analysis counted as a build beside the servers the skip drops (`fallow health` shares the binary the language and MCP servers run under, so the server exclusion must not reach past the server's own words); fails_when=the server exclusion also drops a `fallow health` run, so the check says clear while an analysis builds; no_claim=a server started under another program name
+test('a Fallow analysis is counted as a build', () => {
+  // Arrange
+  const nativeFallow =
+    '/Users/example/codebook/extension/node_modules/.pnpm/@fallow-cli+darwin-arm64@3.47.0/node_modules/@fallow-cli/darwin-arm64/fallow'
+  const rows = [
     {
       pid: 6305,
       command: nativeFallow,
