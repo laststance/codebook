@@ -13455,37 +13455,55 @@ test("A copy of the previous config that a change in progress moved aside keeps 
 })
 
 test('A put-back by bytes whose look at its own unchecked record fails once keeps that record byte for byte and the copy at its private name, links nothing, and the refresh says the record could not be read', async (context) => {
-  // Value: protects=a record check that fails after a put-back by bytes recorded itself as unchecked propagates before any recovery write, so pending.json keeps that unchecked record (its bytes and its inode), nothing is linked at the empty config name and the copy stays, and the run says the record could not be read and, because the unchecked record read back right after still names the copy, that Codebook still tracks that copy instead of leaving it to the learner (Cycle 0149 tasks 11 and 20; D5 on the bytes branch's inner catch); fails_when=the record's bytes or inode differ from the unchecked record's, a file stands at the config name, the copy is gone or changes, or the refresh says anything else; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails, once with EMFILE, the second open of pending.json while it holds the unchecked record; the first is that record's own read right after its rename), what the next run does with that record (with the config name empty it puts the copy back, which the sentence's "deletes it" covers only as the private name going)
+  // Value: protects=the record check right before the link that fails after a put-back by bytes wrote its unchecked record and that write's own reads passed propagates before any recovery write, so pending.json keeps that unchecked record (its bytes and its inode), nothing is linked at the empty config name and the copy stays, and the run says the record could not be read and, because the unchecked record read back right after still names the copy, that Codebook still tracks that copy instead of leaving it to the learner (Cycle 0149 tasks 11 and 20; D5 on the bytes branch's inner catch; Cycle 0149 final-range review, the injection point of this test); fails_when=the record's bytes or inode differ from the unchecked record's, a file stands at the config name, the copy is gone or changes, the failed open is another open of the unchecked record than the third (the first after the write's last look at its name, after the write's own two reads), the refresh opens that record other than once more after the failure, or the refresh says anything else; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails, once with EMFILE, the first open of pending.json holding the unchecked record that follows the write's last look at that name, seam.beforeLeftoverCheck), a failure of the write's own reads (they pass here), what the next run does with that record (with the config name empty it puts the copy back, which the sentence's "deletes it" covers only as the private name going)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const holdsUncheckedRecord = (): boolean =>
+    existsSync(pendingPath) &&
+    readFileSync(pendingPath, 'utf8').includes('"bytesUnverified":true')
+  let hasWriteLookedLast = false
+  let hasFailedOpen = false
   let uncheckedOpens = 0
+  let uncheckedOpensAtFailure = 0
   let uncheckedText = ''
   let uncheckedIno = 0
   const failingOpen = await loadWithWrappedOpen(async (path, openReal) => {
-    const isUnchecked =
-      path === pendingPath &&
-      existsSync(path) &&
-      readFileSync(path, 'utf8').includes('"bytesUnverified":true')
-    if (!isUnchecked) return openReal()
+    if (path !== pendingPath || !holdsUncheckedRecord()) return openReal()
     uncheckedOpens += 1
-    // The first open of the unchecked record is its own read right after its rename; the second, the look right before the link, finds no file handle free, once.
-    if (uncheckedOpens !== 2) return openReal()
+    // The first open after the write's last look is the record check right before the link: it finds no file handle free, once.
+    if (!hasWriteLookedLast || hasFailedOpen) return openReal()
+    hasFailedOpen = true
+    uncheckedOpensAtFailure = uncheckedOpens
     uncheckedText = readFileSync(path, 'utf8')
     uncheckedIno = statSync(path).ino
     throw Object.assign(new Error('too many open files'), { code: 'EMFILE' })
   })
 
   // Act
-  const refresh = failingOpen.refreshManagedDevinMcpEntry(storage, ENTRY, home)
+  const refresh = failingOpen.refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      beforeLeftoverCheck: (path) => {
+        // The write of the unchecked record ends with a look at its name: only an open after that look reads the finished write.
+        if (path === pendingPath && holdsUncheckedRecord())
+          hasWriteLookedLast = true
+      },
+    },
+  )
 
   // Assert
   await assert.rejects(refresh, {
     message: `While Codebook settled its record of an earlier change at ${pendingPath}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
   })
-  // The second open failed; the third is the refusal's read of the record that stands, which tells what that record does with the copy.
-  assert.equal(uncheckedOpens, 3)
+  assert.equal(hasFailedOpen, true)
+  // The write's own two reads after its publication (before its old version goes, and after its cleanup), then the record check's read right before the link, which failed.
+  assert.equal(uncheckedOpensAtFailure, 3)
+  // The fourth is the refusal's read of the record that stands, which tells what that record does with the copy.
+  assert.equal(uncheckedOpens, 4)
   assert.equal(JSON.parse(uncheckedText).phase, 'handed')
   assert.equal(JSON.parse(uncheckedText).bytesUnverified, true)
   assert.equal(readFileSync(pendingPath, 'utf8'), uncheckedText)
