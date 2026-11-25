@@ -288,6 +288,34 @@ test('unrelated node programs, a pnpm command that installs nothing and a shell 
   assert.deepEqual(counts, NOTHING_RUNS)
 })
 
+// Value: protects=a clear verdict while an editor keeps a TypeScript language server open (the compiler started as `tsc --lsp --stdio`, which an IDE starts once and leaves running for hours); fails_when=that server is counted as a tsc build, so the check says busy for as long as the IDE is open; no_claim=a `tsc --watch` build, which still counts, and a language server started under another program name
+test("an editor's TypeScript language server started as tsc --lsp is not counted as a build", () => {
+  // Arrange
+  const rows = [
+    {
+      pid: 6201,
+      command:
+        '/Users/example/Library/Caches/Editor/ts-native/node_modules/@typescript/typescript-darwin-arm64/lib/tsc',
+      args: ['--lsp', '--stdio'],
+    },
+    {
+      pid: 6202,
+      command: '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node',
+      args: [
+        '/Users/example/project/node_modules/typescript/bin/tsc',
+        '--lsp',
+        '--stdio',
+      ],
+    },
+  ]
+
+  // Act
+  const counts = countProcessKinds(rows, 4242)
+
+  // Assert
+  assert.deepEqual(counts, NOTHING_RUNS)
+})
+
 // Value: protects=the precheck never counting itself or the `ps` it starts, also when it reads the machine from inside a node --test run; fails_when=the own pid is counted as a node --test process, so the check says busy because it runs; no_claim=the parent test run, which is another process and counts
 test("the precheck's own process and its ps are not counted, even inside a node --test run", () => {
   // Arrange

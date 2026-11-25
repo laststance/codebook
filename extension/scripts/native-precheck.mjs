@@ -54,8 +54,9 @@ const NODE_OPTIONS_WITH_VALUE = new Set([
 const TEST_OPTION_PATTERN = /^--test(?:$|[-=])/
 
 /**
- * The build and test kinds this repository starts, in report order: each kind's label, the program names that run it and, for pnpm, the commands that install.
+ * The build and test kinds this repository starts, in report order: each kind's label, the program names that run it, for pnpm the commands that install and, for tsc, the option that starts a language server.
  * A process counts under the first kind whose program it runs; `nodeTest` counts a node process with a test-runner option that runs none of the named programs.
+ * A program started with one of its `serverOptions` is an editor's language server, which stays open for hours and builds nothing, so it counts under no kind.
  */
 const PROCESS_KINDS = [
   { id: 'nodeTest', label: 'node --test', programs: [] },
@@ -65,7 +66,12 @@ const PROCESS_KINDS = [
     label: 'run-pregate-tests.mjs',
     programs: ['run-pregate-tests.mjs'],
   },
-  { id: 'tsc', label: 'tsc', programs: ['tsc', 'tsc.js'] },
+  {
+    id: 'tsc',
+    label: 'tsc',
+    programs: ['tsc', 'tsc.js'],
+    serverOptions: ['--lsp'],
+  },
   { id: 'fallow', label: 'fallow', programs: ['fallow', 'fallow.exe'] },
   { id: 'c8', label: 'c8', programs: ['c8', 'c8.js'] },
   {
@@ -103,10 +109,10 @@ It prints kinds and counts only, never a process's arguments, environment or wor
 directory, and it signals no process.
 
 Kinds: node --test (a node process with a --test option), test-shard.mjs,
-run-pregate-tests.mjs, tsc, fallow, c8, pnpm install (install, i, add, update, up),
-package.mjs, check-package.mjs or vsce, checkHealth.mjs, gate.mjs. A process counts
-once, under the program it runs; a program whose path holds a space is read as two
-words and is not counted.
+run-pregate-tests.mjs, tsc (not an editor's language server, tsc --lsp), fallow, c8,
+pnpm install (install, i, add, update, up), package.mjs, check-package.mjs or vsce,
+checkHealth.mjs, gate.mjs. A process counts once, under the program it runs; a
+program whose path holds a space is read as two words and is not counted.
 
 Options:
   --min-free-swap-mb <n>  the least free swap that counts as clear, in MB
@@ -273,7 +279,9 @@ function kindOf(row) {
     (kind) =>
       kind.programs.includes(program) &&
       (kind.commands === undefined ||
-        programArgs.some((word) => kind.commands.includes(word))),
+        programArgs.some((word) => kind.commands.includes(word))) &&
+      // An editor's language server of that program (`tsc --lsp`) is no build.
+      !programArgs.some((word) => kind.serverOptions?.includes(word)),
   )
   if (named !== undefined) return named.id
   return nodeOptions.some((option) => TEST_OPTION_PATTERN.test(option))
