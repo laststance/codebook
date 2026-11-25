@@ -12724,6 +12724,109 @@ test("A setup whose completed-record write finds a file at that record's droppin
   )
 })
 
+test("A first setup whose record's final delete meets another record a sync tool places at pending.json right after the move aside still installs its entry and names both names and the way out in its notice, instead of reporting an unqualified success", async (context) => {
+  // Value: protects=a first setup whose receipt already stands when the delete of its own record stops at Codebook's own step at the record's dropping name (a sync tool placed another pending.json right after the move gave the record that name) still answers installed, but with a cleanupFailure that names both names and the way out in that refusal's own words, because the next setup, update or removal stops at those two names and an unqualified success would leave the learner to find out only then; the entry is never taken out over a delete that fails after the receipt stands (Cycle 0149 issue 372 task 69); fails_when=the setup answers anything but installed, the entry is taken out, cleanupFailure is undefined or names anything but the could-not-finish-deleting sentence followed by the dropping-name sentence, either file at the two names changes or is gone, the dropping note is gone, or no receipt of this setup stands; no_claim=a real sync tool (seam.beforeRecordWrite arms at the receipt's write, the last record write before that delete, and the config module is loaded with a link and a rename that, once armed, rename another record over pending.json right after Codebook's move gave the setup record the name pending.json.codebook-dropping), what the next run does once the learner moved the file at pending.json away (it puts the record back, as the sentence says)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const backupPath = join(home, 'pending-from-sync.json')
+  const restoredText = '{"restored":"by a sync tool"}\n'
+  let isArmed = false
+  let hasPlaced = false
+  /**
+   * Places the sync tool's record at pending.json once, right after Codebook's move gave the setup record its dropping name in the delete that ends the setup.
+   * @param from - The name the move takes the record from.
+   * @param to - The name the move gives the record.
+   * @example
+   * placeAfterMove(pendingPath, droppingPath) // pending.json now holds the sync tool's record
+   */
+  const placeAfterMove = (from: string, to: string): void => {
+    if (!isArmed || hasPlaced || from !== pendingPath || to !== droppingPath)
+      return
+    hasPlaced = true
+    writeFileSync(backupPath, restoredText)
+    renameSync(backupPath, pendingPath)
+  }
+  const placingAfterMove = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          placeAfterMove(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          await rename(from, to)
+          placeAfterMove(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const result = await placingAfterMove.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      beforeRecordWrite: ({ path }) => {
+        // The receipt's write is the last record write before the delete of the setup record that ends the setup.
+        if (path === receiptPath) isArmed = true
+      },
+    },
+  )
+  // Names the setup's delete left behind read as 'absent' when they are gone, so the assertions below name them.
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const droppingAfterSetup = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const recordsAfterSetup = await recordsIn(storage)
+  const nextError = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasPlaced, true)
+  assert.equal(result.status, 'installed')
+  assert.equal(
+    result.cleanupFailure,
+    `Codebook wrote its record of the entry but could not finish deleting its record of this setup. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+  )
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+  assert.equal(
+    JSON.parse(readFileSync(receiptPath, 'utf8')).generation,
+    result.generation,
+  )
+  assert.equal(pendingAfterSetup, restoredText)
+  assert.equal(JSON.parse(droppingAfterSetup).phase, 'completed')
+  assert.deepEqual(recordsAfterSetup, [
+    'pending.json',
+    'pending.json.codebook-dropping',
+    'pending.json.codebook-dropping-note',
+    'receipt.json',
+  ])
+  // The next run stops at the two names the notice names, as before the fix; the notice is what tells the learner so before that run.
+  assert.equal(
+    nextError instanceof Error ? nextError.message : nextError,
+    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+  )
+})
+
 test("A setup whose completed record meets another program's record and whose config cannot be read again once writes no receipt and says it could not read that config again, never that the config is another file", async (context) => {
   // Value: protects=a setup whose completed record another program kept from being written records its entry only while it can confirm the config is the file it published, and a re-read of that config that fails once (EMFILE) is said as a config it could not read again, not as a config that is no longer the file it wrote; no receipt is written and the record, the config and the copy stay (OCR L3 P3 on settleRecordConflict; Cycle 0149 review round); fails_when=the setup resolves or says anything but the could-not-read sentence with the copy's sentence, a receipt appears, the restored record changes, or the config loses its entry; no_claim=a real backup tool or lack of file handles (seam.afterPublish renames another setup's marked record over pending.json once, after the config is in place, and the config module is loaded with an openWithoutFollowing that fails the config's next open once with EMFILE), what the next run does
   // Arrange
