@@ -21313,6 +21313,55 @@ test("A later setup keeps both files when a copy of the file at the old record's
   assert.deepEqual(releasesReading(recordAfterRefusal), [])
 })
 
+test("A later setup keeps both files when a copy of the file at the old record's private name stands at receipt.json while the publish record is an older version's original one, which names no bytes, names that file as one Codebook cannot tell is its old record and rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse", async (context) => {
+  // Value: protects=beside a record of this config at receipt.json that is another file (a copy with the same bytes at another inode), an older version's original publish record (retiresReceipt true, no bytes named) drops nothing and puts nothing back: the older version's exception that drops only the private name holds for one file at both names alone (compareStandingReceipt's isLegacyRecord branch), and the record is rewritten without bytes as 0.2.144.0's foreign record is (keptRecordOf sends true and foreign down one branch), so no window of 0.2.142.0, 0.2.143.0 or 0.2.144.0 puts that file back (Cycle 0149 ship review, the state-machines reader's cell true × compare, the case of two files); fails_when=either file is gone or holds other bytes, the private name is dropped, pending.json is gone or holds anything but that rewrite, a released reader accepts it, or the refusal is another sentence; no_claim=running 0.2.142.0, 0.2.143.0 or 0.2.144.0 (the test writes its record by hand: this version's record with retiresReceipt true and the mark that nothing was linked, as that build's put-back failure leaves it, and writes the copy at receipt.json by hand, as a restore of each name as its own file leaves it), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const keptRecord = {
+    ...(await readRecordFile(storage, 'pending.json')),
+    retiresReceipt: true,
+  }
+  writeFileSync(pendingPath, JSON.stringify(keptRecord))
+  writeFileSync(receiptPath, retiredText, { mode: 0o600 })
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+  const recordAfterRefusal = existsSync(pendingPath)
+    ? await readRecordFile(storage, 'pending.json')
+    : 'absent'
+
+  // Assert
+  assert.equal(
+    setupAnswer,
+    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because Codebook cannot tell that file is the record of Devin Desktop's MCP config at ${configPath} that it moved there (another program may have put it there), and its record of that config stands at ${receiptPath} again; it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.deepEqual(recordAfterRefusal, { ...keptRecord, retiresReceipt: {} })
+  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+})
+
 test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads to rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse, so no window of those versions puts that file back", async (context) => {
   // Value: protects=a publish record 0.2.144.0 kept as foreign (no bytes of the old record named, and 0.2.144.0 itself puts back whatever record of this config stands at the private name on its word) is rewritten by this version, which keeps that file, in a shape all three released readers refuse, so a window of 0.2.144.0 not reloaded after the update never links that file into receipt.json (Cycle 0149 task 4); fails_when=the record left passes the fields of any of the three releases, it changes in any other way than that shape, a file appears at receipt.json, the file at the private name changes or is gone, or the refusal is another sentence; no_claim=running those releases (the test checks the record against their field rules, RELEASED_RECORD_FIELDS), 0.2.144.0's record (the test writes it by hand: this version's record with retiresReceipt foreign and the mark that nothing was linked), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
   // Arrange
