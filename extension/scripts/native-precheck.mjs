@@ -115,6 +115,9 @@ const PROCESS_KINDS = [
   { id: 'gate', label: 'gate.mjs', programs: ['gate.mjs'] },
 ]
 
+/** Every program name a kind counts: a word of node's script path that ends in one of these ends that path ({@link scriptEndIndexOf}). */
+const KNOWN_PROGRAMS = new Set(PROCESS_KINDS.flatMap((kind) => kind.programs))
+
 const VERDICT_CLEAR = 'clear'
 const VERDICT_BUSY = 'busy'
 
@@ -142,10 +145,11 @@ or build-fast.mjs (they build inside their own process), eslint (not its MCP ser
 eslint --mcp; an editor's ESLint language server runs as eslintServer.js and is not
 counted), fallow (not its language or MCP server, fallow lsp-server or mcp-server),
 c8, pnpm install (install, i, add, update, up), package.mjs, check-package.mjs or
-vsce, checkHealth.mjs, gate.mjs. A process counts once, under the program it runs; a
-program whose path holds a space is read as two words and is not counted. esbuild is
-not counted by itself: other projects' dev servers keep its service process open for
-hours.
+vsce, checkHealth.mjs, gate.mjs. A process counts once, under the program it runs;
+a script that node runs from a path holding a space still counts, but node itself or
+a native binary (pnpm's, Fallow's) installed under such a path is read as two words
+and is not counted. esbuild is not counted by itself: other projects' dev servers
+keep its service process open for hours.
 
 Options:
   --max-used-swap-mb <n>  the most used swap that still counts as clear, in MB
@@ -243,7 +247,7 @@ export function parseSwapUsage(text) {
  * Reads the text of `ps -A -ww -o pid=,args=` as rows of pid, command and arguments.
  *
  * Why: the classification works on rows, so the reading of the machine stays apart from the judgement. Called by {@link productionSeams}' reader; tests call it with hard-coded text.
- * A command line is split at whitespace, so a path that holds a space becomes two words (`--help` says so).
+ * A command line is split at whitespace, so a path that holds a space becomes several words; {@link scriptEndIndexOf} finds the end of node's script path again, and a command path cut so stays unknown (`--help` says so).
  *
  * @param {string | undefined} text - What `ps` printed, or `undefined` when it could not run.
  * @returns {Array<{ pid: number, command: string, args: string[] }> | undefined} One row per line with a pid; `undefined` when there is no text.
@@ -280,6 +284,27 @@ function scriptIndexOf(args) {
 }
 
 /**
+ * Finds the word that ends node's script path when `ps` cut that path at its spaces.
+ *
+ * Why: `ps` prints a command line with its spaces, so `node /Users/a/Codebook Work/…/tsc -p x` reaches {@link parseProcessRows} as the words `/Users/a/Codebook` and `Work/…/tsc`. The script's path runs from its first word up to the first option, and a word there whose last segment is a known program ends it. Called by {@link programOf}.
+ * The search stops at the first option, so a word of the script's own arguments (`--out gate.mjs`) never counts.
+ *
+ * @param {string[]} args - The node process's arguments.
+ * @param {number} scriptIndex - Where the script's path starts ({@link scriptIndexOf}).
+ * @returns {number} The index of the first word up to the first option whose last segment is a known program; `scriptIndex` when there is none.
+ * @example scriptEndIndexOf(['/Users/a/Codebook', 'Work/scripts/gate.mjs'], 0) // => 1
+ */
+function scriptEndIndexOf(args, scriptIndex) {
+  for (
+    let index = scriptIndex;
+    index < args.length && !args[index].startsWith('-');
+    index += 1
+  )
+    if (KNOWN_PROGRAMS.has(basename(args[index]))) return index
+  return scriptIndex
+}
+
+/**
  * Says which program a row runs: node's script for a node process, the binary's own name otherwise.
  * @param {{ command: string, args: string[] }} row - One process.
  * @returns {{ program: string, programArgs: string[], nodeOptions: string[] }} The program's file name, the words after it, and node's own options (empty for another binary).
@@ -293,9 +318,10 @@ function programOf({ command, args }) {
   // `node --test` without a file runs no script; its options still say it runs tests.
   if (scriptIndex === -1)
     return { program: commandName, programArgs: [], nodeOptions: args }
+  const scriptEndIndex = scriptEndIndexOf(args, scriptIndex)
   return {
-    program: basename(args[scriptIndex]),
-    programArgs: args.slice(scriptIndex + 1),
+    program: basename(args[scriptEndIndex]),
+    programArgs: args.slice(scriptEndIndex + 1),
     nodeOptions: args.slice(0, scriptIndex),
   }
 }

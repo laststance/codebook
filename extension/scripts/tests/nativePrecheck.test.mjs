@@ -414,6 +414,22 @@ test('an ESLint MCP server started as eslint --mcp is not counted, while a lint 
   assert.deepEqual(counts, { ...NOTHING_RUNS, eslint: 1 })
 })
 
+// Value: protects=a build counted when node runs it from a path that holds a space (ps prints the command line with its spaces, so the script's path reaches the reader cut into several words), while a script of such a path that is no known program, and a known name after its first option, stay uncounted; fails_when=the running tsc or gate.mjs under `Codebook Work` counts under no kind, so the check says clear during a build, or the search runs past the script's first option and counts a word of its arguments; no_claim=node itself or a native binary installed under a path with a space, which still reads as two words (--help says so)
+test('a build that node runs from a path holding a space is counted under its program', () => {
+  // Arrange
+  const text = [
+    ' 7101 node /Users/example/Codebook Work/extension/node_modules/typescript/bin/tsc -p tsconfig.json',
+    ' 7102 node /Users/example/Codebook Work/extension/scripts/gate.mjs',
+    ' 7103 node /Users/example/Codebook Work/tools/report.mjs --out gate.mjs',
+  ].join('\n')
+
+  // Act
+  const counts = countProcessKinds(parseProcessRows(text), 4242)
+
+  // Assert
+  assert.deepEqual(counts, { ...NOTHING_RUNS, tsc: 1, gate: 1 })
+})
+
 // Value: protects=the precheck never counting itself or the `ps` it starts, also when it reads the machine from inside a node --test run; fails_when=the own pid is counted as a node --test process, so the check says busy because it runs; no_claim=the parent test run, which is another process and counts
 test("the precheck's own process and its ps are not counted, even inside a node --test run", () => {
   // Arrange
@@ -703,6 +719,10 @@ test('--help prints the usage, the exit codes and the error codes and exits 0', 
   )
   assert.match(HELP_TEXT, /eslint \(not its MCP server,\s+eslint --mcp;/)
   assert.doesNotMatch(HELP_TEXT, /min-free-swap/)
+  assert.match(
+    HELP_TEXT,
+    /a script that node runs from a path\s+holding a space still counts/,
+  )
 })
 
 // Value: protects=a usage error under the delivery commands' contract: code on the first line, fix on the last, exit 64, nothing on stdout, from the real entry point; fails_when=a bad limit is accepted, the check runs anyway, or the lines or exit code change; no_claim=every bad combination of options
