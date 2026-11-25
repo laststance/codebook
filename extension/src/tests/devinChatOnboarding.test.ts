@@ -310,6 +310,7 @@ async function devinWindow(
     notices: Notice[] = [],
     modalQuestions: string[] = [],
     outputLines: string[] = [],
+    outputErrorLines: string[] = [],
     executedCommands: string[] = [],
     contextKeys = new Map<string, unknown>(),
     writtenEntries: DevinEntry[] = [],
@@ -485,7 +486,9 @@ async function devinWindow(
         info(line: string): void {
           outputLines.push(line)
         },
-        error(): void {},
+        error(line: string): void {
+          outputErrorLines.push(line)
+        },
         dispose(): void {},
       }),
       showInformationMessage(message: string, ...actions: string[]) {
@@ -1089,6 +1092,7 @@ async function devinWindow(
     notices,
     modalQuestions,
     outputLines,
+    outputErrorLines,
     executedCommands,
     writtenEntries,
     refreshedEntries,
@@ -1362,6 +1366,7 @@ test("a Devin Desktop window whose skill check fails while Codebook's record of 
     assert.deepEqual(window.outputLines, [
       'Codebook did not refresh its Devin Desktop skill: Devin Desktop skill is missing or was changed: /home/user/.config/devin/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
     ])
+    assert.deepEqual(window.outputErrorLines, [])
     assert.deepEqual(window.notices, [])
   } finally {
     await window.loaded.deactivate()

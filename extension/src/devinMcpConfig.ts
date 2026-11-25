@@ -9405,7 +9405,7 @@ async function markBeforeTakeBack(context: Context): Promise<MarkedTakeBack> {
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any; decides whether the file is still Codebook's own ({@link createdFileFor}).
  * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted (and, when another program kept the completed record from being written, the sentence that says so); an empty generation when the run has no entry.
- * @throws The {@link otherConfigReceiptRefusal} before anything is published while `receipt.json` holds Codebook's record of the entry in another config ({@link assertNoOtherConfigReceipt}). A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published. A {@link PublishUncoveredError} when another program kept the completed record from being written and the config is no longer the file this setup published with its entry ({@link settleRecordConflict}): no receipt is written, and that record, the config and the copies stay.
+ * @throws The {@link otherConfigReceiptRefusal} before anything is published while `receipt.json` holds Codebook's record of the entry in another config ({@link assertNoOtherConfigReceipt}). A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published. A {@link PublishUncoveredError} when the config is no longer the file this setup published with its entry before its receipt can be written ({@link settlePublishedConfig}, {@link settleRecordConflict}): no receipt is written, and that record, the config and the copies stay.
  * @example
  * const published = await publishEntry(context, look, receipt)
  */
@@ -9466,7 +9466,7 @@ async function publishEntry(
  * @param published - What the publish reported ({@link Published}).
  * @param isFirst - Whether the publish is a first setup ({@link isFirstSetup}).
  * @returns The generation recorded in the receipt and, when something stays, the sentences that name it.
- * @throws The {@link PublishUncoveredError} of {@link settleRecordConflict}; the take-out's refusal for a first setup whose receipt could not be written or no longer stands; for an update, the receipt write's failure, or the {@link receiptConflictError} when `receipt.json` no longer shows the receipt that write published once its cleanup ended (the file there and the update's own record stay).
+ * @throws The {@link PublishUncoveredError} of {@link settlePublishedConfig} or {@link settleRecordConflict}; the take-out's refusal for a first setup whose receipt could not be written or no longer stands; for an update, the receipt write's failure, or the {@link receiptConflictError} when `receipt.json` no longer shows the receipt that write published once its cleanup ended (the file there and the update's own record stay).
  * @example
  * await recordPublishedEntry(context, written, published, true) // => { generation: written.generation }
  * await recordPublishedEntry(context, written, published, false) // throws the `changed` receipt conflict, keeping pending.json, once a backup put another record at receipt.json while the write deleted its staged name
@@ -9478,10 +9478,10 @@ async function recordPublishedEntry(
   isFirst: boolean,
 ): Promise<PublishedEntry> {
   const { keptLeft, isRetiredKept, recordConflict } = published
-  // Another program's file at the record's name, an emptied name or a failed read: success is recorded only on the config's own word, and the copies as the record that stands leaves them.
-  const settled: RecordConflictSettlement = recordConflict
+  // Success is recorded only on the config's own word. Another program's file at the record's name, an emptied name or a failed read also decides the copies as the record that stands leaves them.
+  const settled: ReceiptWriteSettlement = recordConflict
     ? await settleRecordConflict(context, written, keptLeft, recordConflict)
-    : { copies: leftCopiesOf(published) }
+    : await settlePublishedConfig(context, written, published)
   try {
     await writeReceipt(context, written, settled.configStill)
     // The receipt must still stand as its write published it once that write's awaited cleanup of its staged name ended: the setup's own record, which may go next, is the only other record of this entry.
@@ -9495,8 +9495,8 @@ async function recordPublishedEntry(
     if (keptLeft.length === 0 && !isRetiredKept)
       await dropPending(context, { assertStill: assertReceiptLeft })
   } catch (cause) {
-    // A config that is no longer the published file is not this setup's to take anything out of; an update keeps its own record of the change and rejects as before.
-    if (cause instanceof PublishUncoveredError || !isFirst) throw cause
+    // An update keeps its own record of the change and rejects as before; a first setup's take-back decides from the config as it stands then.
+    if (!isFirst) throw cause
     throw await takeOutUnrecordedEntry(
       context,
       written,
@@ -9529,50 +9529,35 @@ function leftCopiesOf({ keptLeft, isRecorded }: Published): LeftCopies {
   }
 }
 
-/** Thrown by {@link settleRecordConflict} when another program kept a setup's completed record from being written and the config is no longer the file that setup published with its entry: the setup writes no receipt, takes nothing out of that file and goes no further; {@link recordPublishedEntry} rethrows it as it is. */
+/** Thrown when the config is no longer the file a setup published with its entry before that entry's receipt can be written: the setup writes no receipt and takes nothing out of that file. An update rejects with it as it is; a first setup answers through its take-back ({@link takeOutUnrecordedEntry}). */
 class PublishUncoveredError extends Error {}
 
-/** What a publish whose completed record another program kept from being written goes on with ({@link settleRecordConflict}): the copies as the record that stands leaves them, the sentence that says what happened to that record, and the look at the config the receipt's write must still pass right before its rename. */
-type RecordConflictSettlement = {
+/** What a publish goes on with once its config is confirmed as the file it wrote: the copies as the record that stands leaves them, the sentence that says what happened to that record, and the look at the config the receipt's write must still pass right before its rename. */
+type ReceiptWriteSettlement = {
   copies: LeftCopies
   sentence?: string
   configStill?: StillLook
 }
 
+/** Words a {@link PublishUncoveredError} for the state the published config was found in. */
+type UncoveredWording = (configState: string) => PublishUncoveredError
+
 /**
- * Decides whether a setup whose completed record another program kept from being written ({@link Published.recordConflict}) may still record its entry, and words its copies as the record that stands leaves them; called by {@link recordPublishedEntry} before the receipt is written.
- * The config is read again ({@link confirmPublishedConfig}): only while it is the file this setup published with its entry is the receipt written, and the config name is looked at once more, synchronously, right before the receipt's rename. Otherwise nothing is recorded: a backup that put an older config back together with an older record leaves both as they are, and the run says so. The record that stands is read once more ({@link recordedCopyFateOf}), so a copy is left to the learner only when that record's contents show it does not lead a later run to the copy.
+ * Confirms that the config still is the file a setup published with its entry, and gives the synchronous look the receipt's write passes right before its rename; called by {@link settlePublishedConfig} and {@link settleRecordConflict}.
  * @param context - The run.
- * @param written - The receipt this setup writes.
- * @param keptLeft - The files the publish left.
- * @param conflict - What stood at the record's name; Codebook's own dropping-name refusal ({@link DroppingNameConflictError}) is said in its own sentence, which names where the record stands, never as another program's change.
- * @returns The copies, the sentence for the notice and the look at the config ({@link RecordConflictSettlement}).
- * @throws A {@link PublishUncoveredError} naming the record, the config and the copies when the config is gone, no longer holds this setup's entry, has another inode or cannot be read again (said as such); the returned look throws it too once the config name changes before the receipt's rename.
+ * @param written - The receipt this setup writes; its `config.ino` is the file it published, its entry hash the entry it wrote.
+ * @param uncovered - Words the refusal for the state the config is found in, or for a change before the receipt's rename.
+ * @returns The look at the config ({@link StillLook}).
+ * @throws The {@link PublishUncoveredError} `uncovered` words when the config is gone, no longer holds this setup's entry, has another inode or cannot be read again; the returned look throws it too once the config name changes before the receipt's rename.
  * @example
- * await settleRecordConflict(context, written, keptLeft, journalConflictError(context, 'changed')) // => { copies, sentence: 'Codebook wrote its record of the entry but could not record that this setup finished, …', configStill }
- * await settleRecordConflict(context, written, keptLeft, bothRecordNamesError(context))           // => { copies, sentence: 'Codebook wrote its record of the entry but could not finish rewriting its record of this setup. Codebook found its record at …', configStill }
+ * await publishedConfigStill(context, written, uncovered) // => { names: [configPath], assert }
  */
-async function settleRecordConflict(
+async function publishedConfigStill(
   context: Context,
   written: Receipt,
-  keptLeft: KeptFile[],
-  conflict: JournalConflictError,
-): Promise<RecordConflictSettlement> {
-  const { path, pendingPath, retry } = context
-  // Codebook's own step at the record's dropping name says where that record stands and its way out in its own sentence; another program's change is a cause.
-  const isOwnDrop = conflict instanceof DroppingNameConflictError
-  const happened = isOwnDrop
-    ? 'could not finish rewriting its record of this setup'
-    : `could not record that this setup finished, because ${recordConflictCause(context, conflict.kind)}`
-  const recordEnd = isOwnDrop
-    ? `. ${conflict.message}`
-    : `, ${retry}, and that run reads ${pendingPath} first.`
-  const copies = await copiesBesideRecord(context, keptLeft)
+  uncovered: UncoveredWording,
+): Promise<StillLook> {
   const notWritten = 'that config is no longer the file it wrote'
-  const uncovered = (configState: string): PublishUncoveredError =>
-    new PublishUncoveredError(
-      `Codebook put its entry in Devin Desktop's MCP config at ${path}, but ${happened}, and ${configState}, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it${recordEnd}${keptCopiesSentence(copies.asTracked)}`,
-    )
   const confirmed = await confirmPublishedConfig(context, written)
   // A config that could not be read again is never said to be another file.
   if (!('look' in confirmed))
@@ -9583,17 +9568,91 @@ async function settleRecordConflict(
     )
   const { identity } = confirmed.look
   return {
+    names: [context.path],
+    assert: (): void => {
+      // A look that fails proves nothing: the config counts as changed.
+      if (!isConfigStill(context, identity)) throw uncovered(notWritten)
+    },
+  }
+}
+
+/**
+ * Confirms a publish whose completed record was written before its entry is recorded, so a backup that put another config back after the publish never receives an installed receipt; called by {@link recordPublishedEntry} when the completed record met no conflict.
+ * The record stays: it is the proof of how far this setup went, as after a stop between the publish and the receipt write, and the next run reads it first. A copy the publish left is named in the refusal as that record tracks it.
+ * @param context - The run.
+ * @param written - The receipt this setup writes.
+ * @param published - What the publish reported.
+ * @returns The copies and the look at the config ({@link ReceiptWriteSettlement}); when the config already fails the confirmation, that look throws the {@link PublishUncoveredError} inside the receipt write, so a conflict at `receipt.json` is still read first and a first setup takes its entry back as for every receipt-write failure.
+ * @example
+ * await settlePublishedConfig(context, written, published) // => { copies, configStill }
+ */
+async function settlePublishedConfig(
+  context: Context,
+  written: Receipt,
+  published: Published,
+): Promise<ReceiptWriteSettlement> {
+  const { path, pendingPath, retry } = context
+  const copies = leftCopiesOf(published)
+  const uncovered = (configState: string): PublishUncoveredError =>
+    new PublishUncoveredError(
+      `Codebook put its entry in Devin Desktop's MCP config at ${path}, but before it could write its own record of that entry, ${configState}, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it, ${retry}, and that run reads ${pendingPath} first.${keptCopiesSentence(copies.asTracked)}`,
+    )
+  const confirmed = await publishedConfigStill(
+    context,
+    written,
+    uncovered,
+  ).catch((error: unknown) => {
+    // A config that already fails the confirmation fails the receipt write's synchronous look instead, so a conflict at receipt.json is still read and worded first and a first setup's take-back runs as for every receipt-write failure.
+    if (!(error instanceof PublishUncoveredError)) throw error
+    return {
+      names: [path],
+      assert: (): void => {
+        throw error
+      },
+    }
+  })
+  return { copies, configStill: confirmed }
+}
+
+/**
+ * Decides whether a setup whose completed record another program kept from being written ({@link Published.recordConflict}) may still record its entry, and words its copies as the record that stands leaves them; called by {@link recordPublishedEntry} before the receipt is written.
+ * The config is read again ({@link confirmPublishedConfig}): only while it is the file this setup published with its entry is the receipt written, and the config name is looked at once more, synchronously, right before the receipt's rename. Otherwise nothing is recorded: a backup that put an older config back together with an older record leaves both as they are, and the run says so. The record that stands is read once more ({@link recordedCopyFateOf}), so a copy is left to the learner only when that record's contents show it does not lead a later run to the copy.
+ * @param context - The run.
+ * @param written - The receipt this setup writes.
+ * @param keptLeft - The files the publish left.
+ * @param conflict - What stood at the record's name; Codebook's own dropping-name refusal ({@link DroppingNameConflictError}) is said in its own sentence, which names where the record stands, never as another program's change.
+ * @returns The copies, the sentence for the notice and the look at the config ({@link ReceiptWriteSettlement}).
+ * @throws A {@link PublishUncoveredError} naming the record, the config and the copies when the config is gone, no longer holds this setup's entry, has another inode or cannot be read again (said as such); the returned look throws it too once the config name changes before the receipt's rename.
+ * @example
+ * await settleRecordConflict(context, written, keptLeft, journalConflictError(context, 'changed')) // => { copies, sentence: 'Codebook wrote its record of the entry but could not record that this setup finished, …', configStill }
+ * await settleRecordConflict(context, written, keptLeft, bothRecordNamesError(context))           // => { copies, sentence: 'Codebook wrote its record of the entry but could not finish rewriting its record of this setup. Codebook found its record at …', configStill }
+ */
+async function settleRecordConflict(
+  context: Context,
+  written: Receipt,
+  keptLeft: KeptFile[],
+  conflict: JournalConflictError,
+): Promise<ReceiptWriteSettlement> {
+  const { path, pendingPath, retry } = context
+  // Codebook's own step at the record's dropping name says where that record stands and its way out in its own sentence; another program's change is a cause.
+  const isOwnDrop = conflict instanceof DroppingNameConflictError
+  const happened = isOwnDrop
+    ? 'could not finish rewriting its record of this setup'
+    : `could not record that this setup finished, because ${recordConflictCause(context, conflict.kind)}`
+  const recordEnd = isOwnDrop
+    ? `. ${conflict.message}`
+    : `, ${retry}, and that run reads ${pendingPath} first.`
+  const copies = await copiesBesideRecord(context, keptLeft)
+  const uncovered = (configState: string): PublishUncoveredError =>
+    new PublishUncoveredError(
+      `Codebook put its entry in Devin Desktop's MCP config at ${path}, but ${happened}, and ${configState}, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it${recordEnd}${keptCopiesSentence(copies.asTracked)}`,
+    )
+  return {
     copies,
     sentence: isOwnDrop
       ? `Codebook wrote its record of the entry but ${happened}. ${conflict.message}`
       : `Codebook wrote its record of the entry but ${happened}, so it left that name as it is; the next run reads that name first.`,
-    configStill: {
-      names: [path],
-      assert: (): void => {
-        // A look that fails proves nothing: the config counts as changed.
-        if (!isConfigStill(context, identity)) throw uncovered(notWritten)
-      },
-    },
+    configStill: await publishedConfigStill(context, written, uncovered),
   }
 }
 

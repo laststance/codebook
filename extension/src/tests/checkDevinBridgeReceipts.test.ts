@@ -94,9 +94,18 @@ async function loadCheckWith(
 const MARKED_DESCRIPTOR: PrivateJsonState = {
   state: 'read',
   value: { devinChat: true, devinSetupInstallation: 'installation-a' },
-  // The check never compares a descriptor's bytes; a real read carries their hash.
-  sha256: 'not compared for a descriptor',
+  // A real read carries the hash of the descriptor bytes this value writes as compact JSON.
+  sha256: 'da98746dd0a46e27886a2e0a2736842f7886cfcb4d8508a3e6cb10a70eca19ce',
 }
+
+// Value: protects=the descriptor fixture is one a real private JSON read can return, so a later receipt check that compares its hash is exercised against possible bytes rather than an impossible placeholder (Cycle 0149 final-range CodeRabbit R3); fails_when=the fixture's hash is not the SHA-256 of the compact JSON bytes its value writes; no_claim=the real file's encoding or key order beyond this fixture (the hash is hard-coded from JSON.stringify(value))
+test('the marked descriptor fixture carries the hash of the bytes its value writes', () => {
+  // Arrange / Act / Assert: this fixture stands for bytes read from the descriptor, so its hash must be of those bytes.
+  assert.equal(
+    MARKED_DESCRIPTOR.sha256,
+    'da98746dd0a46e27886a2e0a2736842f7886cfcb4d8508a3e6cb10a70eca19ce',
+  )
+})
 const MCP_REMOVED: ReceiptState = {
   state: 'removed',
   reason: 'missing',
