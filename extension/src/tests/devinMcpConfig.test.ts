@@ -2324,14 +2324,15 @@ test('A removal that cannot write its completed record also names the file it wr
   assert.equal(readFileSync(configPath, 'utf8'), restoredText)
 })
 
-test('A removal whose record another program replaced with a folder does not promise that Codebook still tracks the moved-aside copy', async (context) => {
-  // Value: protects=a removal whose completed record failed says that Codebook still tracks the moved-aside copy only while its record on disk still names that copy, so a record another program replaced never backs a promise that no journal can keep; fails_when=the refusal says that Codebook still tracks the copy, leaves it to the learner at will, or omits its path, or the copy is gone; no_claim=a real program that replaces the record (seam.afterPublish puts a folder where pending.json was once, right after the publish), and what a later run does with that folder
+test('A removal whose record another program replaced with a folder does not promise that Codebook still tracks the moved-aside copy, and its own steps let the retry finish the removal', async (context) => {
+  // Value: protects=a removal whose completed record failed says that Codebook still tracks the moved-aside copy only while its record on disk still names that copy, so a record another program replaced never backs a promise that no journal can keep, and once a folder stands where that record stood the refusal says how to move that folder aside without deleting what it holds, so the steps it displays let the learner retry (release-head pass: the read-first ending alone left the folder in the retry's way); fails_when=the refusal says that Codebook still tracks the copy, leaves it to the learner at will, omits its path, or words the folder's way out as another program's record without the move-aside, the copy is gone, or the retry that follows only the displayed steps leaves the receipt or answers anything but not-managed; no_claim=a real program that replaces the record (seam.afterPublish puts a folder where pending.json was once, right after the publish), and what a later run does with that folder
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
   await writeConfig(configPath, originalText)
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
   const configBeforeRemoval = readFileSync(configPath, 'utf8')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
   let copyPath = ''
 
@@ -2341,6 +2342,8 @@ test('A removal whose record another program replaced with a folder does not pro
       copyPath = displacedPath ?? ''
       rmSync(pendingPath, { force: true })
       mkdirSync(pendingPath)
+      // The folder another program put there holds a file of the learner's, which no step of Codebook's may delete.
+      writeFileSync(join(pendingPath, 'notes.txt'), 'learner notes')
     },
   })
 
@@ -2348,11 +2351,81 @@ test('A removal whose record another program replaced with a folder does not pro
   await assert.rejects(removal, (error: Error) => {
     assert.equal(
       error.message,
-      `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because another program changed or replaced that record at ${pendingPath} (a backup or sync tool may have put an older one back), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
+      `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because a folder stands at ${pendingPath}, where that record stood (a backup or sync tool may have put it there), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${pendingPath}, put that record back there; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
     )
     return true
   })
   assert.equal(readFileSync(copyPath, 'utf8'), configBeforeRemoval)
+
+  // Act: only the steps the refusal displays. The folder moves to another folder; neither it nor a backup holds the record, so nothing goes back, and the removal runs again.
+  const asidePath = join(home, 'folder-moved-aside')
+  renameSync(pendingPath, asidePath)
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(retry, { status: 'not-managed', path: configPath })
+  // The retry finishes the removal's cleanup: the receipt the removal kept goes, and the entry stays out.
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  // Moving the folder aside, never deleting it, kept what it holds.
+  assert.equal(
+    readFileSync(join(asidePath, 'notes.txt'), 'utf8'),
+    'learner notes',
+  )
+  assert.equal(readFileSync(copyPath, 'utf8'), configBeforeRemoval)
+})
+
+test('A removal whose record a sync tool moved into a folder at its name guides the learner to put that record back, and the retry that follows those steps reports the entry removed', async (context) => {
+  // Value: protects=the refusal of a removal whose completed record a folder kept from being written tells the learner to put the record the folder or a backup holds back at pending.json before the retry, so the retry reads it, settles the removal as recorded and reports the entry removed with its reload (release-head pass: the retry tests of an unrecorded removal restore the record first, which the refusal never asked for); fails_when=the refusal never mentions putting the record back, the retry that follows only the displayed steps answers anything but removed, the receipt or the copy the record names stays, or the entry comes back; no_claim=a real sync tool (seam.afterPublish moves the removal's own record into a folder it puts at that record's name, right after the reduced config went in), a record whose bytes changed in the move
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let copyPath = ''
+
+  // Act
+  const removalOutcome = await removeManagedDevinMcpEntry(storage, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      // A sync tool moves the removal's own record into a folder it puts at that record's name.
+      const movedAway = join(storage, 'devin-mcp', 'record-in-sync.json')
+      renameSync(pendingPath, movedAway)
+      mkdirSync(pendingPath)
+      renameSync(movedAway, join(pendingPath, 'pending.json'))
+    },
+  }).then(
+    (result) => JSON.stringify(result),
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(
+    removalOutcome,
+    `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because a folder stands at ${pendingPath}, where that record stood (a backup or sync tool may have put it there), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${pendingPath}, put that record back there; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
+  )
+
+  // Act: only the steps the refusal displays. The folder moves to another folder, the record it holds goes back at pending.json, and the removal runs again.
+  const asidePath = join(home, 'folder-moved-aside')
+  renameSync(pendingPath, asidePath)
+  writeFileSync(
+    pendingPath,
+    readFileSync(join(asidePath, 'pending.json'), 'utf8'),
+  )
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(retry, { status: 'removed', path: configPath })
+  // The settled removal ends its record and its receipt, and the copy the record named goes while it holds exactly the previous config.
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(copyPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
 })
 
 test('A removal whose own record a backup replaces right after it took the entry out names that record instead of asking to make room, and keeps its receipt and that record', async (context) => {
@@ -2593,8 +2666,8 @@ test('A retry after a removal that took the entry out but could not record it re
     }),
     /could not write its own record/,
   )
-  // The record's room is back, as the refusal asked.
-  rmSync(pendingPath, { recursive: true })
+  // Only the steps the refusal displays: the folder moves to another folder, and the record a backup held goes back.
+  renameSync(pendingPath, join(home, 'folder-moved-aside'))
   writeFileSync(pendingPath, pendingBytes)
 
   // Act
@@ -2624,8 +2697,8 @@ test('A retry after a removal that took the entry out but could not record it ke
     }),
     /could not write its own record/,
   )
-  // The record's room is back, as the refusal asked.
-  rmSync(pendingPath, { recursive: true })
+  // Only the steps the refusal displays: the folder moves to another folder, and the record a backup held goes back.
+  renameSync(pendingPath, join(home, 'folder-moved-aside'))
   writeFileSync(pendingPath, pendingBytes)
   const receiptText = readFileSync(receiptPath, 'utf8')
   let hasReadReceipt = false
@@ -2677,8 +2750,8 @@ test('A retry after a removal that could not record its completion still reports
     }),
     /could not write its own record/,
   )
-  // The record's room is back, as the refusal asked.
-  rmSync(pendingPath, { recursive: true })
+  // Only the steps the refusal displays: the folder moves to another folder, and the record a backup held goes back.
+  renameSync(pendingPath, join(home, 'folder-moved-aside'))
   writeFileSync(pendingPath, pendingBytes)
 
   // Act
@@ -18095,7 +18168,7 @@ test('Removing the setup right after a first setup that created the config file 
 })
 
 test('A removal that takes back a first setup that created the config keeps a record a backup puts at receipt.json while the take-back removes that config, says so, and still answers file-removed', async (context) => {
-  // Value: protects=a removal whose own run took a cut-short first setup back deletes receipt.json only while it shows what the removal read there (nothing), so a record a backup put there meanwhile stays and the notice says so, as after any removal that took the entry out (README line 95; OCR L2 P2 on answerRemovalWithoutTakeOut; Cycle 0149 review round); fails_when=the removal answers anything but file-removed with the kept-record sentence, receipt.json is gone or changes, or the config file stays; no_claim=a real backup tool (seam.afterRead writes a record at receipt.json once, at the take-back's read of the config right before it takes the entry out, after the removal read receipt.json; the first setup's seam.afterPublish blocks its receipt and seam.afterCheck ends its rollback), what the next run does with that record
+  // Value: protects=a removal whose own run took a cut-short first setup back deletes receipt.json only while it shows what the removal read there (nothing), so a record a backup put there meanwhile stays and the notice says that it appeared where no record stood when Codebook read that name, never that Codebook had read a record there, as after any removal that took the entry out (README line 95; OCR L2 P2 on answerRemovalWithoutTakeOut; Cycle 0149 review round; release-head pass: the run read no receipt, so the kept-record sentence of a read receipt is false here); fails_when=the removal answers anything but file-removed with the appeared-record sentence, receipt.json is gone or changes, or the config file stays; no_claim=a real backup tool (seam.afterRead writes a record at receipt.json once, at the take-back's read of the config right before it takes the entry out, after the removal read receipt.json; the first setup's seam.afterPublish blocks its receipt and seam.afterCheck ends its rollback), what the next run does with that record
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
@@ -18136,7 +18209,7 @@ test('A removal that takes back a first setup that created the config keeps a re
   assert.deepEqual(result, {
     status: 'file-removed',
     path: configPath,
-    cleanupFailure: `Codebook left the file at ${receiptPath} as it is, because it could not confirm that it was still the record of that entry Codebook had read there (a backup or sync tool may have put a record back there); the next run reads it again.`,
+    cleanupFailure: `Codebook left the file at ${receiptPath} as it is, because it appeared where no record stood when Codebook read that name (a backup or sync tool may have put a record back there); the next run reads it again.`,
   })
   // A record the removal deleted reads as 'absent', so the assertion names it.
   assert.equal(
@@ -29602,8 +29675,8 @@ test('A removal retry after a first setup that could not write its own record st
     }),
     /could not write its own record/,
   )
-  // The record's room is back, as the refusal asked.
-  rmSync(pendingPath, { recursive: true })
+  // Only the steps the refusal displays: the folder moves to another folder, and the record a backup held goes back.
+  renameSync(pendingPath, join(home, 'folder-moved-aside'))
   writeFileSync(pendingPath, pendingBytes)
 
   // Act

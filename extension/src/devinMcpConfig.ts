@@ -11809,7 +11809,10 @@ async function unrecordedRemovalRefusal(
       ? LEFTOVER_CLAUSE
       : UNCONFIRMED_CLAUSE
   const copy = previous ? ` and ${keptCopyPhrase(previous.path)}, ${fate}` : ''
-  const { because, ending } = unrecordedRemovalWording(context, recordConflict)
+  const { because, ending } = await unrecordedRemovalWording(
+    context,
+    recordConflict,
+  )
   // The staged name of the config without the entry that holds changes no config name reaches any more may hold the only copy of them: it is named after the way out.
   const editedApart = keptLeft
     .filter(({ isEditedApart }) => isEditedApart === true)
@@ -11827,14 +11830,15 @@ async function unrecordedRemovalRefusal(
  * @returns
  * - without a conflict: no cause, and `; make room for that record, <retry>.`
  * - for Codebook's own step at the record's dropping name ({@link DroppingNameConflictError}): no cause, and that refusal's own sentence, which names where the record stands and its way out
+ * - when a folder stands at the record's name: the cause that names it, and the way out that moves that folder to another folder without deleting what it holds and puts the record back when the folder or a backup holds it, because a retry while it stands fails the same way instead of reading a record first
  * - for another program's change: the cause that names that record at `pending.json` ({@link recordConflictCause}), and `; <retry>, and that run reads <pending.json> first.`
  * @example
- * unrecordedRemovalWording(context, journalConflictError(context, 'gone')) // => { because: ', because another program moved that record at …/pending.json away (…)', ending: '; then run Codebook: Remove Devin Desktop Setup again, and that run reads …/pending.json first.' }
+ * await unrecordedRemovalWording(context, journalConflictError(context, 'gone')) // => { because: ', because another program moved that record at …/pending.json away (…)', ending: '; then run Codebook: Remove Devin Desktop Setup again, and that run reads …/pending.json first.' }
  */
-function unrecordedRemovalWording(
+async function unrecordedRemovalWording(
   context: Context,
   recordConflict: JournalConflictError | undefined,
-): { because: string; ending: string } {
+): Promise<{ because: string; ending: string }> {
   const { pendingPath, retry } = context
   // A full disk: room for the record is the way out.
   if (!recordConflict)
@@ -11842,6 +11846,19 @@ function unrecordedRemovalWording(
   // Codebook's own step at the record's dropping name says where that record stands and its way out in its own sentence.
   if (recordConflict instanceof DroppingNameConflictError)
     return { because: '', ending: `. ${recordConflict.message}` }
+  // The way out is worded for what stands at the record's name now; a look that fails decides nothing, as for any notice ({@link lstatOrAbsent}).
+  const isFolder =
+    recordConflict.kind === 'changed' &&
+    (await lstatOrAbsent(pendingPath).then(
+      (standing) => standing?.isDirectory() === true,
+      () => false,
+    ))
+  // A folder at that name blocks every retry the same way, so the way out moves it aside without deleting what it may hold and says how the record it or a backup may hold goes back; any record there instead the retry reads first.
+  if (isFolder)
+    return {
+      because: `, because a folder stands at ${pendingPath}, where that record stood (a backup or sync tool may have put it there)`,
+      ending: `; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${pendingPath}, put that record back there; ${retry}, and that run reads ${pendingPath} first.`,
+    }
   return {
     because: `, because ${recordConflictCause(context, recordConflict.kind, 'that record')}`,
     ending: `; ${retry}, and that run reads ${pendingPath} first.`,
@@ -11882,21 +11899,25 @@ async function dropReceiptAfterRemoval(
 }
 
 /**
- * Says that a removal whose entry went left the file at `receipt.json` as it is, because that name no longer showed the record the run read there, or held Codebook's record of the entry in another config ({@link dropReceipt} answered `kept`); used by {@link dropReceiptAfterRemoval} and, for a retry of an unrecorded removal and a removal whose run took a cut-short first setup back, by {@link answerRemovalWithoutTakeOut}.
- * @param context - The run; its receipt path is named, and the config path a record of another config names ({@link Context.receiptVersion}'s `otherConfigPath`) picks the sentence.
+ * Says that a removal whose entry went left the file at `receipt.json` as it is, because that name no longer showed the record the run read there, or showed one where the run read none, or held Codebook's record of the entry in another config ({@link dropReceipt} answered `kept`); used by {@link dropReceiptAfterRemoval} and, for a retry of an unrecorded removal and a removal whose run took a cut-short first setup back, by {@link answerRemovalWithoutTakeOut}.
+ * @param context - The run; its receipt path is named, and the config path a record of another config names ({@link Context.receiptVersion}'s `otherConfigPath`) picks the sentence; whether the run knows a version there ({@link Context.receiptVersion}'s `current`) tells a record it read from one that appeared where it read none.
  * @returns One sentence for the removal's `cleanupFailure`:
  * - for a record of another config: that the file holds Codebook's record of the entry in that config, not in this one, and is to be moved to another folder once that config is no longer used
+ * - when the run read no record at that name: that the file appeared where no record stood when Codebook read that name, and the next run reads it again
  * - otherwise: that Codebook could not confirm it was still the record it had read there, and the next run reads it again
  * @example
  * keptReceiptSentence(context) // => 'Codebook left the file at …/receipt.json as it is, because it could not confirm that it was still the record of that entry Codebook had read there (…); the next run reads it again.'
  */
 function keptReceiptSentence({
   receiptPath,
-  receiptVersion: { otherConfigPath },
+  receiptVersion: { otherConfigPath, current },
 }: Context): string {
   // A record of another config's entry is named with that config, never as a record Codebook could not confirm.
   if (otherConfigPath !== undefined)
     return `Codebook left the file at ${receiptPath} as it is, because it holds its record of the "${SERVER_NAME}" entry in the MCP config at ${otherConfigPath}, not in this one (${OTHER_HOME_CAUSE}); if you no longer use ${otherConfigPath}, move that file to another folder.`
+  // The run read no record at that name, so the file there is none Codebook had read; naming one as read would be false.
+  if (current === undefined)
+    return `Codebook left the file at ${receiptPath} as it is, because it appeared where no record stood when Codebook read that name (a backup or sync tool may have put a record back there); the next run reads it again.`
   return `Codebook left the file at ${receiptPath} as it is, because it could not confirm that it was still the record of that entry Codebook had read there (a backup or sync tool may have put a record back there); the next run reads it again.`
 }
 
