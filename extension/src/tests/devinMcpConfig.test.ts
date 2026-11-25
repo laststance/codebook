@@ -7400,7 +7400,7 @@ test("A first setup whose receipt is blocked by a folder at its name and whose t
 })
 
 test("A first setup whose receipt write fails with an I/O error takes its entry out and asks only to run the setup again, never to make room, keeping the learner's other server", async (context) => {
-  // Value: protects=the way out a failed first setup's refusal ends with fits why its receipt could not be written (receiptFailureEnding): a write that fails for another reason than a full disk or quota or a file at receipt.json (here EIO) ends the took-out refusal with the retry alone, so the learner is never told to make room on a disk that has room, and the entry is taken out while the learner's other server stays (Cycle 0149 ship review, the specialist's note on receiptFailureEnding's default ending); fails_when=the refusal is another sentence (one that asks to make room included), the entry stays, the other server is lost, or a receipt or rollback record is left; no_claim=a real I/O error (seam.beforeRecordWrite fails the receipt's write once with EIO, after its bytes were flushed), a write that keeps failing, what the next run does
+  // Value: protects=the way out a failed first setup's refusal ends with fits why its receipt could not be written (receiptFailureEnding): a write that fails for another reason than a full disk or quota or a file at receipt.json (here EIO) ends the took-out refusal with the retry alone, as its own clause after a semicolon so it never reads as part of what Codebook did, so the learner is never told to make room on a disk that has room, and the entry is taken out while the learner's other server stays (Cycle 0149 ship review, the specialist's note on receiptFailureEnding's default ending, and the testing reader's note on its comma); fails_when=the refusal is another sentence (one that asks to make room included, or one that joins the retry to Codebook's own past-tense clause with a comma), the entry stays, the other server is lost, or a receipt or rollback record is left; no_claim=a real I/O error (seam.beforeRecordWrite fails the receipt's write once with EIO, after its bytes were flushed), a write that keeps failing, what the next run does
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -7425,7 +7425,7 @@ test("A first setup whose receipt write fails with an I/O error takes its entry 
   assert.equal(isReceiptRefused, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     mcpServers: { alpha: { command: 'a' } },

@@ -9241,7 +9241,7 @@ const FULL_DISK_CODES: ReadonlySet<unknown> = new Set(['ENOSPC', 'EDQUOT'])
  * @returns
  * - `; make room for that record, <retry>.` for a full disk or quota ({@link FULL_DISK_CODES})
  * - `. ` and the receipt conflict's own sentence ({@link ReceiptConflictError}), which names `receipt.json`, says that what stands there stays, and gives its own way out
- * - `, <retry>.` for any other failure
+ * - `; <retry>.` for any other failure, a clause of its own so the retry never reads as part of what Codebook did
  * @example
  * receiptFailureEnding(context, noSpaceLeft) // => '; make room for that record, then run Codebook: Set Up AI Chat again.'
  * receiptFailureEnding(context, receiptConflictError(context, 'changed')) // => '. Codebook found a file at …/receipt.json, … and that run reads that file first.'
@@ -9251,7 +9251,7 @@ function receiptFailureEnding({ retry }: Context, cause: unknown): string {
     return `; make room for that record, ${retry}.`
   // A file at receipt.json, or a name that could not be read again: that refusal names the file it left and its own way out.
   if (cause instanceof ReceiptConflictError) return `. ${cause.message}`
-  return `, ${retry}.`
+  return `; ${retry}.`
 }
 
 /** How a failed first setup's take-back goes on after its mark ({@link markBeforeTakeBack}): the run its rollback takes the entry out with, none when the take-back stops before it changes the config, the version of the mark this call wrote, the only record {@link takeOutUnrecordedEntry} may delete after a complete rollback, and, when the mark stopped at Codebook's own step at the record's dropping name, that refusal, whose own sentence the notice keeps. */
