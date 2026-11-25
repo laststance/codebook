@@ -5377,6 +5377,8 @@ type LeftoverLook =
 type Unsettled = {
   leftover: Leftover
   cause: unknown
+  /** Set when the published config that alone makes a completed change's displaced copy redundant could not be verified ({@link PublishedConfigUnprovenError}): unlike an ordinary leftover of a finished change, this copy stays tracked in the record, because it may be the last copy of the learner's other servers. */
+  staysTracked?: true
   /** Set when the copy was just handed to the learner ({@link HandedCopyError}): the record turns to handed and the refusal names the copy as kept. */
   isHandedOver?: boolean
   /** The inode the handed copy's name shows when the copy is handed over ({@link unsettledOf}); the handed record names it ({@link handedRecordOf}), because a copy that only its bytes proved, or a name a sync tool swapped meanwhile, has another inode than the recorded one. */
@@ -5638,6 +5640,26 @@ function assertConfigStill(
  */
 class ConfigChangedError extends Error {}
 
+/** Thrown when recovery cannot verify that the config path still holds the published inode and bytes of a completed replacement ({@link deleteRecordedLeftover}): the displaced copy may then be the last copy of the learner's other servers, so it stays tracked instead of being reported once and left to the learner. */
+class PublishedConfigUnprovenError extends Error {}
+
+/**
+ * The refusal of a completed replacement's copy cleanup when the published config cannot be verified; called by {@link deleteRecordedLeftover}. Its own text already says that the copy stays tracked, so {@link unsettledRefusal} shows it as it is.
+ * @param context - The run; its config path and retry are named.
+ * @param copyPath - The displaced copy that stays tracked.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw publishedConfigUnprovenError(context, keptPath) // => 'Codebook could not verify that the config at … is still the file Codebook published …'
+ */
+function publishedConfigUnprovenError(
+  { path, retry }: Context,
+  copyPath: string,
+): PublishedConfigUnprovenError {
+  return new PublishedConfigUnprovenError(
+    `Codebook could not verify that the config at ${path} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy: a later run of Codebook deletes it only while it still holds exactly your previous config and the published config still stands with the bytes Codebook wrote; look at both files before you use either, and never copy the private file over the config, ${retry}.`,
+  )
+}
+
 /**
  * Builds the refusal for a config name that changed while a leftover was read or about to be unlinked; called by {@link assertConfigStill}, {@link assertConfigStillPublished}, {@link assertConfigUnchangedSince} and {@link dropPutBackName}, which keep the leftover.
  * @param context - The run; its config path and retry are named.
@@ -5880,6 +5902,8 @@ async function unsettledOf(
       cause,
       copyFate: await recordedCopyFateOf(context, leftover.path),
     }
+  if (cause instanceof PublishedConfigUnprovenError)
+    return { leftover, cause, staysTracked: true }
   if (!isHandedCause(cause)) return { leftover, cause }
   // Only a found copy is ever handed over ({@link tidyLeftover}).
   const firstIno = look.kind === 'found' ? look.copy.ino : undefined
@@ -5923,6 +5947,8 @@ function unsettledRefusal(
     copyFate,
   }: Unsettled,
 ): Error {
+  // The unproven published config's own text already says that the copy stays tracked; the finished-change wording would wrongly leave it to the learner.
+  if (cause instanceof PublishedConfigUnprovenError) return cause
   // The put-back check's and the changed config's own texts name both paths and the state; the move-back advice would lose a new save.
   if (namesBothFiles(cause))
     return bothFilesRefusal(cause, leftover.path, phase, isHandoverUnrecorded)
@@ -6125,10 +6151,20 @@ async function tidyLeftover(
   if (config?.ino === copy.ino)
     return dropSecondName(context, leftover, copy, phase)
   // A displaced original of an unfinished change while another config stands at the config name (an editor saved after the move-aside): it may be the only copy of the learner's other servers, so it is handed over and named, never deleted. The published staged file's inode means the change did finish, so that copy is Codebook's own leftover.
-  // When the check returns, the config is the published staged file: its inode is checked again right before the unlink.
+  // When the check returns, the config is the published staged file: its inode is checked again right before the unlink. A completed replacement carries that inode and those bytes in its record, so the copy is redundant only while that very file still stands; a removal that deleted the config without publishing a replacement has no staged proof in its record and keeps the old deletion rule.
+  const recordedPublishedIno =
+    role === 'kept' &&
+    phase === 'completed' &&
+    pending.entrySha256 !== undefined &&
+    pending.stagedIno !== undefined &&
+    pending.stagedSha256 !== undefined
+      ? BigInt(String(pending.stagedIno))
+      : undefined
   const publishedIno =
-    role === 'kept' && phase === undefined && config ? config.ino : undefined
-  if (publishedIno !== undefined)
+    role === 'kept' && phase === undefined && config
+      ? config.ino
+      : recordedPublishedIno
+  if (phase === undefined && publishedIno !== undefined)
     await keepOriginalUnlessPublished(context, pending, publishedIno)
   if (
     role === 'kept' &&
@@ -6171,12 +6207,32 @@ async function deleteRecordedLeftover(
   // A storage that already stalls holds this step here, not at the synchronous look below.
   await lookAheadAt([path])
   assertLeftoverStill(context, path, { ino: copy.ino, size: copy.size })
+  const isCompletedPublish =
+    publishedIno !== undefined &&
+    leftoverPhaseOf(pending) === 'completed' &&
+    role === 'kept'
+  let publishedLook: InspectedCopy | undefined
+  // A completed replacement verifies its published config before the copy's last read, so that read is already the one after the config's async read and no extra read of the copy is needed.
+  if (isCompletedPublish) {
+    try {
+      publishedLook = await assertConfigStillPublished(
+        context,
+        pending,
+        publishedIno,
+        path,
+      )
+    } catch (error) {
+      // The copy is redundant only while the published file itself still stands verified; without that proof it may be the last copy of the learner's other servers, so the record keeps tracking it. A removal that deleted its config never reaches this branch: its record names no staged inode and bytes.
+      if (error instanceof ConfigChangedError)
+        throw publishedConfigUnprovenError(context, path)
+      throw error
+    }
+  }
   let lastLook = await inspectCopy(path, context.seam)
   // The file went away while it was read: whatever stands at the name now was never hashed, so nothing is deleted.
   if (!lastLook) return
   assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
-  let publishedLook: InspectedCopy | undefined
-  if (publishedIno !== undefined) {
+  if (publishedIno !== undefined && !isCompletedPublish) {
     // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it.
     publishedLook = await assertConfigStillPublished(
       context,
@@ -11873,13 +11929,15 @@ async function inspect(context: Context): Promise<Inspection> {
       conflict,
       false,
     )
-  // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
+  // A finished or handed change names its leftover once: the one reported is no longer tracked, unless its published config could not be proven and the copy may be the learner's last one ({@link Unsettled.staysTracked}). A copy handed over in this run keeps the record, now handed, so no later run deletes it.
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   // Written at once, before the config is read: a refusal of the steps below must not leave the handed copy deletable. A write that failed is said in the refusal, which then promises no handover.
   const isHandoverUnrecorded = Boolean(
     pending && isHandedNow && !(await persistHandover(run, pending, unsettled)),
   )
-  const tracked = phase ? unsettled.slice(1) : unsettled
+  const tracked = phase
+    ? unsettled.filter((entry, index) => index > 0 || entry.staysTracked)
+    : unsettled
   const [first] = unsettled
   const reported = first && {
     ...first,

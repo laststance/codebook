@@ -13,6 +13,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
   type BigIntStats,
@@ -16608,6 +16609,70 @@ test('An update whose published config a backup replaces before the moved-aside 
   const record = JSON.parse(readFileSync(pendingPath, 'utf8'))
   assert.equal(record.phase, 'completed')
   assert.equal(record.keptName, basename(copyPath))
+})
+
+test('A completed update record never costs the moved-aside copy after the published config is deleted, and the next run keeps tracking that copy', async (context) => {
+  // Value: protects=the last surviving copy of the learner's other servers: round-5 keeps the moved-aside copy when the config an update published can no longer be verified, but the record is already completed, so the next recovery may delete that copy only while the published inode and bytes still stand at the config path, never when a sync tool deleted that published config and the unedited staged name went with its own cleanup (Cycle 0149 round-6 review MAJOR-1287); fails_when=the copy is gone or changed after the next run, the record no longer tracks it, the next run answers as though nothing stayed, or the first update resolves; no_claim=a real sync tool (seam.afterPublish deletes the published config once, right after the post-link read confirmed it), a swap between the recovery's last look and its unlink (no Node primitive unlinks by inode), what happens once the published config is back
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const beforeUpdate = readFileSync(configPath, 'utf8')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let copyPath = ''
+
+  // Act
+  const firstError = await writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      afterPublish: (displacedPath) => {
+        if (copyPath !== '') return
+        copyPath = displacedPath ?? ''
+        // The updated config stands and the post-link read confirmed it: a sync tool deletes it before the copy cleanup.
+        unlinkSync(configPath)
+      },
+    },
+  ).then(
+    () => undefined,
+    (failure: unknown) => failure,
+  )
+  const recordAfterUpdate = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  const copyAfterUpdate = existsSync(copyPath)
+    ? readFileSync(copyPath, 'utf8')
+    : 'absent'
+  const nextError = await writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (failure: unknown) => failure,
+  )
+  // A name the next run left empty reads as 'absent', so the assertions name it.
+  const copyAfterNext = existsSync(copyPath)
+    ? readFileSync(copyPath, 'utf8')
+    : 'absent'
+  const recordAfterNext = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+
+  // Assert
+  assert.notEqual(copyPath, '')
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `${replacedBeforeReceiptRefusalText(configPath, pendingPath)} Codebook also kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  )
+  assert.equal(recordAfterUpdate.phase, 'completed')
+  assert.equal(copyAfterUpdate, beforeUpdate)
+  assert.equal(
+    nextError instanceof Error ? nextError.message : nextError,
+    `Codebook could not verify that the config at ${configPath} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy: a later run of Codebook deletes it only while it still holds exactly your previous config and the published config still stands with the bytes Codebook wrote; look at both files before you use either, and never copy the private file over the config, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(copyAfterNext, beforeUpdate)
+  assert.equal(recordAfterNext.phase, 'completed')
+  assert.equal(recordAfterNext.keptName, basename(copyPath))
 })
 
 test('An update whose config is written in place right after its link drops the staged name when its handover record cannot be written, so the next update is not refused for a second link', async (context) => {
