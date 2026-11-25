@@ -3757,7 +3757,7 @@ function inodeNow(path: string): bigint | undefined {
  * @param vacatedPath - The fresh private name.
  * @param linkedIno - The inode of the file the link gave the dropping name.
  * @returns Nothing once that name went, or holds nothing; a failed unlink of that second name is no failure (no build reads such a name).
- * @throws The {@link vacatedRecordKeptError} naming the fresh name when the dropping name no longer shows the moved file at that last look (a backup or sync tool may have moved or replaced it: the fresh name may be the record's last one, so it stays); the refusal naming both names ({@link bothRecordNamesError}) once another file went back to the record's name; a {@link leftoverReplacedError} naming the fresh name when that file is no regular file or could not go back (it stays there); what the look at the fresh name throws other than for a missing name (the record stays at the dropping name, which the next run puts back).
+ * @throws The {@link vacatedRecordKeptError} naming the fresh name when the dropping name no longer shows the moved file at that last look (a backup or sync tool may have moved or replaced it: the fresh name may be the record's last one, so it stays); the refusal naming both names ({@link bothRecordNamesError}) once another file went back to the record's name; a {@link leftoverReplacedError} naming the fresh name when that file was replaced before its unlink, is no regular file or could not go back (it stays there); what the look at the fresh name throws other than for a missing name (the record stays at the dropping name, which the next run puts back).
  * @example
  * await settleVacatedName(rollbackContext, vacatedPath, 43n) // '…/pending.json.rollback.<uuid>.tmp' is gone
  */
@@ -3775,6 +3775,9 @@ async function settleVacatedName(
     // Only another name of the file the dropping name still holds goes: dropping it loses nothing. Once the dropping name no longer shows that file, this name may be the record's last one: it stays, named.
     if (!isStagedNameStill(droppingPath, { ino: linkedIno }))
       throw vacatedRecordKeptError(context, vacatedPath)
+    // The awaited look may have given a sync tool time to replace this second name; never unlink that file.
+    if (inodeNow(vacatedPath) !== linkedIno)
+      throw leftoverReplacedError(vacatedPath)
     await unlink(vacatedPath).catch(() => undefined)
     return
   }
@@ -3783,6 +3786,9 @@ async function settleVacatedName(
   await link(vacatedPath, context.pendingPath).catch(() => {
     throw leftoverReplacedError(vacatedPath)
   })
+  // The awaited link may have given a sync tool time to replace this name; never unlink that file.
+  if (inodeNow(vacatedPath) !== vacated.ino)
+    throw leftoverReplacedError(vacatedPath)
   await unlink(vacatedPath).catch(() => undefined)
   throw bothRecordNamesError(context)
 }
@@ -11917,7 +11923,7 @@ export async function removeManagedDevinMcpEntry(
  * @returns
  * - `removed` when an earlier unrecorded removal already took the entry out (the retry reports it, so the window is still offered its reload), or this run's take-back's answer; either with the kept-record sentence as `cleanupFailure` when a record stays at `receipt.json`
  * - otherwise `status` itself, with `entryStays` when `not-managed` finds the entry still in the config without its receipt.
- * @throws The {@link otherConfigReceiptRefusal} when no take-back of this run took the entry out and `receipt.json` holds Codebook's record of the entry in another config; what {@link dropReceipt} throws.
+ * @throws The {@link otherConfigReceiptRefusal} when no take-back of this run took the entry out and `receipt.json` holds Codebook's record of the entry in another config. What {@link dropReceipt} throws is reported as `cleanupFailure` once the entry is out.
  * @example
  * await answerRemovalWithoutTakeOut(context, 'changed', inspected, false) // => { status: 'changed', path }
  * await answerRemovalWithoutTakeOut(context, 'not-managed', inspected, true) // => { status: 'removed', path, cleanupFailure: 'Codebook left the file at …/receipt.json as it is, …' } once a backup put a record back there
@@ -11931,13 +11937,20 @@ async function answerRemovalWithoutTakeOut(
   // A record of another config's entry stays, and a removal that changed nothing says so and goes no further.
   if (!inspected.tookBack) assertNoOtherConfigReceipt(context)
   // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry, and only as the run read it.
-  const receiptFate =
-    status === 'superseded' ? undefined : await dropReceipt(context)
-  // After the entry went, a record a backup or sync tool put at receipt.json meanwhile stays, and the notice says so.
-  const keptReceipt =
-    receiptFate === 'kept'
-      ? { cleanupFailure: keptReceiptSentence(context) }
-      : {}
+  let cleanupFailure: string | undefined
+  try {
+    const receiptFate =
+      status === 'superseded' ? undefined : await dropReceipt(context)
+    // After the entry went, a record a backup or sync tool put at receipt.json meanwhile stays, and the notice says so.
+    if (receiptFate === 'kept') cleanupFailure = keptReceiptSentence(context)
+  } catch (error) {
+    // The entry is already out, so its result is still reported; the receipt that could not be dropped is named for manual cleanup.
+    cleanupFailure =
+      error instanceof JournalConflictError
+        ? error.message
+        : `Codebook could not delete its own record of that entry at ${context.receiptPath}; delete that record by hand.`
+  }
+  const keptReceipt = cleanupFailure ? { cleanupFailure } : {}
   // The entry is gone because this run's take-back of an interrupted first setup took it out: the removal reports that, so the window is offered its reload.
   if (status === 'not-managed' && inspected.tookBack)
     return { status: inspected.tookBack, path: context.path, ...keptReceipt }

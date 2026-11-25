@@ -128,6 +128,13 @@ async function loadWithScriptedRecordReads(
   return loadModule<{ readReceiptState: typeof readReceiptState }>(
     resolve(__dirname, '../utils/readReceiptState.js'),
     {
+      'node:fs/promises': {
+        // Scripted notes name inode 43; every other name proves nothing.
+        lstat: (path: string) =>
+          Promise.resolve({
+            ino: path.endsWith('.codebook-dropping') ? 43n : 0n,
+          }),
+      },
       './readPrivateJsonState': {
         readPrivateJsonState: (path: string): Promise<PrivateJsonState> => {
           const name = basename(path)
@@ -641,6 +648,31 @@ test('an MCP receipt that Codebook holds at its dropping name while receipt.json
     state: 'installed',
     receipt: { installed: true, installationId: 'installation-a' },
   })
+})
+
+// Value: protects=a copy of Codebook's record of the entry with the same bytes at another inode, which a backup or sync tool put at the receipt's dropping name beside the move's note, never stands for that record: the note names the moved file's inode as well as its bytes, and both must match before the reader treats the file there as the receipt while receipt.json is empty (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState); fails_when=the copy answers installed instead of the empty receipt.json answering removed with the reason missing; no_claim=a file whose inode cannot be looked up after it was read, and how such a copy came to stand there (the test writes it and the note by hand)
+test('an MCP receipt answers removed with the reason missing when the dropping note names the same bytes at another inode than the file at its dropping name', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const recordText = JSON.stringify({
+    installed: true,
+    installationId: 'installation-a',
+  })
+  await writePrivate(`${receiptPath}.codebook-dropping`, recordText)
+  const { ino } = await stat(`${receiptPath}.codebook-dropping`, {
+    bigint: true,
+  })
+  await writePrivate(
+    `${receiptPath}.codebook-dropping-note`,
+    JSON.stringify({
+      moved: { ino: (ino + 1n).toString(), sha256: sha256Of(recordText) },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, { state: 'removed', reason: 'missing', receiptPath })
 })
 
 // Value: protects=a rewrite of Codebook's record of the entry that publishes its new record and deletes the old one between the read of receipt.json and the read of its dropping name never reads as a removal: both names read empty, so receipt.json is read once more and the record found there stands (Cycle 0149 ship review, specialist testing note; task 39's three-read rule for the publish record); fails_when=one empty read of receipt.json decides and the receipt answers removed with the reason missing; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name empty, then receipt.json with the record), and a second rewrite or a delete that begins before the third read (the stated residual)

@@ -1,3 +1,4 @@
+import { lstat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 import { z } from 'zod'
@@ -46,7 +47,7 @@ const notedVersionSchema = z.object({
   sha256: z.string(),
 })
 
-/** The dropping note beside the MCP entry's receipt, mirroring the config module's `droppingNoteSchema` (`devinMcpConfig.ts`), so a note that module reads as no note proves nothing here either: `moved` names the version the move took to the dropping name, `published` a rewrite's new record. Only `moved.sha256` is compared ({@link readNotedDropping}); the inode is checked only by that module's run start (`provenDroppedRecord`), since the bounded read gives none. */
+/** The dropping note beside the MCP entry's receipt, mirroring the config module's `droppingNoteSchema` (`devinMcpConfig.ts`), so a note that module reads as no note proves nothing here either: `moved` names the version the move took to the dropping name, `published` a rewrite's new record. Both `moved.ino` and `moved.sha256` are compared ({@link readNotedDropping}), as that module's run start checks them (`provenDroppedRecord`); the bounded read gives no inode, so this reader looks at the dropping name once more for it. */
 const droppingNoteSchema = z.object({
   moved: notedVersionSchema,
   published: notedVersionSchema.optional(),
@@ -121,8 +122,8 @@ function isMcpReceipt(receiptPath: string): boolean {
 type DroppingNoteVerdict = 'noted' | 'unnoted' | 'no-answer'
 
 /**
- * Tells whether the record read at the MCP entry's receipt's dropping name is the one Codebook moved there: the dropping note beside it ({@link DROPPING_NOTE_NAME_SUFFIX}), which every rewrite or delete writes before its move, must be a private note of the config module's shape ({@link droppingNoteSchema}) that names the SHA-256 of those very bytes, the proof every setup, refresh and removal asks before it puts that file back (`putNotedRecordBack`, which refuses any other file there as one a backup or sync tool may have put back); called only by {@link readReceiptOrDropped}, once the dropping name held something to parse, so a check of a setup that stands or was removed reads no note.
- * Limit: the inode the note names is not compared, since the bounded read gives none, so a copy of the very bytes it names on another inode stands here, while the config module's run start refuses it.
+ * Tells whether the record read at the MCP entry's receipt's dropping name is the one Codebook moved there: the dropping note beside it ({@link DROPPING_NOTE_NAME_SUFFIX}), which every rewrite or delete writes before its move, must be a private note of the config module's shape ({@link droppingNoteSchema}) that names the SHA-256 of those very bytes and the inode of the file at that name, the proof every setup, refresh and removal asks before it puts that file back (`putNotedRecordBack`, which refuses any other file there as one a backup or sync tool may have put back); called only by {@link readReceiptOrDropped}, once the dropping name held something to parse, so a check of a setup that stands or was removed reads no note.
+ * Limit: the inode is looked up after the bytes were read, so a replace between the two can still pass when the copy holds the same bytes and the note names its inode; the config module's run start reads the note and file as one tracked step. An inode that cannot be looked up proves nothing.
  * @param receiptPath - The MCP entry's `receipt.json`.
  * @param droppedSha256 - The SHA-256 of the bytes read at its dropping name.
  * @param platform - The platform whose file modes are judged.
@@ -147,10 +148,16 @@ async function readNotedDropping(
   // An empty name, or a file there that is no private note, proves nothing.
   if (read.state === 'removed') return 'unnoted'
   const note = droppingNoteSchema.safeParse(read.value)
-  // Only a note that names these very bytes proves that Codebook moved them there.
-  return note.success && note.data.moved.sha256 === droppedSha256
-    ? 'noted'
-    : 'unnoted'
+  if (!note.success || note.data.moved.sha256 !== droppedSha256)
+    return 'unnoted'
+  // The bounded read gives no inode, so the name is looked at once more; a lookup that fails proves nothing.
+  const inode = await lstat(`${receiptPath}${DROPPING_NAME_SUFFIX}`, {
+    bigint: true,
+  })
+    .then((status) => status.ino.toString())
+    .catch(() => undefined)
+  // Only a note that names these very bytes at this very inode proves that Codebook moved them there.
+  return inode === note.data.moved.ino ? 'noted' : 'unnoted'
 }
 
 /**
