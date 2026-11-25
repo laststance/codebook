@@ -4265,7 +4265,7 @@ async function unlinkProvenReceiptDelete(
 
 /**
  * Finishes the interrupted delete of Codebook's record of the entry only when deleting the moved receipt cannot orphan the entry it owns; called only by {@link finishProvenStep} for the receipt's dropping name.
- * The moved bytes themselves are parsed as receipt A. The delete is safe exactly when A does not own the config's current `codebook` entry, or when the receipt B standing at `receipt.json` owns that same entry; unreadable or unparsable bytes, an unreadable config, and a config or standing receipt that changes before the unlink all keep both files and refuse, because they prove neither half of that disjunction.
+ * The moved bytes themselves are parsed as receipt A. The delete is safe exactly when A does not own the config's current `codebook` entry, or when the receipt B standing at `receipt.json` is bound to this config ({@link receiptTargetsConfig}) and owns that same entry; unreadable or unparsable bytes, an unreadable config, a receipt of another config, and a config or standing receipt that changes before the unlink all keep both files and refuse, because they prove neither half of that disjunction.
  * @param context - The run; its pending path is `receipt.json` here.
  * @param aside - The moved receipt at its dropping name.
  * @throws The {@link unfinishedReceiptDeleteError} when ownership cannot be proven safe; what {@link unlinkProvenReceiptDelete} throws.
@@ -4296,8 +4296,12 @@ async function finishProvenReceiptDelete(
   if (!ownsEntry(entry, moved.receipt))
     return unlinkProvenReceiptDelete(context, aside, boundConfig)
   const standing = await readReceiptAt(context, context.receiptPath)
-  // Only a standing receipt that owns the same entry is the remaining proof that entry is Codebook's.
-  if (!standing || !ownsEntry(entry, standing.receipt))
+  // Only this config's own standing receipt that owns the same entry is the remaining proof that entry is Codebook's; the same entry bytes under another config's record prove nothing here.
+  if (
+    !standing ||
+    !receiptTargetsConfig(context, standing.receipt) ||
+    !ownsEntry(entry, standing.receipt)
+  )
     throw unfinishedReceiptDeleteError(context)
   await unlinkProvenReceiptDelete(context, aside, boundConfig, standing)
 }
@@ -4684,6 +4688,18 @@ function isStagedNameStill(staged: string, read: LeftoverLookback): boolean {
 }
 
 /**
+ * Tells whether a receipt is bound to this run's config, the same binding the normal receipt read applies; called by {@link readReceiptWithVersion} and by {@link finishProvenReceiptDelete}, whose recovery must never accept another config's receipt as ownership proof for this config.
+ * @param context - The run.
+ * @param receipt - The receipt whose target is compared.
+ * @returns `true` only when the receipt names this run's config path exactly.
+ * @example
+ * receiptTargetsConfig(context, receipt) // => false for a receipt copied from another home folder
+ */
+function receiptTargetsConfig(context: Context, receipt: Receipt): boolean {
+  return receipt.targetPath === context.path
+}
+
+/**
  * Reads `receipt.json` through one handle, as {@link readVersionedRecord} does, and gives the receipt together with the version of the file that read saw; called by {@link settleAfterRecovery}, whose read is the one the run's decisions rest on, so it keeps that version, and the config path a record of another config names, as {@link Context.receiptVersion}.
  * @param context - The run.
  * @returns The receipt when it covers this run's config path (undefined otherwise), the inode and bytes' hash of the file read there whatever config it covers (undefined when the name is empty), and, for a valid record of another config, the config path it names (`otherConfigPath`), so that occupied name is never taken for an empty one.
@@ -4705,7 +4721,7 @@ async function readReceiptWithVersion(context: Context): Promise<{
   )
   if (!read) return {}
   const { record, version } = read
-  return record.targetPath === context.path
+  return receiptTargetsConfig(context, record)
     ? { receipt: record, version }
     : { version, otherConfigPath: record.targetPath }
 }
@@ -5005,15 +5021,30 @@ function receiptConflictSentence(
 }
 
 /**
+ * Runs a caller's continuity look for a path that returns before {@link deleteThroughDroppingName} would run it; called by {@link dropReceipt} when the receipt cannot be read again, when nothing stands there, and when its pre-move name check fails. The awaited look at the look's names comes first, as {@link StillLook} asks.
+ * @param assertStill - The caller's continuity look, if any.
+ * @throws What `assertStill` throws; the non-delete answer is never returned then.
+ * @example
+ * await lookAndAssertStill(assertStill) // throws once a backup restored the config with the entry
+ */
+async function lookAndAssertStill(
+  assertStill: StillLook | undefined,
+): Promise<void> {
+  if (!assertStill) return
+  await lookAheadAt(assertStill.names)
+  assertStill.assert()
+}
+
+/**
  * Deletes `receipt.json` only while it shows the version the run's own read found there or its own last write published ({@link Context.receiptVersion}): the read that let a removal take its entry out or decide that nothing is Codebook's, or the adoption's receipt that goes back out; called by {@link dropReceiptAfterRemoval}, {@link answerRemovalWithoutTakeOut} and {@link withdrawAdoptedReceipt}.
  * The name is read through the thread pool ({@link receiptNameState}), the version it shows is noted beside it ({@link withDroppingNote}), and the name is then looked at once more synchronously, after an awaited look at it and at its dropping name ({@link lookAheadAt}); the record is never unlinked at its own name: it moves to its dropping name first and is deleted there only once it proves to be that version ({@link deleteThroughDroppingName}), so a record a backup or sync tool renames over `receipt.json` after the last look moves instead, goes back to that name and stays, and a stop in that moment leaves it at the dropping name, where the next run puts it back first while that note names it ({@link settleDroppedRecords}).
  * Limits: those of {@link deleteThroughDroppingName} (a file put at the dropping name between its synchronous look and the move is replaced, and a swap there between its last look and the unlink is not seen: a name only Codebook uses).
  * @param context - The run.
- * @param assertStill - What else must still hold, looked at right before the move, after an awaited look at its names, and again after the move and before the unlink ({@link deleteThroughDroppingName}).
+ * @param assertStill - What else must still hold, checked before a non-delete `kept` or `gone` answer too ({@link lookAndAssertStill}), looked at right before the move, after an awaited look at its names, and again after the move and before the unlink ({@link deleteThroughDroppingName}).
  * @returns
  * - `gone` when nothing of the receipt stands there any more: this call deleted it, or nothing stood there (also when the run read no receipt, and when another program emptied the name right before the move)
  * - `kept` when the name shows another file or other bytes, any file while the run read none, or cannot be read again, also when that is what the move took, which went back to `receipt.json`; and while the run's read found a record of another config's entry there ({@link Context.receiptVersion}'s `otherConfigPath`): what stands there stays
- * @throws The refusals of Codebook's own step at the dropping name, which name both names ({@link bothRecordNamesError}, {@link recordNotBackError}, {@link droppingChangedError}); what the move or the unlink throws other than for a name that is gone, once the record went back.
+ * @throws What `assertStill` throws, before any answer when it no longer holds; the refusals of Codebook's own step at the dropping name, which name both names ({@link bothRecordNamesError}, {@link recordNotBackError}, {@link droppingChangedError}); what the move or the unlink throws other than for a name that is gone, once the record went back.
  * @example
  * await dropReceipt(context) // => 'kept' once a backup put a record back at receipt.json after the removal read it
  */
@@ -5028,10 +5059,15 @@ async function dropReceipt(
   try {
     standing = await receiptNameState(context)
   } catch {
-    // Another file, other bytes or a name that cannot be read: it stays as it is.
+    // Another file, other bytes or a name that cannot be read: it stays as it is, but the caller's end state must still hold before that answer.
+    await lookAndAssertStill(assertStill)
     return 'kept'
   }
-  if (!standing) return 'gone'
+  if (!standing) {
+    // An empty receipt name is a non-delete answer too: the caller's end state must still hold before it is reported.
+    await lookAndAssertStill(assertStill)
+    return 'gone'
+  }
   // Should the run stop with the record at its dropping name, the next run puts back only the file the note names.
   return withDroppingNote<'gone' | 'kept'>(
     receiptTrackedContextOf(context),
@@ -5043,7 +5079,11 @@ async function dropReceipt(
         ...(assertStill?.names ?? []),
         receiptDroppingPathOf(context),
       ])
-      if (!isStagedNameStill(path, standing)) return 'kept'
+      // The awaited look above is this check's look-ahead; a mismatch is still no success unless the caller's end state holds.
+      if (!isStagedNameStill(path, standing)) {
+        assertStill?.assert()
+        return 'kept'
+      }
       assertStill?.assert()
       try {
         // Moved aside first and deleted there only as the version the run read, with the caller's look still holding after the move and before the unlink; a name another program emptied first is gone, as the delete wanted.
@@ -11437,13 +11477,14 @@ function isTakeBackCovered(
 }
 
 /**
- * Deletes an adopted receipt of the setup whose entry a take-back just took out ({@link finishCutShortSetup}), only while `receipt.json` still shows the version this run read ({@link dropReceipt}), so no receipt of that setup stays beside no entry; any other receipt stays as read.
+ * Deletes an adopted receipt of the setup whose entry a take-back just took out ({@link finishCutShortSetup}), only while `receipt.json` still shows the version this run read and the entry is still out of the config ({@link removalConfigStill}, {@link dropReceipt}), so no receipt of that setup stays beside no entry and no restored entry is left unmanaged; any other receipt stays as read.
  * @param context - The run; its receipt version is the one its decisions rest on ({@link settleAfterRecovery}).
  * @param pending - The setup's publish record.
  * @param receipt - The receipt that stood; of the record's generation only when an adoption wrote it ({@link isTakeBackCovered}).
  * @returns
  * - undefined once that adopted receipt is gone
  * - `receipt` itself otherwise: another generation's receipt, none, or an adopted one that stays (another file at its name, or a delete that failed)
+ * @throws The {@link RemovalEntryBackError} when the entry the take-back removed is back, or the config changed again, before the receipt's delete; the setup's record is not retired then.
  * @example
  * await dropAdoptedReceiptOf(run, pending, adoptedReceipt) // => undefined; receipt.json is gone
  */
@@ -11455,13 +11496,21 @@ async function dropAdoptedReceiptOf(
   // Only a receipt of the setup taken back goes.
   if (receipt === undefined || receipt.generation !== pending.generation)
     return receipt
-  const answer = await dropReceipt(context).catch(() => 'kept' as const)
+  // The entry must still be out when the receipt is deleted; a backup restore otherwise leaves that entry unmanaged once the setup's record ends.
+  const configStill = await removalConfigStill(context, receipt)
+  const answer = await dropReceipt(context, configStill).catch(
+    (error: unknown) => {
+      // Entry-back and config-continuity failures are proof failures of the withdrawal itself: they stop the setup record's retirement.
+      if (error instanceof RemovalEntryBackError) throw error
+      return 'kept' as const
+    },
+  )
   return answer === 'gone' ? undefined : receipt
 }
 
 /**
  * Finishes the take-back of a first setup whose rollback was cut short; called by {@link inspect} after {@link settleRollbackJournal} put the published config back.
- * That config holds the entry the failed setup published, and its receipt was never written, so the publish record is not adopted: the entry is taken out again with the rollback's own steps and checks ({@link rollBackPublishedEntry}) and the setup's record is retired. A config with no matching publish record, one a receipt of the same generation that setup wrote itself covers ({@link isTakeBackCovered}), or a record marked {@link Pending.notLinked} (that publish linked nothing), is not concerned. A receipt of the same generation that an adoption wrote ({@link Receipt.adopted}) covers nothing: the entry is taken back all the same, and that receipt goes with it, before the record ends, while `receipt.json` still shows the version this run read ({@link dropAdoptedReceiptOf}).
+ * That config holds the entry the failed setup published, and its receipt was never written, so the publish record is not adopted: the entry is taken out again with the rollback's own steps and checks ({@link rollBackPublishedEntry}) and the setup's record is retired. A config with no matching publish record, one a receipt of the same generation that setup wrote itself covers ({@link isTakeBackCovered}), or a record marked {@link Pending.notLinked} (that publish linked nothing), is not concerned. A receipt of the same generation that an adoption wrote ({@link Receipt.adopted}) covers nothing: the entry is taken back all the same, and that receipt goes with it, before the record ends, while `receipt.json` still shows the version this run read and the entry is still out of the config ({@link dropAdoptedReceiptOf}).
  * Limit: an adopted receipt that cannot go then (another file at its name, a delete that fails) stays beside no entry, as a removal's receipt that it left does, and the next setup or removal settles it.
  * @param context - The run.
  * @param pending - The setup's pending record.
@@ -11470,7 +11519,7 @@ async function dropAdoptedReceiptOf(
  * @param look - The config as it stands.
  * @param emptiedRetiredPath - The old record's private name that this run's put-back found empty ({@link settleRetiredReceipt}); the record ends only while that name is still empty ({@link retirePending}). Undefined otherwise.
  * @returns The config as it looks after the entry was taken out, what the take-back removed (`removal`: the file or only the entry) and the receipt that stands after it (`receipt`: undefined once an adopted receipt of that setup went); undefined when nothing was taken back (the record is then settled as before).
- * @throws A refusal when the entry could not be taken out again; nothing else is changed then. A {@link RecordConflictError} when the setup's record no longer stands at its name as this run read it right before the take-back would move the config ({@link assertTakeBackRecordStill}); the config is unchanged then. What {@link retirePending} throws after the take-back.
+ * @throws A refusal when the entry could not be taken out again; nothing else is changed then. A {@link RecordConflictError} when the setup's record no longer stands at its name as this run read it right before the take-back would move the config ({@link assertTakeBackRecordStill}); the config is unchanged then. The {@link RemovalEntryBackError} when the entry is back, or the config changed again, before the adopted receipt's delete; the receipt and the setup's record stay then. What {@link retirePending} throws after the take-back.
  * @example
  * const afterTakeBack = await finishCutShortSetup(context, pending, receipt, retained, look)
  */
