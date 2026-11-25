@@ -11,6 +11,8 @@ import { browserAttributeText } from '../utils/browserAttributeText'
 import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { withServedAddresses } from '../utils/withServedAddresses'
 
+import { shortestTimesInTurns } from './utils/shortestTimesInTurns'
+
 // The pinned parser alone reads a select by the rules before 2025; Node 24 loads this ESM package synchronously.
 const parse5: typeof Parse5 = require('parse5')
 
@@ -22,11 +24,13 @@ const CLOSED_SVG_PAGE_BOUND_RATIO = 6
 const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
 /** How many times as long as the HTML parser alone the reader may take for select pairs after deep nesting. Under parse5 8.1.0 the parser alone walked the stack at each select end, so its time grew with the square of the nesting, and the reader, which keeps the mode a select was pushed in, took 0.16 to 0.18 times the parser's time (0.09 under c8); when each select start and end walked the stack to reset the mode, 2.2 times (2.9 under c8). parse5 8.1.1 finds the topmost select without a walk, so the parser alone is linear here and the reader's own work per tag shows: on the development host (16 CPUs, Node 24.22) the shortest of five runs each gave 1.33 to 1.54 times the parser's time in 24 samples (the shortest of two, 1.09 to 1.68), and a reader that walks the stack at each select would grow with the square of the nesting against a linear parser, many times the bound. The bound is the test's own failing line, twice the parser's time (Cycle 0103). */
 const SELECT_PAIRS_PARSER_BOUND_RATIO = 2
-/** How many runs of the page the select-pairs timing test times for the reader and for the parser alone; the shortest of each counts, so one scheduling stall on a loaded host does not decide the ratio. */
+/** How many runs of the page the select-pairs timing test times for the reader and for the parser alone, in turns ({@link shortestTimesInTurns}); the shortest of each counts, so one scheduling stall on a loaded host does not decide the ratio. */
 const SELECT_PAIRS_TIMED_RUNS = 5
+/** How many times {@link servingTimes} serves each crafted page and the ordinary page in turns with it; the shortest of each counts. */
+const SERVING_TIMED_RUNS = 2
 /** How long the timing test waits for its worker's warm-up and ordinary page before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
-/** How many times as long as {@link ORDINARY_PAGE} the timing test waits for each crafted page before it takes the filtering for unfinished: more than every bound of these tests ({@link CLOSED_SVG_PAGE_BOUND_RATIO} the largest), so a page that misses its bound is measured, and a page that never ends is stopped. One fixed deadline for the whole worker cut the last page of the closed-svg test on a CI runner under coverage, where the ordinary page took 1,835 ms and the four pages together about 28 s more. */
+/** How many times as long as {@link ORDINARY_PAGE} the timing test waits for each run of a crafted page, besides the ordinary page's run in turns with it, before it takes the filtering for unfinished: more than every bound of these tests ({@link CLOSED_SVG_PAGE_BOUND_RATIO} the largest), so a page that misses its bound is measured, and a page that never ends is stopped. One fixed deadline for the whole worker cut the last page of the closed-svg test on a CI runner under coverage, where the ordinary page took 1,835 ms and the four pages together about 28 s more. */
 const PAGE_DEADLINE_RATIO = 10
 /** An ordinary Wiki page of more than 1 MB, sections of a heading, text, a link and code; each crafted page of the timing tests is compared with it. */
 const ORDINARY_PAGE =
@@ -38,50 +42,56 @@ const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
 /** The reader's script tag as {@link servedWikiPageHtml} hands it to the filter for a page served without a publication. */
 const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 
+/** A crafted page's shortest serving time and the shortest time of the ordinary page served in turns with it, in milliseconds. */
+type ServedInTurns = { page: number; ordinary: number }
+
 /**
- * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers how long each took, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's time is known, then twice {@link PAGE_DEADLINE_RATIO} times that time for each crafted page. The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
- * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`; it serves each crafted page twice as well and answers the shorter time, so that each crafted page is compared with an ordinary page in the same thread, served by the same call, and a moment of load on a busy machine lengthens neither measurement alone (Cycle 0049 F6: one run of a crafted page took 830 ms against the ordinary page's 184 ms under nine concurrent runs).
+ * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers for each crafted page its shortest time and the shortest time of the ordinary page served in turns with it, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's first time is known, then {@link SERVING_TIMED_RUNS} times one more than {@link PAGE_DEADLINE_RATIO} times that time for each crafted page. The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} once for the deadline; then, for each crafted page, it serves the crafted page and the ordinary page in turns, {@link SERVING_TIMED_RUNS} times each ({@link shortestTimesInTurns}), so that each crafted page is compared with an ordinary page in the same thread, served by the same call in the same moments of the machine, and a moment of load on a busy machine lengthens neither measurement alone (Cycle 0049 F6: one run of a crafted page took 830 ms against the ordinary page's 184 ms under nine concurrent runs; Discussion 354: the ordinary page's runs, all taken before the crafted pages' runs, missed the busy moments those met).
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
  * @param pages - The crafted pages, by name.
  * @param tagAtBodyEnd - The tag the function puts at the body's end of every page, the ordinary page's included, as the reader hands its script tag to the filter ({@link servedWikiPageHtml}); none when left out.
- * @returns The time of the ordinary page and of each crafted page in milliseconds, or `unfinished`.
+ * @returns For each crafted page, its time and the time of the ordinary page served in turns with it, in milliseconds, or `unfinished`.
  * @example
- * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { ordinary: 128, small: 0.1 }
- * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<body></body>' }, READER_SCRIPT_TAG) // => { ordinary: 210, small: 0.1 }
+ * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { small: { page: 0.1, ordinary: 128 } }
+ * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<body></body>' }, READER_SCRIPT_TAG) // => { small: { page: 0.1, ordinary: 210 } }
  */
 async function servingTimes(
   moduleName: string,
   exportName: string,
   pages: Record<string, string>,
   tagAtBodyEnd?: string,
-): Promise<Record<string, number | 'unfinished'>> {
-  const times: Record<string, number | 'unfinished'> = Object.fromEntries(
-    ['ordinary', ...Object.keys(pages)].map((name) => [name, 'unfinished']),
-  )
+): Promise<Record<string, ServedInTurns | 'unfinished'>> {
+  const times: Record<string, ServedInTurns | 'unfinished'> =
+    Object.fromEntries(Object.keys(pages).map((name) => [name, 'unfinished']))
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
 const serve = require(workerData.module)[workerData.exportName]
-const timeOf = (page) => {
-  const started = performance.now()
+const { shortestTimesInTurns } = require(workerData.timing)
+const serveOnce = (page) => {
   if (workerData.tagAtBodyEnd === undefined) serve(page, 'cursor')
   else serve(page, 'cursor', workerData.tagAtBodyEnd)
-  return performance.now() - started
 }
-timeOf(workerData.warmUp)
-parentPort.postMessage(['ordinary', Math.min(timeOf(workerData.ordinary), timeOf(workerData.ordinary))])
+serveOnce(workerData.warmUp)
+const started = performance.now()
+serveOnce(workerData.ordinary)
+parentPort.postMessage({ firstOrdinaryMs: performance.now() - started })
 for (const [name, page] of Object.entries(workerData.pages)) {
-  parentPort.postMessage([name, Math.min(timeOf(page), timeOf(page))])
+  const { measured, baseline } = shortestTimesInTurns(() => serveOnce(page), () => serveOnce(workerData.ordinary), workerData.runs)
+  parentPort.postMessage({ name, page: measured, ordinary: baseline })
 }`,
     {
       eval: true,
       workerData: {
         module: join(__dirname, '..', 'utils', `${moduleName}.js`),
         exportName,
+        timing: join(__dirname, 'utils', 'shortestTimesInTurns.js'),
         warmUp: WARM_UP_PAGE,
         ordinary: ORDINARY_PAGE,
         pages,
         tagAtBodyEnd,
+        runs: SERVING_TIMED_RUNS,
       },
     },
   )
@@ -90,15 +100,29 @@ for (const [name, page] of Object.entries(workerData.pages)) {
       void worker.terminate().then(() => resolve())
     }
     let deadline = setTimeout(stop, FILTER_DEADLINE_MS)
-    worker.on('message', ([name, milliseconds]: [string, number]) => {
-      times[name] = milliseconds
-      // Each crafted page gets its own deadline, a multiple of the ordinary page's time on this machine for each of its two runs, so a slow runner measures every page.
-      clearTimeout(deadline)
-      deadline = setTimeout(
-        stop,
-        2 * PAGE_DEADLINE_RATIO * (times.ordinary as number),
-      )
-    })
+    let firstOrdinaryMs = 0
+    worker.on(
+      'message',
+      (
+        message:
+          { firstOrdinaryMs: number } | ({ name: string } & ServedInTurns),
+      ) => {
+        // The first message gives the ordinary page's time on this machine; each later one a crafted page's turns.
+        if ('firstOrdinaryMs' in message)
+          firstOrdinaryMs = message.firstOrdinaryMs
+        else
+          times[message.name] = {
+            page: message.page,
+            ordinary: message.ordinary,
+          }
+        // Each crafted page gets its own deadline, a multiple of the ordinary page's time on this machine for each of its runs and the ordinary page's run in turns with it, so a slow runner measures every page.
+        clearTimeout(deadline)
+        deadline = setTimeout(
+          stop,
+          SERVING_TIMED_RUNS * (PAGE_DEADLINE_RATIO + 1) * firstOrdinaryMs,
+        )
+      },
+    )
     worker.on('exit', () => {
       clearTimeout(deadline)
       resolve()
@@ -107,7 +131,40 @@ for (const [name, page] of Object.entries(workerData.pages)) {
   return times
 }
 
-// Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags or unmatched ends rescan a deep stack, including after formatting adoption changes it, so a crafted page takes many times as long as an ordinary page of its size; why_new=W1 and row1044 plus row1058's observed non-top insertion callback, and a closed camelCase svg name (clipPath) whose end the open-name index must lower; row1058's full parser exceeds a fixed 400 ms on any page of 1 MB under coverage; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+// Value: protects=the timing-ratio tests of this file, which compare the reader's time with a baseline's only when both sides were timed in the same moments of the machine; fails_when=the timing helper times every run of one side before the other side's (the order under which a busy moment of the parallel suite fell on all of the reader's runs, Discussion 354), or answers a side's first, last or mean time instead of its shortest; why_new=Discussion 354 (option 1, owner-approved): the timing tests passed alone and failed under the parallel suite, so nothing else pins the order; seam=a scripted clock in place of performance.now and runs that write down their turn; no_claim=that a real machine's load falls on both sides alike, or the reader's speed (the timing tests' own runs)
+test('the timing-ratio tests time the measured run and its baseline in turns and compare the shortest time of each', () => {
+  // Arrange: a clock that answers scripted readings, so the measured run takes 30, 40 and 20 ms and the baseline 60, 50 and 80 ms, and runs that write down their turn.
+  const turns: string[] = []
+  const readingsMs = [0, 30, 30, 90, 100, 140, 140, 190, 200, 220, 220, 300]
+  const scriptedNow = (): number => {
+    const readingMs = readingsMs.shift()
+    if (readingMs === undefined)
+      throw new Error('the clock was read more often than scripted')
+    return readingMs
+  }
+
+  // Act
+  const times = shortestTimesInTurns(
+    () => turns.push('measured'),
+    () => turns.push('baseline'),
+    3,
+    scriptedNow,
+  )
+
+  // Assert: the sides took turns from the measured run on, every reading was used, and each side's shortest time is answered.
+  assert.deepEqual(turns, [
+    'measured',
+    'baseline',
+    'measured',
+    'baseline',
+    'measured',
+    'baseline',
+  ])
+  assert.deepEqual(readingsMs, [])
+  assert.deepEqual(times, { measured: 20, baseline: 50 })
+})
+
+// Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags or unmatched ends rescan a deep stack, including after formatting adoption changes it, so a crafted page takes many times as long as an ordinary page of its size served in turns with it; why_new=W1 and row1044 plus row1058's observed non-top insertion callback, and a closed camelCase svg name (clipPath) whose end the open-name index must lower; row1058's full parser exceeds a fixed 400 ms on any page of 1 MB under coverage; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker); serving each crafted page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
 test('the reader filters a page of more than 1 MB built to make a reading from every < slow within four times the time of an ordinary page of that size', async () => {
   // Arrange: large values and links, SVG markup, and absent or already closed names after deep foreign nesting.
   const pages = {
@@ -161,27 +218,22 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
     pages,
   )
 
-  // Assert: every page is over 1 MB, and each crafted page was filtered within the bound of the ordinary page's time.
+  // Assert: every page is over 1 MB, and each crafted page was filtered within the bound of the time of the ordinary page served in turns with it.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [true, true, true, true, true, true, true, true, true, true, true],
   )
-  const ordinary = times.ordinary
-  if (typeof ordinary !== 'number')
-    assert.fail('the ordinary page was not filtered before the deadline')
   assert.deepEqual(
     Object.entries(times).filter(
-      ([name, milliseconds]) =>
-        name !== 'ordinary' &&
-        (milliseconds === 'unfinished' ||
-          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+      ([, time]) =>
+        time === 'unfinished' ||
+        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
     ),
     [],
-    `the ordinary page took ${ordinary} ms`,
   )
 })
 
-// Value: protects=the extension host, which filters every served Wiki page synchronously, from seconds of filtering per crafted page; fails_when=an end tag whose name no open element has walks the open elements again in plain HTML, in a table, caption, table body, row or cell, or for a formatting, heading, form, template, select, table or table-section name, so each end costs as much as the nesting is deep, or each input scans the stack for an open select, also a hidden input in a table that leaves the select open; why_new=Cycle 0046 second /ship performance review PERF1 measured 1.5 to 6 s for these pages against 150 to 220 ms for the ordinary page; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+// Value: protects=the extension host, which filters every served Wiki page synchronously, from seconds of filtering per crafted page; fails_when=an end tag whose name no open element has walks the open elements again in plain HTML, in a table, caption, table body, row or cell, or for a formatting, heading, form, template, select, table or table-section name, so each end costs as much as the nesting is deep, or each input scans the stack for an open select, also a hidden input in a table that leaves the select open; why_new=Cycle 0046 second /ship performance review PERF1 measured 1.5 to 6 s for these pages against 150 to 220 ms for the ordinary page; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker); serving each crafted page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
 test('the reader filters a page of more than 1 MB of deep plain, table-held or foreign nesting with unmatched ends of any name within four times the time of an ordinary page', async () => {
   // Arrange: 20,000 open elements, then 20,000 ends of a name none of them has, in each insertion mode the reader skips such ends in; a row's implied tbody is open, so its absent section is tfoot. Last, inputs after a closed select and deep nesting, and hidden inputs that a table's rule takes inside an open select, each of which the reader checks for an open select.
   const pages = {
@@ -296,7 +348,7 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
     pages,
   )
 
-  // Assert: every page is over 1 MB, and each crafted page was filtered within the bound of the ordinary page's time.
+  // Assert: every page is over 1 MB, and each crafted page was filtered within the bound of the time of the ordinary page served in turns with it.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [
@@ -323,22 +375,17 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
       true,
     ],
   )
-  const ordinary = times.ordinary
-  if (typeof ordinary !== 'number')
-    assert.fail('the ordinary page was not filtered before the deadline')
   assert.deepEqual(
     Object.entries(times).filter(
-      ([name, milliseconds]) =>
-        name !== 'ordinary' &&
-        (milliseconds === 'unfinished' ||
-          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+      ([, time]) =>
+        time === 'unfinished' ||
+        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
     ),
     [],
-    `the ordinary page took ${ordinary} ms`,
   )
 })
 
-// Value: protects=the extension host against the filter's reading of a page by the select rules before 2025, which it takes for every page with a select; fails_when=that reading sets the mode at each select end by the pinned reset, which walks the stack as deep as the nesting, so select pairs after deep nesting take many times as long as an ordinary page (619 ms against 57 ms for 270 kB before the fix); why_new=Cycle 0047 row 2 (S11-F1) added that reading; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+// Value: protects=the extension host against the filter's reading of a page by the select rules before 2025, which it takes for every page with a select; fails_when=that reading sets the mode at each select end by the pinned reset, which walks the stack as deep as the nesting, so select pairs after deep nesting take many times as long as an ordinary page served in turns with them (619 ms against 57 ms for 270 kB before the fix); why_new=Cycle 0047 row 2 (S11-F1) added that reading; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker); serving the page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
 test('the reader filters a page of more than 1 MB of select pairs after deep nesting, which it also reads by the select rules before 2025, within four times the time of an ordinary page', async () => {
   // Arrange: 5,000 open elements, then 58,000 select pairs.
   const pages = {
@@ -354,48 +401,39 @@ test('the reader filters a page of more than 1 MB of select pairs after deep nes
     pages,
   )
 
-  // Assert: the page is over 1 MB and was filtered within the bound of the ordinary page's time.
+  // Assert: the page is over 1 MB and was filtered within the bound of the time of the ordinary page served in turns with it.
   assert.equal(pages.selectPairsAfterDeepNesting.length > 1_000_000, true)
-  const ordinary = times.ordinary
-  if (typeof ordinary !== 'number')
-    assert.fail('the ordinary page was not filtered before the deadline')
   const crafted = times.selectPairsAfterDeepNesting
   assert.ok(
-    typeof crafted === 'number' &&
-      // gstack-timing-ok: the bound is a ratio to the ordinary page timed in the same worker, not a time; this page measured 1.60 to 1.78 times it (1.70 to 1.74 under c8) and the slowest crafted page of the timing tests 2.13 times (Cycle 0047 row 73), against the bound 4
-      crafted <= CRAFTED_PAGE_BOUND_RATIO * ordinary,
-    `the page took ${crafted} ms and the ordinary page ${ordinary} ms`,
+    typeof crafted === 'object' &&
+      // gstack-timing-ok: the bound is a ratio to the ordinary page timed in turns with it in the same worker, not a time; this page measured 1.60 to 1.78 times it (1.70 to 1.74 under c8) and the slowest crafted page of the timing tests 2.13 times (Cycle 0047 row 73), against the bound 4
+      crafted.page <= CRAFTED_PAGE_BOUND_RATIO * crafted.ordinary,
+    `the page and the ordinary page served in turns with it took ${JSON.stringify(crafted)} ms`,
   )
 })
 
-// Value: protects=the extension host against the reader's own cost on select pairs after deep nesting, which the HTML parser makes as long as the nesting is deep for each pair; fails_when=a select start or end sets the mode by the pinned reset, which walks the stack, so the reader takes twice as long as the parser alone or more (8.3 s against 3.2 s for 1 MB); why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief; seam=a worker thread that times the reader and the parser alone on the same page, the shortest of five runs each after a warm-up; no_claim=the parser's own time, which only the Wiki reader's deadline bounds
+// Value: protects=the extension host against the reader's own cost on select pairs after deep nesting, which the HTML parser makes as long as the nesting is deep for each pair; fails_when=a select start or end sets the mode by the pinned reset, which walks the stack, so the reader takes twice as long as the parser alone or more (8.3 s against 3.2 s for 1 MB); why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief; seam=a worker thread that times the reader and the parser alone on the same page in turns (reader, parser, reader, parser …), the shortest of five runs each after a warm-up; no_claim=the parser's own time, which only the Wiki reader's deadline bounds; timing the two in turns and comparing each one's shortest time removes a busy moment that falls on all of the reader's runs while the parser ran before or after it (Discussion 354: 34.8 ms against 10.4 ms under the parallel suite), not a load that covers every run of one side, which still fails the test
 test('the reader reads select pairs after deep nesting within twice the time the HTML parser alone takes for them', async () => {
   // Arrange: 5,000 open elements, then 15,000 select pairs.
   const page = '<x>'.repeat(5_000) + '<select></select>'.repeat(15_000)
 
-  // Act: in a worker, the reader's time and the parser's time for the page.
+  // Act: in a worker, the reader's time and the parser's time for the page, timed in turns.
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
 const { readHtmlStartTags } = require(workerData.reader)
 const { parse } = require(workerData.parser)
-const timeOf = (run) => {
-  const started = performance.now()
-  run()
-  return performance.now() - started
-}
+const { shortestTimesInTurns } = require(workerData.timing)
 const parseAlone = (html) => parse(html, { sourceCodeLocationInfo: true, scriptingEnabled: true })
-timeOf(() => readHtmlStartTags(workerData.warmUp))
-timeOf(() => parseAlone(workerData.warmUp))
-const shortestOf = (run) => Math.min(...Array.from({ length: workerData.runs }, () => timeOf(run)))
-parentPort.postMessage({
-  reader: shortestOf(() => readHtmlStartTags(workerData.page)),
-  parser: shortestOf(() => parseAlone(workerData.page)),
-})`,
+readHtmlStartTags(workerData.warmUp)
+parseAlone(workerData.warmUp)
+const { measured, baseline } = shortestTimesInTurns(() => readHtmlStartTags(workerData.page), () => parseAlone(workerData.page), workerData.runs)
+parentPort.postMessage({ reader: measured, parser: baseline })`,
     {
       eval: true,
       workerData: {
         reader: join(__dirname, '..', 'utils', 'readHtmlStartTags.js'),
         parser: require.resolve('parse5'),
+        timing: join(__dirname, 'utils', 'shortestTimesInTurns.js'),
         warmUp: WARM_UP_PAGE,
         page,
         runs: SELECT_PAIRS_TIMED_RUNS,
@@ -424,16 +462,14 @@ parentPort.postMessage({
   )
 })
 
-// Value: protects=the extension host against a reader whose time per page grows faster than the page, which the ratio tests pass when it slows every page alike; fails_when=filtering the ordinary page of more than 1 MB takes more than three times as long as filtering its first half (linear time gives about two), so the time to serve a page grows with its square; why_new=Cycle 0046 second /ship testing review TEST6 (the only absolute limit was the 30 s deadline); seam=a worker thread, the shortest of three runs of each size after a warm-up (the whole page's first run is the harness's shorter of two); no_claim=a bound in milliseconds (the host's speed is not measured)
+// Value: protects=the extension host against a reader whose time per page grows faster than the page, which the ratio tests pass when it slows every page alike; fails_when=filtering the ordinary page of more than 1 MB takes more than three times as long as filtering its first half (linear time gives about two), so the time to serve a page grows with its square; why_new=Cycle 0046 second /ship testing review TEST6 (the only absolute limit was the 30 s deadline); seam=a worker thread, the shortest of six runs of each size, the half and the whole page served in turns (half, whole, half, whole …) after a warm-up; no_claim=a bound in milliseconds (the host's speed is not measured); serving the half and the whole page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one size while the other ran before or after it (Discussion 354), not a load that covers every run of one size, which still fails the test
 test('the reader filters an ordinary page of more than 1 MB within three times the time of its first half', async () => {
-  // Arrange: the first half of the ordinary page, 4,500 of its 9,000 sections, three times, and the whole page twice more.
+  // Arrange: the first half of the ordinary page, 4,500 of its 9,000 sections, three times, each served in turns with the whole page.
   const half = ORDINARY_PAGE.slice(0, ORDINARY_PAGE.length / 2)
   const pages = {
     firstHalf: half,
     secondHalf: half,
     thirdHalf: half,
-    secondWhole: ORDINARY_PAGE,
-    thirdWhole: ORDINARY_PAGE,
   }
 
   // Act
@@ -445,28 +481,25 @@ test('the reader filters an ordinary page of more than 1 MB within three times t
 
   // Assert: the half page holds exactly half of the sections, every run finished, and the whole page took at most three times as long.
   assert.equal(half.length * 2, ORDINARY_PAGE.length)
-  const halfTimes = [times.firstHalf, times.secondHalf, times.thirdHalf].filter(
-    (milliseconds) => typeof milliseconds === 'number',
-  )
-  const wholeTimes = [
-    times.ordinary,
-    times.secondWhole,
-    times.thirdWhole,
-  ].filter((milliseconds) => typeof milliseconds === 'number')
-  assert.deepEqual(
-    [halfTimes.length, wholeTimes.length],
-    [3, 3],
+  const halvesInTurns = [
+    times.firstHalf,
+    times.secondHalf,
+    times.thirdHalf,
+  ].filter((time) => typeof time === 'object')
+  assert.equal(
+    halvesInTurns.length,
+    3,
     'the pages were not filtered before the deadline',
   )
-  const halfTime = Math.min(...halfTimes)
-  const wholeTime = Math.min(...wholeTimes)
+  const halfTime = Math.min(...halvesInTurns.map((time) => time.page))
+  const wholeTime = Math.min(...halvesInTurns.map((time) => time.ordinary))
   assert.ok(
     wholeTime <= ORDINARY_PAGE_GROWTH_BOUND_RATIO * halfTime,
     `the whole page took ${wholeTime} ms and its half ${halfTime} ms`,
   )
 })
 
-// Value: protects=the extension host's page workers against the filter's cost on the path the reader takes for every page: the reader hands its script tag to the filter (servedWikiPageHtml), which puts it at the body's end or the page's end, after a meta where svg content is open there, reads the page again with them in it, and reads a page with a select and a noscript under all four readings, again after each round that renamed an attribute; fails_when=the pass with the reader's tag, the meta or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts, so a page of 1 MB with a select, a noscript and an svg before its end takes more than four times as long as the ordinary page served the same way (these rows took 2.4 to 2.7 times it plain and 2.4 to 2.5 under c8 on the development host, 16 CPUs, Node 24.21); why_new=Cycle 0047 row 191 (S2PERF-2 = S2TEST-4): every timing test called the filter without the reader's tag, so this path was never timed; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness
+// Value: protects=the extension host's page workers against the filter's cost on the path the reader takes for every page: the reader hands its script tag to the filter (servedWikiPageHtml), which puts it at the body's end or the page's end, after a meta where svg content is open there, reads the page again with them in it, and reads a page with a select and a noscript under all four readings, again after each round that renamed an attribute; fails_when=the pass with the reader's tag, the meta or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts, so a page of 1 MB with a select, a noscript and an svg before its end takes more than four times as long as the ordinary page served the same way (these rows took 2.4 to 2.7 times it plain and 2.4 to 2.5 under c8 on the development host, 16 CPUs, Node 24.21); why_new=Cycle 0047 row 191 (S2PERF-2 = S2TEST-4): every timing test called the filter without the reader's tag, so this path was never timed; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness; serving each page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
 test('the reader filters a page of more than 1 MB with a select, a noscript and an svg open before its body end, or before its end without a body end, with its script tag put in as the reader serves it, within four times the time of an ordinary page served the same way', async () => {
   // Arrange: a select, a noscript, the ordinary page's sections or refused links, and an svg left open, with a body end and without one.
   const start =
@@ -487,27 +520,22 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
     READER_SCRIPT_TAG,
   )
 
-  // Assert: every page is over 1 MB, and each was filtered within the bound of the ordinary page's time.
+  // Assert: every page is over 1 MB, and each was filtered within the bound of the time of the ordinary page served in turns with it.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [true, true, true, true],
   )
-  const ordinary = times.ordinary
-  if (typeof ordinary !== 'number')
-    assert.fail('the ordinary page was not filtered before the deadline')
   assert.deepEqual(
     Object.entries(times).filter(
-      ([name, milliseconds]) =>
-        name !== 'ordinary' &&
-        (milliseconds === 'unfinished' ||
-          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+      ([, time]) =>
+        time === 'unfinished' ||
+        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
     ),
     [],
-    `the ordinary page took ${ordinary} ms`,
   )
 })
 
-// Value: protects=the extension host's page workers against the filter's cost on a page with a select and a noscript whose svg Chrome's reading closes before the reader's tag: the filter reads such a page under the three other readings up to the tag's place, to tell whether one of them leaves the svg open there, besides Chrome's reading and the round of the three others, and once more by Chrome's rules with the tag in it when the tag goes at the page's end; fails_when=that check, the reading with the tag or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts by more than half again, so such a page of more than 1 MB takes more than six times as long as the ordinary page served the same way (these rows took 3.14 to 3.75 times it with a body end and 3.46 to 4.25 without one on the development host, 16 CPUs, Node 24.21, plain and under c8); why_new=Cycle 0047 row 205 (found while fixing row 191): the timing test of row 191 left this shape out, as its count of readings (seven with a body end and eight without, against the ordinary page's two) puts it at that test's bound of four; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=a page whose rounds rename attributes in a reading beside Chrome's, which every reading then reads again (the rounds' own tests), and native editor responsiveness
+// Value: protects=the extension host's page workers against the filter's cost on a page with a select and a noscript whose svg Chrome's reading closes before the reader's tag: the filter reads such a page under the three other readings up to the tag's place, to tell whether one of them leaves the svg open there, besides Chrome's reading and the round of the three others, and once more by Chrome's rules with the tag in it when the tag goes at the page's end; fails_when=that check, the reading with the tag or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts by more than half again, so such a page of more than 1 MB takes more than six times as long as the ordinary page served the same way (these rows took 3.14 to 3.75 times it with a body end and 3.46 to 4.25 without one on the development host, 16 CPUs, Node 24.21, plain and under c8); why_new=Cycle 0047 row 205 (found while fixing row 191): the timing test of row 191 left this shape out, as its count of readings (seven with a body end and eight without, against the ordinary page's two) puts it at that test's bound of four; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=a page whose rounds rename attributes in a reading beside Chrome's, which every reading then reads again (the rounds' own tests), and native editor responsiveness; serving each page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
 test('the reader filters a page of more than 1 MB with a select, a noscript and an svg closed before its body end, or before its end without a body end, with its script tag put in as the reader serves it, within six times the time of an ordinary page served the same way', async (context) => {
   // Arrange: a select, a noscript and a closed svg, then the ordinary page's sections or refused links, with a body end and without one.
   const start =
@@ -528,33 +556,28 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
     READER_SCRIPT_TAG,
   )
 
-  // Assert: every page is over 1 MB, and each was filtered within the bound of the ordinary page's time.
+  // Assert: every page is over 1 MB, and each was filtered within the bound of the time of the ordinary page served in turns with it.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [true, true, true, true],
   )
-  const ordinary = times.ordinary
-  if (typeof ordinary !== 'number')
-    assert.fail('the ordinary page was not filtered before the deadline')
   // The run's ratios stand in the test's output, so a runner's log shows how near the bound they came.
   context.diagnostic(
     Object.entries(times)
-      .map(([name, milliseconds]) =>
-        typeof milliseconds === 'number'
-          ? `${name} ${(milliseconds / ordinary).toFixed(2)}`
-          : `${name} unfinished`,
+      .map(([name, time]) =>
+        time === 'unfinished'
+          ? `${name} unfinished`
+          : `${name} ${(time.page / time.ordinary).toFixed(2)}`,
       )
       .join(', '),
   )
   assert.deepEqual(
     Object.entries(times).filter(
-      ([name, milliseconds]) =>
-        name !== 'ordinary' &&
-        (milliseconds === 'unfinished' ||
-          milliseconds > CLOSED_SVG_PAGE_BOUND_RATIO * ordinary),
+      ([, time]) =>
+        time === 'unfinished' ||
+        time.page > CLOSED_SVG_PAGE_BOUND_RATIO * time.ordinary,
     ),
     [],
-    `the ordinary page took ${ordinary} ms`,
   )
 })
 
@@ -652,7 +675,7 @@ test('an unknown constructor element stays readable and its refused link loses i
   )
 })
 
-// Value: protects=the editor's extension host, which rewrites every page the Wiki reader serves synchronously, Codebook's addresses and the rail's entry included; fails_when=the rebinding of Codebook's addresses reads the page by a pattern that backtracks over quotes and slashes, or the entry's description id is looked for once per number in the whole page, so a page of 1 MB stalls the host for minutes; why_new=Cycle 0046 /ship third review W1 and W5 (the rebinding joins the filter's single pass); seam=a worker thread, so the deadline can stop a rewrite that does not end
+// Value: protects=the editor's extension host, which rewrites every page the Wiki reader serves synchronously, Codebook's addresses and the rail's entry included; fails_when=the rebinding of Codebook's addresses reads the page by a pattern that backtracks over quotes and slashes, or the entry's description id is looked for once per number in the whole page, so a page of 1 MB stalls the host for minutes, many times as long as an ordinary page served in turns with it; why_new=Cycle 0046 /ship third review W1 and W5 (the rebinding joins the filter's single pass); seam=a worker thread, so the deadline can stop a rewrite that does not end; no_claim=native editor responsiveness (the rewrite runs in an isolated test worker); serving each crafted page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
 test('the reader serves a page of more than 1 MB built to make a pattern of its tags or its ids slow, Codebook’s addresses and the rail’s entry included, within four times the time of an ordinary page of that size', async () => {
   // Arrange: values that run into slashes, quotes that open values, and a page whose headings carry the numbered ids of the entry's description, with an entry of 0.2.29.0 that needs one.
   const pages = {
@@ -673,23 +696,18 @@ test('the reader serves a page of more than 1 MB built to make a pattern of its 
     pages,
   )
 
-  // Assert: every page is over 1 MB, and each crafted page was served within the bound of the ordinary page's time.
+  // Assert: every page is over 1 MB, and each crafted page was served within the bound of the time of the ordinary page served in turns with it.
   assert.deepEqual(
     Object.values(pages).map((page) => page.length > 1_000_000),
     [true, true, true],
   )
-  const ordinary = times.ordinary
-  if (typeof ordinary !== 'number')
-    assert.fail('the ordinary page was not served before the deadline')
   assert.deepEqual(
     Object.entries(times).filter(
-      ([name, milliseconds]) =>
-        name !== 'ordinary' &&
-        (milliseconds === 'unfinished' ||
-          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+      ([, time]) =>
+        time === 'unfinished' ||
+        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
     ),
     [],
-    `the ordinary page took ${ordinary} ms`,
   )
 })
 
