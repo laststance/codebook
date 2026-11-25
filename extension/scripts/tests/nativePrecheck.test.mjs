@@ -316,6 +316,31 @@ test("an editor's TypeScript language server started as tsc --lsp is not counted
   assert.deepEqual(counts, NOTHING_RUNS)
 })
 
+// Value: protects=a clear verdict while an editor's Fallow language server or an agent's Fallow MCP server stays open (`fallow-lsp` and `fallow-mcp` start the native binary as `fallow lsp-server` and `fallow mcp-server` and leave it running for hours), while a Fallow analysis beside them still counts; fails_when=either server is counted as a fallow run, so the check says busy although nothing is analysed, or the skip also drops a `fallow health` run; no_claim=a server started under another program name
+test("an editor's Fallow language server and an agent's Fallow MCP server are not counted, while a Fallow analysis still is", () => {
+  // Arrange
+  const node = '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node'
+  const modules = '/Users/example/codebook/extension/node_modules'
+  const nativeFallow = `${modules}/.pnpm/@fallow-cli+darwin-arm64@3.47.0/node_modules/@fallow-cli/darwin-arm64/fallow`
+  const rows = [
+    { pid: 6301, command: node, args: [`${modules}/fallow/bin/fallow-lsp`] },
+    { pid: 6302, command: nativeFallow, args: ['lsp-server'] },
+    { pid: 6303, command: node, args: [`${modules}/fallow/bin/fallow-mcp`] },
+    { pid: 6304, command: nativeFallow, args: ['mcp-server'] },
+    {
+      pid: 6305,
+      command: nativeFallow,
+      args: ['health', '--complexity', '--max-crap', 'inf'],
+    },
+  ]
+
+  // Act
+  const counts = countProcessKinds(rows, 4242)
+
+  // Assert
+  assert.deepEqual(counts, { ...NOTHING_RUNS, fallow: 1 })
+})
+
 // Value: protects=the precheck never counting itself or the `ps` it starts, also when it reads the machine from inside a node --test run; fails_when=the own pid is counted as a node --test process, so the check says busy because it runs; no_claim=the parent test run, which is another process and counts
 test("the precheck's own process and its ps are not counted, even inside a node --test run", () => {
   // Arrange
