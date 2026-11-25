@@ -104,6 +104,22 @@ test('an unreadable swap line is read as unknown', () => {
   assert.deepEqual(swaps, [undefined, undefined, undefined])
 })
 
+// Value: protects=a malformed or non-finite swap amount read as unknown instead of as a valid amount within the limit; fails_when=a line with `1..2`, `1.2.3` or a digit string large enough to become Infinity yields a swap object, so a broken sysctl answer can end as clear; no_claim=why sysctl printed it
+test('a malformed or non-finite swap amount is read as unknown', () => {
+  // Arrange
+  const lines = [
+    'total = 1..2M  used = 0.00M  free = 0.00M  (encrypted)',
+    'total = 16.00G  used = 1.2.3G  free = 0.50G  (encrypted)',
+    `total = ${'9'.repeat(400)}M  used = 0.00M  free = 0.00M  (encrypted)`,
+  ]
+
+  // Act
+  const swaps = lines.map((line) => parseSwapUsage(line))
+
+  // Assert
+  assert.deepEqual(swaps, [undefined, undefined, undefined])
+})
+
 // Value: protects=each line of `ps -A -ww -o pid=,args=` read as a pid, a command and its arguments; fails_when=the pid is lost, the command is mixed into the arguments, or a blank line becomes a row; no_claim=a command whose path holds a space (read as two words, named in --help)
 test('the process listing is read as one row of pid, command and arguments per line', () => {
   // Arrange
@@ -579,6 +595,26 @@ test('a machine whose swap and process list cannot be read is busy and says so',
   })
 })
 
+// Value: protects=an empty process table read as an unknown process list instead of as proof that nothing builds (`ps` always prints at least its own row; an empty or truncated table is unreadable); fails_when=an empty rows array yields all-zero counts and a clear verdict; no_claim=why the table was empty
+test('an empty process table is busy as an unknown process list', async () => {
+  // Arrange
+  const readings = {
+    loadAverages: [1, 1, 1],
+    cores: 8,
+    swapText: 'total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)',
+    processRows: [],
+  }
+
+  // Act
+  const result = await runWithReadings([], readings)
+
+  // Assert
+  assert.equal(result.exitCode, 3)
+  assert.equal(result.err.length, 0)
+  assert.ok(result.out.includes('Running: unknown (no process list)'))
+  assert.equal(result.out.at(-1), 'PRECHECK: busy process list unknown')
+})
+
 // Value: protects=the printed report: one line for the load and cores, one for the swap, one per kind, and the verdict last, with exit 3 when busy; fails_when=a line is missing or reordered, the verdict is not last, or busy exits 0; no_claim=the real machine's numbers (the run reported by the fixer)
 test('a busy machine prints load, swap, one line per kind and the busy verdict last, and exits 3', async () => {
   // Arrange
@@ -625,7 +661,7 @@ test('--json prints the facts and the verdict as one object, judged against --ma
     loadAverages: [1.234, 2, 3.5],
     cores: 8,
     swapText: 'total = 2048.00M  used = 1228.25M  free = 819.75M  (encrypted)',
-    processRows: [],
+    processRows: [{ pid: 1, command: '/sbin/launchd', args: [] }],
   }
 
   // Act

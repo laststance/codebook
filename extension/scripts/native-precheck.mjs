@@ -35,7 +35,7 @@ const MB_PER_SWAP_UNIT = { K: 1 / 1024, M: 1, G: 1024 }
 
 /** The swap line of `sysctl -n vm.swapusage`, e.g. `total = 2048.00M  used = 1228.25M  free = 819.75M  (encrypted)`. */
 const SWAP_LINE_PATTERN =
-  /total = ([\d.]+)([KMG])\s+used = ([\d.]+)([KMG])\s+free = ([\d.]+)([KMG])/
+  /total = (\d+(?:\.\d+)?)([KMG])\s+used = (\d+(?:\.\d+)?)([KMG])\s+free = (\d+(?:\.\d+)?)([KMG])/
 
 /** The names under which Node runs: a row of one of these is read by the script it runs. */
 const NODE_PROGRAMS = new Set(['node', 'node.exe', 'nodejs'])
@@ -236,11 +236,13 @@ export function parseSwapUsage(text) {
   const match = SWAP_LINE_PATTERN.exec(text ?? '')
   if (match === null) return undefined
   const inMb = (amount, unit) => Number(amount) * MB_PER_SWAP_UNIT[unit]
-  return {
+  const swap = {
     totalMb: inMb(match[1], match[2]),
     usedMb: inMb(match[3], match[4]),
     freeMb: inMb(match[5], match[6]),
   }
+  // A digit string large enough to become Infinity is no amount the verdict may compare.
+  return Object.values(swap).every(Number.isFinite) ? swap : undefined
 }
 
 /**
@@ -421,7 +423,7 @@ function gatherFacts(readings, ownPid) {
     load: { oneMinute, fiveMinutes, fifteenMinutes, cores: readings.cores },
     swap: parseSwapUsage(readings.swapText),
     processes:
-      readings.processRows === undefined
+      readings.processRows === undefined || readings.processRows.length === 0
         ? undefined
         : countProcessKinds(readings.processRows, ownPid),
   }
@@ -477,7 +479,9 @@ function readCommandOutput(command, args) {
     // Its diagnostics are not relayed: the answer is the output or none.
     stdio: ['ignore', 'pipe', 'ignore'],
   })
-  return answer.status === 0 && typeof answer.stdout === 'string'
+  return answer.error === undefined &&
+    answer.status === 0 &&
+    typeof answer.stdout === 'string'
     ? answer.stdout
     : undefined
 }
