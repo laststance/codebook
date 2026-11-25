@@ -827,22 +827,26 @@ function linkedElsewhereRefusal({ path, retry }: Context): Error {
 /**
  * Removes the pending record; a failure leaves a record that the next run finds stale. A tracked journal ({@link Context.journalVersion}) goes only while its name shows the version this run settled or wrote ({@link removeRecord}).
  * @param context - The run; its pending path is the record.
- * @param assertStill - A synchronous look at other names that must still hold right before the delete ({@link removeRecord}); its failure is thrown again after the delete is abandoned, so the caller can run the failure handling that needs the record it kept. Any other failure still leaves a stale record and is swallowed, as before.
- * @throws What `assertStill` threw; nothing is deleted then.
+ * @param options - `assertStill` is a synchronous look at other names that must still hold right before the delete ({@link removeRecord}); its failure is thrown again after the delete is abandoned, so the caller can run the failure handling that needs the record it kept. `onConflict: 'throw'` passes a tracked journal's conflict to the caller instead. Any other failure still leaves a stale record and is swallowed, as before.
+ * @throws What `assertStill` threw; nothing is deleted then. With `onConflict: 'throw'`, the {@link JournalConflictError} of the tracked record's conflict.
  * @example
- * await dropPending(context, assertReceiptLeft) // throws the receipt conflict, keeping pending.json, once receipt.json moved away before the delete
+ * await dropPending(context, { assertStill: assertReceiptLeft }) // throws the receipt conflict, keeping pending.json, once receipt.json moved away before the delete
+ * await dropPending(run, { onConflict: 'throw' }) // throws the record conflict, keeping receipt.json, once a backup restored another pending record
  */
 async function dropPending(
   context: Context,
-  assertStill?: StillLook,
+  options: {
+    assertStill?: StillLook
+    onConflict?: 'ignore' | 'throw'
+  } = {},
 ): Promise<void> {
   let stillFailure: unknown
   let stillFailed = false
-  const guardedStill: StillLook | undefined = assertStill && {
-    names: assertStill.names,
+  const guardedStill: StillLook | undefined = options.assertStill && {
+    names: options.assertStill.names,
     assert: (): void => {
       try {
-        assertStill.assert()
+        options.assertStill!.assert()
       } catch (error) {
         // Remember why the guarded delete stopped before swallowing it as an ordinary cleanup failure.
         stillFailure = error
@@ -851,7 +855,10 @@ async function dropPending(
       }
     },
   }
-  await removeRecord(context, guardedStill).catch(() => undefined)
+  await removeRecord(context, guardedStill).catch((error: unknown) => {
+    if (options.onConflict === 'throw' && error instanceof JournalConflictError)
+      throw error
+  })
   if (stillFailed) throw stillFailure
 }
 
@@ -9461,7 +9468,7 @@ async function recordPublishedEntry(
     assertReceiptLeft.assert()
     // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it; one that goes here goes only while the receipt still stands.
     if (keptLeft.length === 0 && !isRetiredKept)
-      await dropPending(context, assertReceiptLeft)
+      await dropPending(context, { assertStill: assertReceiptLeft })
   } catch (cause) {
     // A config that is no longer the published file is not this setup's to take anything out of; an update keeps its own record of the change and rejects as before.
     if (cause instanceof PublishUncoveredError || !isFirst) throw cause
@@ -11778,7 +11785,7 @@ async function hasUnrecordedRemoval(context: Context): Promise<boolean> {
  * @param seam - Test hook, see {@link DevinMcpTestSeam}.
  * @param options - See {@link DevinMcpRemovalOptions}.
  * @returns `removed`, `file-removed`, `not-managed` (no receipt, or the entry is already gone), `changed` or `superseded` (a newer setup's receipt; nothing touched); and the config path. A failure to delete the receipt or a private copy after the config changed is returned as `cleanupFailure`, not thrown.
- * @throws The refusals of {@link writeManagedDevinMcpEntry} for an unreadable config or a file that changed during the removal; they end with the removal command.
+ * @throws The refusals of {@link writeManagedDevinMcpEntry} for an unreadable config or a file that changed during the removal; they end with the removal command. A retry of an unrecorded removal throws the record's {@link JournalConflictError} before touching the receipt when another program changed, moved away or made that record unreadable.
  * @example
  * await removeManagedDevinMcpEntry(storageRoot) // => { status: 'removed', path }
  */
@@ -11800,7 +11807,8 @@ export async function removeManagedDevinMcpEntry(
       // From here the removal writes and deletes its own record only from the version inspect left there.
       const run = ownRecordContext(context, inspected)
       // The retry has read the record; it ends it now, only as the version inspect read ({@link inspect} leaves an unrecorded removal's record for this read).
-      if (wasUnrecorded) await dropPending(run)
+      // A conflict can mean a backup restored the entry too, so this retry stops before touching the receipt.
+      if (wasUnrecorded) await dropPending(run, { onConflict: 'throw' })
       const ownership = removalOwnership(inspected, options.expectedGeneration)
       // Not Codebook's entry to take out (gone, changed, or a newer setup's): answer without touching the config.
       if ('status' in ownership)

@@ -12746,14 +12746,14 @@ test('A setup that finds a record a backup restored at pending.json after its re
   assert.deepEqual(await leftoversBeside(configPath), [])
 })
 
-test("A removal retry leaves a record a backup restores at pending.json after the retry read the earlier removal's record, instead of deleting it with that record, and still reports the entry removed", async (context) => {
-  // Value: protects=a removal retry ends the unrecorded removal's record only as the version its recovery read, so a record a backup or sync tool put at pending.json after that read stays for the next run (Cycle 0148 ship review); fails_when=the record put at pending.json is gone or changes, the retry answers anything but removed, the receipt stays or the config changes; no_claim=a real backup tool (seam.afterStat renames another record over pending.json once, at the retry's first read of the config, after its read of pending.json), a real unrecorded removal (hand-written: a removal's record of this config with no entry hash and no phase, beside the receipt that stands and a config without the entry), a restore between the last look and the unlink, what the next run does with that record
+test('A removal retry keeps the receipt and asks for re-inspection when a backup restores the entry and another pending record after the retry read the earlier removal', async (context) => {
+  // Value: protects=a removal retry never deletes the receipt of a restored entry after the unrecorded removal's record changes underneath it; fails_when=the retry resolves, the receipt is deleted or changes, the restored config or pending record is deleted or changes, or the refusal does not ask for a run that reads pending.json first; no_claim=a real backup tool (seam.afterLeftoverCheck renames a config with the entry and another record over config and pending.json once, at the retry's look before it ends the earlier removal's record), a real unrecorded removal (hand-written: a removal's record of this config with no entry hash and no phase, beside the receipt that stands and a config without the entry), a restore between the last look and the unlink, what the next run does with that record
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
-  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
-  await writeConfig(configPath, configText)
+  const configWithEntryText = readFileSync(configPath, 'utf8')
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
   await writeRecordFile(storage, 'pending.json', {
     targetPath: configPath,
     createdFile: false,
@@ -12761,36 +12761,47 @@ test("A removal retry leaves a record a backup restores at pending.json after th
   })
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptText = readFileSync(receiptPath, 'utf8')
   const restoredPendingText = `${JSON.stringify({
     targetPath: configPath,
     createdFile: false,
     generation: 'c0ffee00-0000-4000-8000-000000000184',
     entrySha256: ENTRY_HASH,
   })}\n`
-  const backupPath = join(home, 'pending-from-backup.json')
-  let hasRestoredPending = false
+  const pendingBackupPath = join(home, 'pending-from-backup.json')
+  const configBackupPath = join(home, 'mcp_config-from-backup.json')
+  let hasReadReceipt = false
+  let hasRestored = false
 
   // Act
-  const retry = await removeManagedDevinMcpEntry(storage, home, {
+  const retry = removeManagedDevinMcpEntry(storage, home, {
     afterStat: (path) => {
-      if (path !== configPath || hasRestoredPending) return
-      hasRestoredPending = true
-      // A backup restores another record at pending.json after the retry read the unrecorded removal's record.
-      writeFileSync(backupPath, restoredPendingText)
-      renameSync(backupPath, pendingPath)
+      if (path === receiptPath) hasReadReceipt = true
+    },
+    afterLeftoverCheck: (path) => {
+      // Recovery looks at pending.json before the receipt's read too; only the look after that read ends the earlier removal's record.
+      if (path !== pendingPath || !hasReadReceipt || hasRestored) return
+      hasRestored = true
+      // A backup restores the entry and another pending record after the retry inspected both names.
+      writeFileSync(configBackupPath, configWithEntryText)
+      renameSync(configBackupPath, configPath)
+      writeFileSync(pendingBackupPath, restoredPendingText)
+      renameSync(pendingBackupPath, pendingPath)
     },
   })
 
   // Assert
-  assert.equal(hasRestoredPending, true)
-  assert.deepEqual(retry, { status: 'removed', path: configPath })
+  await assert.rejects(retry, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Remove Devin Desktop Setup again, and that run reads that name first.`,
+  })
+  assert.equal(hasRestored, true)
   // A record the retry deleted reads as 'absent', so the assertion names it.
   assert.equal(
     existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
     restoredPendingText,
   )
-  assert.equal(existsSync(receiptPath), false)
-  assert.equal(readFileSync(configPath, 'utf8'), configText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
+  assert.equal(readFileSync(configPath, 'utf8'), configWithEntryText)
 })
 
 test('A removal that finds a record a backup restored at pending.json after its recovery left that name empty writes no record over it, leaves the entry in place and says that record changed', async (context) => {
