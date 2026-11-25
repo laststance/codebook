@@ -6638,6 +6638,8 @@ async function adoptPending(
   retained: Pending | undefined,
   assertLeft?: StillLook,
 ): Promise<Receipt> {
+  // The receipt this adoption replaces, kept for the take-back: a withdrawal puts it back while the name still shows the receipt this call published, so the entry it records never loses its record when the adoption's answer is no.
+  const replacedReceipt = await readReceipt(context)
   const adopted: Receipt = {
     schemaVersion: 1,
     targetPath: context.path,
@@ -6651,15 +6653,25 @@ async function adoptPending(
     generation: pending.generation ?? randomUUID(),
     // The id the publish recorded before its rename; a record of an older build has none, so the receipt that still stands decides, as it did before.
     installationId:
-      pending.installationId ?? installationIdOf(await readReceipt(context)),
+      pending.installationId ?? installationIdOf(replacedReceipt),
     config: { ino: recordedFileId(identity.ino) },
     // The receipt rests on the entry's hash alone: a record of this setup that asks for its take-back still gets it ({@link isTakeBackCovered}).
     adopted: true,
   }
+  // The config must still be the very file this run read when it decided the adoption: a backup or sync tool that puts another config back meanwhile (the pre-update one, say) never gains this receipt, which would replace a record that file's entry still rests on; the look runs closest to the receipt's rename, after the publish record's and the other names'.
+  const configStill: StillLook = {
+    names: [context.path],
+    assert: (): void => {
+      if (!isConfigStill(context, identity)) throw changedWhileWorking(context)
+    },
+  }
   await writeReceipt(
     context,
     adopted,
-    bothLooks(await adoptedRecordCheck(context), assertLeft),
+    bothLooks(
+      bothLooks(await adoptedRecordCheck(context), assertLeft),
+      configStill,
+    ),
   )
   try {
     // The receipt must still stand as its write published it once that write's awaited cleanup of its staged name ended, also right before the record ends: a receipt another program moved away or replaced meanwhile never lets the only record of this setup go.
@@ -6679,7 +6691,7 @@ async function adoptPending(
     // A record the adoption rests on changed after the receipt's rename (a rollback record back at its name, or another setup record at pending.json, which may mark that setup's take-back): that receipt goes back out while it still is the version this call wrote, and a receipt that may still stand is named.
     if (
       hasRecordConflictCause(error) &&
-      !(await withdrawAdoptedReceipt(context))
+      !(await withdrawAdoptedReceipt(context, replacedReceipt))
     )
       throw withKeptAdoptedReceipt(context, error)
     throw error
@@ -6826,15 +6838,30 @@ function hasRecordConflictCause(error: unknown): boolean {
  * When the delete fails, or the name cannot be read, the receipt stays and the caller names it ({@link withKeptAdoptedReceipt}); it never keeps the next run from the take-back a record of that setup asks for, because it carries the adoption's mark ({@link Receipt.adopted}, {@link isTakeBackCovered}), and neither does a receipt that stays because the run ended before this step.
  * Limit: those of {@link dropReceipt}; a receipt that another program replaced stays and is not named (it is no longer the file this adoption wrote; a copy of its bytes carries the same mark).
  * @param context - The run; its receipt version is the one the adoption's write published.
+ * @param replaced - The receipt the adoption replaced, which this withdrawal puts back; undefined when none stood there, in which case the adopted receipt is deleted instead ({@link dropReceipt}).
  * @returns
- * - `true` once nothing of this adoption's receipt stands at `receipt.json`: this call deleted it, or the name shows nothing, another file or other bytes
- * - `false` when it may still stand there: the delete failed, or the name could not be read, by the delete's own look or by one more look after it
+ * - `true` once nothing of this adoption's receipt stands at `receipt.json`: this call put the replaced receipt back over it or deleted it, or the name shows nothing, another file or other bytes
+ * - `false` when it may still stand there: the write-back or delete failed, or the name could not be read, by the step's own look or by one more look after it
  * @example
- * await withdrawAdoptedReceipt(run) // => true; receipt.json is gone while it held the receipt this run's adoption wrote, and a copy with the same bytes on another inode stays
- * await withdrawAdoptedReceipt(run) // => false once the disk answered that unlink with EIO
+ * await withdrawAdoptedReceipt(run, replaced) // => true; receipt.json holds the replaced receipt again, written only over the version the adoption published
+ * await withdrawAdoptedReceipt(run, undefined) // => false once the disk answered that unlink with EIO
  */
-async function withdrawAdoptedReceipt(context: Context): Promise<boolean> {
+async function withdrawAdoptedReceipt(
+  context: Context,
+  replaced: Receipt | undefined,
+): Promise<boolean> {
   const written = context.receiptVersion.current
+  // The adoption replaced a receipt: it goes back through the same write, which publishes it only over the very version this adoption's write left at the name, so a file another program put there since is never written over, and the entry that receipt records keeps its record once the adoption's answer is no. A write that fails or meets such a file leaves the name as it is; the look below then tells what stands.
+  if (replaced !== undefined) {
+    await writeReceipt(context, replaced).catch(() => undefined)
+    const standingAfter = await inspectCopy(context.receiptPath).catch(
+      () => written,
+    )
+    return (
+      standingAfter?.ino !== written?.ino ||
+      standingAfter?.sha256 !== written?.sha256
+    )
+  }
   const answer = await dropReceipt(context).catch(() => undefined)
   if (answer === 'gone') return true
   // The delete failed: the receipt stays where it was.
