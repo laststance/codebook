@@ -446,6 +446,97 @@ test('a build that node runs from a path holding a space is counted under its pr
   assert.deepEqual(counts, { ...NOTHING_RUNS, tsc: 1, gate: 1 })
 })
 
+// Value: protects=a build that node runs behind an option whose value is the next word counted under its program — the value is no script (`node --env-file .env --import tsx scripts/gate.mjs` read `.env` as the script and counted nothing, so a running gate.mjs would not have stopped the native check); fails_when=a valued option's separate-word value is read as the script or the script shifts out from under its kind; no_claim=an option spelling node itself refuses
+test('a node option that takes its value as the next word does not pass that value off as the script', () => {
+  // Arrange
+  const invocations = [
+    ['--require', 'tsx', 'scripts/gate.mjs'],
+    ['--import', 'tsx', 'scripts/gate.mjs'],
+    ['--env-file', '.env', 'scripts/gate.mjs'],
+    ['--inspect-port', '9229', 'scripts/gate.mjs'],
+    ['--watch-path', 'src', 'scripts/gate.mjs'],
+    ['--cpu-prof-dir', '/tmp/profiles', 'scripts/gate.mjs'],
+    // Stacked valued options: each value is eaten in turn before the script.
+    ['--env-file', '.env', '--import', 'tsx', 'scripts/gate.mjs'],
+    ['--inspect-port', '9229', '--watch-path', 'src', 'scripts/gate.mjs'],
+    // `--` ends node's own options: the next word is the script.
+    ['--', 'scripts/gate.mjs'],
+  ]
+
+  // Act
+  const counts = invocations.map((args) =>
+    countProcessKinds([{ pid: 7101, command: 'node', args }], 4242),
+  )
+
+  // Assert
+  for (const count of counts)
+    assert.deepEqual(count, { ...NOTHING_RUNS, gate: 1 })
+})
+
+// Value: protects=a build that node runs behind an option in its `--opt=value` spelling counted under its program — the attached value is part of the option's word, so nothing is eaten and the next word stays the script (`--inspect=9229` is the whole inspector setup; bare `--inspect` takes no word either, and the v8 number flags like `--max-old-space-size=4096` only exist in the attached spelling); fails_when=an attached value eats the script, or a bare `--inspect` swallows the script as a port; no_claim=an option spelling node itself refuses
+test("a node option's attached value is no script and swallows nothing", () => {
+  // Arrange
+  const invocations = [
+    ['--require=tsx', 'scripts/gate.mjs'],
+    ['--import=tsx', 'scripts/gate.mjs'],
+    ['--env-file=.env', 'scripts/gate.mjs'],
+    ['--inspect=9229', 'scripts/gate.mjs'],
+    ['--inspect', 'scripts/gate.mjs'],
+    ['--max-old-space-size=4096', 'scripts/gate.mjs'],
+  ]
+
+  // Act
+  const counts = invocations.map((args) =>
+    countProcessKinds([{ pid: 7201, command: 'node', args }], 4242),
+  )
+
+  // Assert
+  for (const count of counts)
+    assert.deepEqual(count, { ...NOTHING_RUNS, gate: 1 })
+})
+
+// Value: protects=a quiet machine while someone runs a node one-liner whose positional arguments name a build script — `-e`/`--eval` and `-p`/`--print` run their value as the program itself, so a word after it (`node -e "…" gate.mjs`) is an argument to the one-liner, not a running gate.mjs; fails_when=the word after the eval value is read as the script, so a one-liner reads as a running build and the check says busy on a quiet machine; no_claim=the eval value itself, which ps cuts into words that are never a script path
+test('node running an eval or print option runs no script, so the words after its value count as nothing', () => {
+  // Arrange
+  const invocations = [
+    ['-e', 'console.log(1)', 'gate.mjs'],
+    ['--eval', 'console.log(1)', 'gate.mjs'],
+    ['--eval=console.log(1)', 'scripts/gate.mjs'],
+    ['-p', '1+1', 'tsc'],
+    ['--print=1+1', 'scripts/gate.mjs'],
+  ]
+
+  // Act
+  const counts = invocations.map((args) =>
+    countProcessKinds([{ pid: 7301, command: 'node', args }], 4242),
+  )
+
+  // Assert
+  for (const count of counts) assert.deepEqual(count, NOTHING_RUNS)
+})
+
+// Value: protects=a test run whose test-runner options take separate-word values counted as node --test in any option order (`node --test --test-concurrency 4 …` and `node --test --test-reporter spec …` are spellings node accepts beside the `=` forms), also when a valued option that is no test option stands before `--test` (`node --env-file .env --test …` — read `.env` as the script and the `--test` after it never reaches the run's options, so a running suite counts under no kind); fails_when=a valued option's separate-word value is read as the script; no_claim=test files themselves, which are no known program
+test('a test run whose test-runner options take separate-word values is counted as node --test', () => {
+  // Arrange
+  const invocations = [
+    ['--test', '--test-concurrency', '4', 'scripts/tests/a.test.mjs'],
+    ['--test-concurrency', '4', '--test', 'scripts/tests/a.test.mjs'],
+    ['--test', '--test-reporter', 'spec', 'scripts/tests/a.test.mjs'],
+    ['--test', '--test-timeout', '5000', 'scripts/tests/a.test.mjs'],
+    // The valued option is no test option, so only the consumed `--test` marks the run.
+    ['--env-file', '.env', '--test', 'scripts/tests/a.test.mjs'],
+  ]
+
+  // Act
+  const counts = invocations.map((args) =>
+    countProcessKinds([{ pid: 7401, command: 'node', args }], 4242),
+  )
+
+  // Assert
+  for (const count of counts)
+    assert.deepEqual(count, { ...NOTHING_RUNS, nodeTest: 1 })
+})
+
 // Value: protects=the precheck never counting itself or the `ps` it starts, also when it reads the machine from inside a node --test run; fails_when=the own pid is counted as a node --test process, so the check says busy because it runs; no_claim=the parent test run, which is another process and counts
 test("the precheck's own process and its ps are not counted, even inside a node --test run", () => {
   // Arrange

@@ -40,17 +40,88 @@ const SWAP_LINE_PATTERN =
 /** The names under which Node runs: a row of one of these is read by the script it runs. */
 const NODE_PROGRAMS = new Set(['node', 'node.exe', 'nodejs'])
 
-/** Node options whose value follows as the next word, so that value is not read as the script. */
+/**
+ * Node options that run their value as the program itself (`node -e "…"`, `node --print "…"`): no script file runs, so every later word is a positional argument, never the script. Matched on the option's name, so the `--eval=…` spelling counts too.
+ */
+const NODE_EVAL_OPTIONS = new Set(['-e', '--eval', '-p', '--print'])
+
+/**
+ * Node options whose value follows as the next word, so that value is not read as the script.
+ * Every entry accepts both the `--opt value` and the `--opt=value` spelling (checked against the pinned node's parsing); the `=` spelling carries its value attached, so only the bare word eats the next word. Node's other value-taking options take it attached only and never eat a word: the optional-valued `--inspect`/`--inspect-brk` (`--inspect=9229`; a separate word after bare `--inspect` is the script) and the v8 number flags (`--max-old-space-size=4096`, which errors in the separate-word spelling), so they are no entries.
+ */
 const NODE_OPTIONS_WITH_VALUE = new Set([
+  // Module preloaders: tsx, ts-node and dotenv run as `node --import tsx …` or `node --require dotenv/config …`.
   '--import',
   '--require',
   '-r',
   '--loader',
   '--experimental-loader',
-  '-e',
-  '--eval',
-  '-p',
-  '--print',
+  // The test runner's value-taking options.
+  '--test-reporter',
+  '--test-reporter-destination',
+  '--test-concurrency',
+  '--test-timeout',
+  '--test-name-pattern',
+  '--test-skip-pattern',
+  '--test-shard',
+  '--test-random-seed',
+  '--test-rerun-failures',
+  '--test-global-setup',
+  '--test-coverage-include',
+  '--test-coverage-exclude',
+  '--test-coverage-branches',
+  '--test-coverage-lines',
+  '--test-coverage-functions',
+  '--experimental-test-tag-filter',
+  // Inspector setup beyond the optional-valued `--inspect` itself.
+  '--inspect-port',
+  '--inspect-publish-uid',
+  // Run configuration: environment files, watch mode, snapshots.
+  '--env-file',
+  '--env-file-if-exists',
+  '--watch-path',
+  '--watch-kill-signal',
+  '--snapshot-blob',
+  '--build-snapshot-config',
+  '--experimental-sea-config',
+  '--experimental-package-map',
+  // CPU and heap profiling and diagnostic reports.
+  '--cpu-prof-dir',
+  '--cpu-prof-interval',
+  '--cpu-prof-name',
+  '--heap-prof-dir',
+  '--heap-prof-interval',
+  '--heap-prof-name',
+  '--heapsnapshot-near-heap-limit',
+  '--heapsnapshot-signal',
+  '--diagnostic-dir',
+  '--report-filename',
+  '--report-directory',
+  '--report-signal',
+  '--tls-keylog',
+  '--redirect-warnings',
+  // Runtime tuning and module resolution.
+  '--title',
+  '--icu-data-dir',
+  '--openssl-config',
+  '--localstorage-file',
+  '--trace-event-categories',
+  '--trace-event-file-pattern',
+  '--trace-require-module',
+  '--unhandled-rejections',
+  '--use-largepages',
+  '--v8-pool-size',
+  '--max-http-header-size',
+  '--network-family-autoselection-attempt-timeout',
+  '--secure-heap',
+  '--secure-heap-min',
+  '--conditions',
+  '-C',
+  '--disable-warning',
+  '--disable-proto',
+  '--dns-result-order',
+  '--allow-fs-read',
+  '--allow-fs-write',
 ])
 
 /** A Node option of the test runner: `--test` on the run, `--test-…` on it and on every file's child process. */
@@ -269,6 +340,12 @@ export function parseProcessRows(text) {
   return rows
 }
 
+/** The option's name without an attached value: `--require=tsx` is `--require`. @example optionNameOf('--require=tsx') // => '--require' */
+function optionNameOf(arg) {
+  const equalsIndex = arg.indexOf('=')
+  return equalsIndex === -1 ? arg : arg.slice(0, equalsIndex)
+}
+
 /**
  * Finds the index of the script a node process runs: the first word that is no option and no option's value.
  * @param {string[]} args - The node process's arguments.
@@ -278,9 +355,13 @@ export function parseProcessRows(text) {
 function scriptIndexOf(args) {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
+    // `--` ends node's own options: the next word is the script even when it starts with a dash.
+    if (arg === '--') return index + 1 < args.length ? index + 1 : -1
     if (!arg.startsWith('-')) return index
-    // The value of `--import x` is no script.
-    if (NODE_OPTIONS_WITH_VALUE.has(arg)) index += 1
+    // `-e`/`--eval` and `-p`/`--print` run their value as the program itself: the words after it are positional arguments, never a script file.
+    if (NODE_EVAL_OPTIONS.has(optionNameOf(arg))) return -1
+    // The value of `--import x` is no script; the `--import=x` spelling carries its value attached, so only the bare word eats the next word.
+    if (!arg.includes('=') && NODE_OPTIONS_WITH_VALUE.has(arg)) index += 1
   }
   return -1
 }
