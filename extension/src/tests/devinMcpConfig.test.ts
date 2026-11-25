@@ -20611,7 +20611,7 @@ test("A removal that stopped right after it moved Codebook's record of the entry
 })
 
 test("A removal that stopped right after it moved Codebook's record of the entry to its private name, followed by an older Codebook window's setup that wrote a new record at receipt.json, is finished by the next refresh, which deletes the moved record and keeps the new one", async (context) => {
-  // Value: protects=a delete of Codebook's record of the entry that stopped with that record at receipt.json's private name is finished at the next run's start while its dropping note proves that file, also beside a record an older Codebook version (0.2.142.0 to 0.2.144.0, which know no such private name) wrote at the emptied receipt.json, so the run reads that record instead of every run refusing both names, whose way out would put the removed entry's old record back beside the older version's entry (Cycle 0149 ship review pass 2, red team 2, mixed versions); fails_when=the stop is not reached or leaves a file at receipt.json, the refresh answers anything but current, receipt.json then holds a record of another generation than the older window's, or the private name or its dropping note stays; no_claim=a real process end (the config module is loaded so that the rename which empties receipt.json during the removal's move, and every later link, rename, unlink, removal and write, fail as after the process ended), a real older window (the test writes the codebook entry back into the config and a record of that entry with another generation at receipt.json, as such a window's setup leaves them), a file another program puts at the private name after the stop (it never matches the note), the stopped run's vacated name (it stays under its fresh private name, as after any stop; no build reads such a name)
+  // Value: protects=a delete of Codebook's record of the entry that stopped with that record at receipt.json's private name is finished at the next run's start while its dropping note proves that file, also beside a record an older Codebook version (0.2.142.0 to 0.2.144.0, which know no such private name) wrote at the emptied receipt.json, so the run reads that record instead of every run refusing both names, whose way out would put the removed entry's old record back beside the older version's entry (Cycle 0149 ship review pass 2, red team 2, mixed versions); fails_when=the stop is not reached or leaves a file at receipt.json, the refresh answers anything but current, receipt.json then holds a record of another generation or installation than the older window's, or the private name or its dropping note stays; no_claim=a real process end (the config module is loaded so that the rename which empties receipt.json during the removal's move, and every later link, rename, unlink, removal and write, fail as after the process ended), a real older window (the test writes the codebook entry back into the config and a record of that entry with another generation and installation id at receipt.json, as such a window's setup leaves them), a file another program puts at the private name after the stop (it never matches the note), the stopped run's vacated name (it stays under its fresh private name, as after any stop; no build reads such a name)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -20619,9 +20619,11 @@ test("A removal that stopped right after it moved Codebook's record of the entry
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   const configWithEntryText = readFileSync(configPath, 'utf8')
   const olderWindowGeneration = 'c0ffee00-0000-4000-8000-000000149571'
+  const olderWindowInstallationId = 'c0ffee00-0000-4000-8000-000000149572'
   const olderWindowText = JSON.stringify({
     ...JSON.parse(readFileSync(receiptPath, 'utf8')),
     generation: olderWindowGeneration,
+    installationId: olderWindowInstallationId,
   })
   const endingAfterMove = await loadEndingAfterStep(
     // The rename that empties receipt.json once a link gave its file the private name as well.
@@ -20643,10 +20645,9 @@ test("A removal that stopped right after it moved Codebook's record of the entry
   assert.equal(endingAfterMove.hasEnded(), true)
   assert.equal(isReceiptAfterStop, false)
   assert.deepEqual(result, { status: 'current', path: configPath })
-  assert.equal(
-    (await readRecordFile(storage, 'receipt.json')).generation,
-    olderWindowGeneration,
-  )
+  const receiptAfterRefresh = await readRecordFile(storage, 'receipt.json')
+  assert.equal(receiptAfterRefresh.generation, olderWindowGeneration)
+  assert.equal(receiptAfterRefresh.installationId, olderWindowInstallationId)
   // The stopped run's vacated name stays under its fresh private name, as after any stop; no build reads such a name.
   assert.deepEqual(
     (await recordsIn(storage)).filter((name) => !name.endsWith('.tmp')),
