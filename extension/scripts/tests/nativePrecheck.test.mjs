@@ -733,9 +733,15 @@ test('--help prints the usage, the exit codes and the error codes and exits 0', 
   const argv = [SCRIPT_PATH, '--help']
 
   // Act
-  const result = spawnSync(process.execPath, argv, { encoding: 'utf8' })
+  // --help prints and exits before the machine is read, so ten seconds is far past any honest run; SIGKILL keeps even a wedged child bounded.
+  const result = spawnSync(process.execPath, argv, {
+    encoding: 'utf8',
+    timeout: 10_000,
+    killSignal: 'SIGKILL',
+  })
 
   // Assert
+  assert.ifError(result.error)
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, `${HELP_TEXT.trimEnd()}\n`)
   assert.equal(result.stderr, '')
@@ -767,9 +773,15 @@ test('a limit that is no whole number is a usage error with its code first and i
   const argv = [SCRIPT_PATH, '--max-used-swap-mb', 'lots']
 
   // Act
-  const result = spawnSync(process.execPath, argv, { encoding: 'utf8' })
+  // A usage error is refused before the machine is read, so ten seconds is far past any honest run; SIGKILL keeps even a wedged child bounded.
+  const result = spawnSync(process.execPath, argv, {
+    encoding: 'utf8',
+    timeout: 10_000,
+    killSignal: 'SIGKILL',
+  })
 
   // Assert
+  assert.ifError(result.error)
   assert.equal(result.status, 64)
   assert.equal(result.stdout, '')
   assert.deepEqual(result.stderr.trimEnd().split('\n'), [
@@ -784,9 +796,15 @@ test('the replaced --min-free-swap-mb option is a usage error', () => {
   const argv = [SCRIPT_PATH, '--min-free-swap-mb', '2048']
 
   // Act
-  const result = spawnSync(process.execPath, argv, { encoding: 'utf8' })
+  // A usage error is refused before the machine is read, so ten seconds is far past any honest run; SIGKILL keeps even a wedged child bounded.
+  const result = spawnSync(process.execPath, argv, {
+    encoding: 'utf8',
+    timeout: 10_000,
+    killSignal: 'SIGKILL',
+  })
 
   // Assert
+  assert.ifError(result.error)
   assert.equal(result.status, 64)
   assert.equal(result.stdout, '')
   assert.match(result.stderr, /^E_USAGE: .*--min-free-swap-mb/)
