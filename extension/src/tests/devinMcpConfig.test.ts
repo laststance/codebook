@@ -20299,6 +20299,89 @@ async function recordsInIfPresent(storage: string): Promise<string[]> {
   }
 }
 
+test("A first setup keeps its old record when a backup restores the old config after the confirmation read but before that record's delete, and the next setup carries its installation over", async (context) => {
+  // Value: protects=the retired receipt of a first setup is deleted only while the config still is the exact file whose inode, size and nanosecond times confirmed the publish, so a backup that restores the old config after that confirmation never loses the receipt owning the restored entry (Cycle 0149 task 68); fails_when=the retired file is gone or changed after the first refusal, pending.json is gone or no longer names its bytes, receipt.json exists before recovery, the restored config changes, or the next setup does not update the restored entry while carrying the old installation; no_claim=a real backup tool (seam.beforeLeftoverCheck renames the moved-away config back at the post-confirmation look right before the retired receipt's unlink), and a swap after the final synchronous config look (no Node primitive unlinks by inode)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    oldConfigText,
+    moveBack,
+  } = await arrangeMovedAwayConfig(context)
+  const recordsFolder = join(storage, 'devin-mcp')
+  const pendingPath = join(recordsFolder, 'pending.json')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let hasRestored = false
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      beforeLeftoverCheck: (path) => {
+        if (
+          !path.endsWith('.retired') ||
+          hasRestored ||
+          !existsSync(configPath)
+        )
+          return
+        // The create route reaches this look only after the publish link and its confirmation.
+        moveBack()
+        hasRestored = true
+      },
+    },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const recordAfterRefusal = existsSync(pendingPath)
+    ? await readRecordFile(storage, 'pending.json')
+    : 'absent'
+  const generation =
+    typeof recordAfterRefusal === 'object'
+      ? String(recordAfterRefusal.generation)
+      : 'absent'
+  const retiredName = `receipt.json.${generation}.retired`
+  const retiredPath = join(recordsFolder, retiredName)
+  const retiredAfterRefusal = existsSync(retiredPath)
+    ? readFileSync(retiredPath, 'utf8')
+    : 'absent'
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  const receiptExistsAfterRefusal = existsSync(receiptPath)
+  const nextOutcome = await writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(configAfterRefusal, oldConfigText)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and that file is gone or its "codebook" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(retiredAfterRefusal, receiptText)
+  assert.notEqual(recordAfterRefusal, 'absent')
+  if (typeof recordAfterRefusal === 'object')
+    assert.deepEqual(recordAfterRefusal.retiresReceipt, {
+      sha256: sha256(receiptText),
+    })
+  assert.equal(receiptExistsAfterRefusal, false)
+  assert.equal(nextOutcome, 'updated')
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).installationId,
+    receiptBefore.installationId,
+  )
+})
+
 test('A setup on a full disk keeps the old record when the old config comes back before the new one is linked in, so the next setup finds that entry current', async (context) => {
   // Value: protects=a first setup moves the record of an entry that is gone aside instead of deleting it, so it puts that record back after a refused link without writing any bytes, and the old config's codebook entry stays Codebook's own on a full disk too; fails_when=the old record is gone or changed after the refused setup, the setup answers anything but the changed-file refusal, a pending record or a private name of the record stays, or the next setup refuses the entry instead of answering current; no_claim=a real full disk (seam.beforeRecordWrite fails every write of receipt.json with ENOSPC in its place, as a full disk at the temporary file does) and a real sync tool (seam.afterCheck moves the config back right before the link in its place)
   // Arrange

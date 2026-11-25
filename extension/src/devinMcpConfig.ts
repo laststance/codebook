@@ -169,6 +169,12 @@ type FileIdentity = {
   nlink: bigint
 }
 
+/** The part of a config file's identity that proves it is still the file one read: its inode, size and modification and change times in nanoseconds. */
+type ConfigContinuity = Pick<
+  FileIdentity,
+  'ino' | 'size' | 'mtimeNs' | 'ctimeNs'
+>
+
 type ConfigLook =
   | { kind: 'absent' }
   | {
@@ -714,7 +720,7 @@ function parseConfig(
  */
 function assertConfigUnchanged(
   context: Context,
-  expected: FileIdentity | undefined,
+  expected: ConfigContinuity | undefined,
 ): void {
   if (!isConfigUnchanged(context, expected)) throw changedWhileWorking(context)
 }
@@ -730,7 +736,7 @@ function assertConfigUnchanged(
  */
 function isConfigUnchanged(
   context: Context,
-  expected: FileIdentity | undefined,
+  expected: ConfigContinuity | undefined,
 ): boolean {
   const now = lstatSync(context.path, { bigint: true, throwIfNoEntry: false })
   if (!expected) return !now
@@ -1781,8 +1787,10 @@ function stagedConfigRefusal(
   )
 }
 
-/** What the read of the config right after the link found ({@link linkedConfigState}): `linked` the file this run wrote with its bytes; `other` another file or other bytes; `empty` nothing there; `unread` a read that failed twice (no file handle left, a read error), which proves neither. */
-type LinkedConfigState = 'linked' | 'other' | 'unread' | 'empty'
+/** What the read of the config right after the link found ({@link linkedConfigState}): `linked` the file this run wrote with its bytes, carrying the identity that confirmed it; `other` another file or other bytes; `empty` nothing there; `unread` a read that failed twice (no file handle left, a read error), which proves neither. */
+type LinkedConfigState =
+  | { state: 'linked'; published: ConfigContinuity }
+  | { state: 'other' | 'unread' | 'empty' }
 
 /**
  * Reads the config right after the link that put the staged file in place, through one open file, and tells whether it is the file this run wrote there with the bytes it wrote; called by {@link createConfig} and {@link replaceConfig} before anything rests on that publish: the completed record, the delete of the moved-aside original, the staged name's cleanup and the receipt.
@@ -1807,12 +1815,14 @@ async function linkedConfigState(
       return inspectCopy(context.path)
     })
   } catch (cause) {
-    return isOtherFileCause(cause) ? 'other' : 'unread'
+    return isOtherFileCause(cause)
+      ? { state: 'other' as const }
+      : { state: 'unread' as const }
   }
-  if (published === undefined) return 'empty'
+  if (published === undefined) return { state: 'empty' }
   return published.ino === staged.ino && published.sha256 === staged.sha256
-    ? 'linked'
-    : 'other'
+    ? { state: 'linked', published }
+    : { state: 'other' }
 }
 
 /**
@@ -1870,8 +1880,9 @@ type LinkedRecord = { journal: Pending; isRetiredKept: boolean }
 async function dropMovedAfterLink(
   context: Context,
   { retiredPath, look }: RetiredMove,
+  confirmed: ConfigContinuity,
 ): Promise<RetiredNameEnd> {
-  await lookAheadAt([retiredPath])
+  await lookAheadAt([retiredPath, context.path])
   const state = nameStateNow(context, retiredPath, look)
   // Nothing stands there any more: nothing of the old record is left to delete.
   if (state === 'gone') return 'gone'
@@ -1879,6 +1890,8 @@ async function dropMovedAfterLink(
   if (state === 'changed') return 'replaced'
   // A look that failed: the name stays, and the publish record leads the next run there.
   if (state !== 'still') return 'kept'
+  // The confirmed publish alone makes the old record safe to delete, so the config must still be the very file that confirmed it, checked last before the unlink.
+  if (!isConfigUnchanged(context, confirmed)) return 'kept'
   return unlink(retiredPath).then(
     (): RetiredNameEnd => 'gone',
     // A name already gone is what the delete was for; another failure keeps the name and the record that leads there.
@@ -1900,9 +1913,12 @@ async function dropMovedAfterConfirm(
   context: Context,
   journal: Pending,
   moved: RetiredMove | undefined,
+  confirmed: ConfigContinuity,
 ): Promise<LinkedRecord> {
-  // The confirmed publish stands: the old receipt covers nothing, and its private name goes only while it still shows that receipt.
-  const retiredEnd = moved ? await dropMovedAfterLink(context, moved) : 'gone'
+  // The confirmed publish stands: the old receipt covers nothing only while that same config still stands, and its private name goes only while it still shows that receipt.
+  const retiredEnd = moved
+    ? await dropMovedAfterLink(context, moved, confirmed)
+    : 'gone'
   return {
     // Another file at that name, which Codebook never read: from the next write on, older builds refuse the record that leads there.
     journal: retiredEnd === 'replaced' ? foreignKeptRecordOf(journal) : journal,
@@ -2385,11 +2401,16 @@ async function createConfig(
   }
   // The config is not the file this run wrote (a file swapped in at the staged name right before the link), or cannot be read again: nothing rests on it, and the record stays as written before the link, so the next run settles that change as after a stop right there.
   const linkedState = await linkedConfigState(context, stagedVersion)
-  if (linkedState === 'unread') throw unreadAfterLinkRefusal(context)
+  if (linkedState.state === 'unread') throw unreadAfterLinkRefusal(context)
   // A create has no displaced config to put back, so an empty path after its link keeps the answer every state other than the publish already had.
-  if (linkedState !== 'linked') throw changedWhileWorking(context)
-  // Only now, the publish confirmed, does the old record's private name go: a config another program put back before the confirmation keeps the receipt that owns its entry, with the record that leads there.
-  const linked = await dropMovedAfterConfirm(context, journal, retiredMove)
+  if (linkedState.state !== 'linked') throw changedWhileWorking(context)
+  // Only now, the publish confirmed, does the old record's private name go, and only while the config still is the file that confirmed it: a config another program put back after that read keeps the receipt that owns its entry, with the record that leads there.
+  const linked = await dropMovedAfterConfirm(
+    context,
+    journal,
+    retiredMove,
+    linkedState.published,
+  )
   context.seam?.afterPublish?.(undefined)
   // The config stands: the record says so, in the shape the link left it, and the staged name is only another name of it.
   const completion = await markCompleted(context, linked.journal)
@@ -2675,23 +2696,25 @@ async function replaceConfig(
       replacement.stagedVersion,
     )
     // A config that cannot be read again proves nothing: the record written before the link keeps tracking the moved-aside original, and the next run settles both on its own checks.
-    if (linkedState === 'unread')
+    if (linkedState.state === 'unread')
       throw unreadAfterLinkRefusal(context, displaced.path)
     // Nothing stands at the config name: the moved-aside original goes back there without replacing anything. The record written before the link stays either way, so the next run settles the staged file and any retired receipt when this put-back cannot finish.
-    if (linkedState === 'empty') {
+    if (linkedState.state === 'empty') {
       await restoreDisplaced(context, displaced.path, opened, false)
       throw emptyAfterLinkRefusal(context)
     }
     // The config is not the file this run wrote (a file swapped in at the staged name right before the link): the moved-aside original, maybe the only copy of the other servers' settings, is handed to the learner, and no receipt follows. The old record's private name stays as the link left it: nothing confirmed this publish.
-    if (linkedState === 'other') {
+    if (linkedState.state === 'other') {
       const isHanded = await handOver(context, replacement.journal)
       throw newConfigRefusal(context, displaced.path, isHanded)
     }
-    // Only now, the publish confirmed, does the old record's private name go: a config another program put back before the confirmation keeps the receipt that owns its entry, with the record that leads there.
+    if (linkedState.state !== 'linked') throw changedWhileWorking(context)
+    // Only now, the publish confirmed, does the old record's private name go, and only while the config still is the file that confirmed it: a config another program put back after that read keeps the receipt that owns its entry, with the record that leads there.
     const linked = await dropMovedAfterConfirm(
       context,
       replacement.journal,
       retiredMove,
+      linkedState.published,
     )
     context.seam?.afterPublish?.(displaced.path)
     // From here the config is published; cleanup failures are reported and leave the pending record, written in the shape the link left it.
