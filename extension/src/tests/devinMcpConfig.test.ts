@@ -88,13 +88,13 @@ const RELEASED_RECORD_FIELDS = {
 }
 
 /**
- * Names the released versions whose reader would accept a publish record ({@link RELEASED_RECORD_FIELDS}), so a test can require that none of them acts on it.
+ * Names the released versions that do not reject a publish record on the fields their readers parse before acting on an old record's private name alone ({@link RELEASED_RECORD_FIELDS}), so a test can require that none of them reaches that name: a version outside the list refuses the record as unreadable before it looks there, whatever the rest of the record holds. A version in the list may still refuse the record, because every released reader requires fields this check does not know (targetPath, createdFile); a lone object of just these fields, which no released reader accepts as a whole, suffices to judge that rejection.
  * @param record - The publish record as parsed from its file.
- * @returns The versions whose fields it passes, in release order.
+ * @returns The versions whose known fields the record passes, in release order.
  * @example
- * releasesReading({ retiresReceipt: true }) // => ['0.2.142.0', '0.2.143.0', '0.2.144.0']
+ * releasesNotRejectingOnKnownFields({ retiresReceipt: true }) // => ['0.2.142.0', '0.2.143.0', '0.2.144.0'] (each full reader still refuses it: no targetPath, no createdFile)
  */
-function releasesReading(record: unknown): string[] {
+function releasesNotRejectingOnKnownFields(record: unknown): string[] {
   return Object.entries(RELEASED_RECORD_FIELDS)
     .filter(([, fields]) => fields.safeParse(record).success)
     .map(([release]) => release)
@@ -21088,12 +21088,12 @@ test('A first setup that moves its old record aside writes its publish record, f
   assert.deepEqual(recordAtFirstPublish?.retiresReceipt, {
     sha256: sha256(JSON.stringify(receiptBefore)),
   })
-  assert.deepEqual(releasesReading(recordAtFirstPublish), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAtFirstPublish), [])
   assert.equal(setupStatus, 'installed')
   assert.notEqual(fullDiskWrites, 0)
   assert.deepEqual(recordAtLink, recordAtFirstPublish)
   assert.deepEqual(recordAfterSetup, recordAtFirstPublish)
-  assert.deepEqual(releasesReading(recordAfterSetup), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterSetup), [])
   assert.equal(next.status, 'current')
   assert.equal(
     readFileSync(join(recordsFolder, retiredName), 'utf8'),
@@ -24585,7 +24585,7 @@ test("A later setup after an older version's put-back that stopped between its l
     ...keptRecord,
     retiresReceipt: { receiptUnverified: true },
   })
-  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterRefusal), [])
 })
 
 test("A later setup never drops the old record's second name or reads receipt.json as its record when the one file at both names is another installation's record a swap into the private name inside the older version's put-back link left there: it keeps both names, says that what stands at receipt.json is unverified and notes that in the publish record", async (context) => {
@@ -24643,7 +24643,7 @@ test("A later setup never drops the old record's second name or reads receipt.js
     ...keptRecord,
     retiresReceipt: { receiptUnverified: true },
   })
-  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterRefusal), [])
 })
 
 test("A later setup never drops the old record's second name when one file stands at it and at receipt.json while the publish record, as this version rewrote it after keeping a file there it did not verify, names no bytes: it keeps both names, says that what stands at receipt.json is unverified and notes that in the publish record", async (context) => {
@@ -24695,7 +24695,7 @@ test("A later setup never drops the old record's second name when one file stand
     ...keptRecord,
     retiresReceipt: { receiptUnverified: true },
   })
-  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterRefusal), [])
 })
 
 test("A later setup never drops the old record's second name when one file stands at it and at receipt.json while the publish record is the one Codebook 0.2.144.0 kept as foreign: it keeps both names, says that what stands at receipt.json is unverified and notes that in a publish record 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse", async (context) => {
@@ -24747,7 +24747,7 @@ test("A later setup never drops the old record's second name when one file stand
     ...keptRecord,
     retiresReceipt: { receiptUnverified: true },
   })
-  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterRefusal), [])
 })
 
 test("A later setup keeps both files when a copy of the file at the old record's private name stands at receipt.json while the publish record, as this version rewrote it after keeping a file there it did not verify, names no bytes, and names that file as one Codebook cannot tell is its old record", async (context) => {
@@ -24839,7 +24839,7 @@ test("A later setup keeps both files when a copy of the file at the old record's
   assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
   assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
   assert.deepEqual(recordAfterRefusal, { ...keptRecord, retiresReceipt: {} })
-  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterRefusal), [])
 })
 
 test("A later setup keeps both files when a copy of the file at the old record's private name stands at receipt.json while the publish record is an older version's original one, which names no bytes, names that file as one Codebook cannot tell is its old record and rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse", async (context) => {
@@ -24888,7 +24888,7 @@ test("A later setup keeps both files when a copy of the file at the old record's
   assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
   assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
   assert.deepEqual(recordAfterRefusal, { ...keptRecord, retiresReceipt: {} })
-  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterRefusal), [])
 })
 
 test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads to rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse, so no window of those versions puts that file back", async (context) => {
@@ -24927,7 +24927,7 @@ test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads t
     `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because Codebook cannot tell that file is the record of Devin Desktop's MCP config at ${configPath} that it moved there (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`,
   )
   assert.deepEqual(recordAfterRefusal, { ...keptRecord, retiresReceipt: {} })
-  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterRefusal), [])
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
   assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
   assert.equal(existsSync(receiptPath), false)
@@ -31265,7 +31265,7 @@ test("A setup that keeps another program's file at the old record's private name
     ...JSON.parse(pendingBefore),
     retiresReceipt: {},
   })
-  assert.deepEqual(releasesReading(recordAfterNext), [])
+  assert.deepEqual(releasesNotRejectingOnKnownFields(recordAfterNext), [])
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
   assert.equal(readFileSync(retiredPath, 'utf8'), otherProgramText)
 })
