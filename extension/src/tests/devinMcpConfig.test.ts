@@ -14562,16 +14562,72 @@ function loadWithFailingStagedConfigOpen(
   })
 }
 
-test('A setup whose publish record cannot be written deletes the staged copy of its new config also when it cannot read that copy again for lack of file handles', async (context) => {
-  // Value: protects=a refused publish-record write deletes the config's staged copy (the learner's servers with the entry, other servers' credentials included) while its name shows the inode the setup created there with the size and modification time the setup's write left, also when a read of its bytes fails for lack of file handles, so no full copy of the config stays beside it that no record names (Cycle 0149 ship review: the native adversarial note on task 15's cleanup); fails_when=the staged copy or any other file stays beside the config, the config changes, Codebook's storage keeps a record, or the setup says anything but the record failure; no_claim=a real EMFILE and a real full disk (the config module is loaded with an openWithoutFollowing that fails every open of the staged name with EMFILE once seam.beforeRecordWrite cancelled the publish record's write with ENOSPC), a same-size write into that copy within one timestamp tick of the setup's own (only its bytes would tell), the other pre-link cleanups (they share dropStagedRecord), a look by status that fails too (EIO), which keeps the copy
+test('A staged copy of a setup’s new config that another program rewrote at the same inode, size and modification time stays when the setup cannot read that copy again, and the refusal names it', async (context) => {
+  // Value: protects=a refused publish-record write never deletes the config's staged copy (the learner's servers with the entry, other servers' credentials included) when its bytes cannot be read again: inode, size and modification time alone cannot tell it from a same-size write a backup or sync tool made into the same file, so the file stays and the refusal names where it is (Cycle 0149 task 66); fails_when=the staged copy is gone or changed, the config changes, Codebook's storage keeps a record, or the setup answers without the record failure and the staged file's sentence; no_claim=a real EMFILE, a real full disk and a real tool that preserves the modification time (the config module is loaded with an openWithoutFollowing that fails every open of the staged name with EMFILE once seam.beforeRecordWrite rewrote that file in place and cancelled the publish record's write with ENOSPC, and with lstat/lstatSync stand-ins that give that name the modification time the setup's write left), a swap between the cleanup's last look and its unlink (no Node primitive closes it), the other pre-link cleanups (they share dropStagedRecord), what a later run does with the file at the staged name
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
   await writeConfig(configPath, configText)
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
   let isRecordRefused = false
-  const failingOpen = await loadWithFailingStagedConfigOpen(
-    () => isRecordRefused,
+  let stagedPath = ''
+  let rewrittenText = ''
+  let writtenMtimeNs: bigint | undefined
+  const withWrittenMtime = (
+    status: BigIntStats,
+    mtimeNs: bigint,
+  ): BigIntStats =>
+    Object.assign(Object.create(Object.getPrototypeOf(status)), status, {
+      mtimeNs,
+    })
+  const failingOpen = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs': {
+        lstatSync: (path: string, options?: StatSyncOptions) => {
+          const status = lstatSync(path, options)
+          const bigStatus = status as BigIntStats | undefined
+          if (
+            path === stagedPath &&
+            isRecordRefused &&
+            writtenMtimeNs !== undefined &&
+            typeof bigStatus?.mtimeNs === 'bigint'
+          )
+            return withWrittenMtime(bigStatus, writtenMtimeNs)
+          return status
+        },
+      },
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          const status = await lstat(...args)
+          const bigStatus = status as BigIntStats
+          if (
+            args[0] === stagedPath &&
+            isRecordRefused &&
+            writtenMtimeNs !== undefined &&
+            typeof bigStatus.mtimeNs === 'bigint'
+          )
+            return withWrittenMtime(bigStatus, writtenMtimeNs)
+          return status
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+      './utils/openWithoutFollowing': {
+        openWithoutFollowing: (path: string) => {
+          if (path === stagedPath && isRecordRefused)
+            throw Object.assign(new Error('too many open files'), {
+              code: 'EMFILE',
+            })
+          return openWithoutFollowing(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
   )
 
   // Act
@@ -14579,7 +14635,16 @@ test('A setup whose publish record cannot be written deletes the staged copy of 
     .writeManagedDevinMcpEntry(storage, ENTRY, home, {
       beforeRecordWrite: ({ path }) => {
         if (path !== pendingPath || isRecordRefused) return
-        // The publish record's write fails on a full disk, and no file handle is left for a read of the staged copy from then on.
+        // Another program rewrites the staged copy in place with bytes of the same size, the publish record's write fails on a full disk, and no file handle is left from then on.
+        stagedPath = stagedConfigPathBeside(configPath)
+        const before = lstatSync(stagedPath, { bigint: true })
+        writtenMtimeNs = before.mtimeNs
+        const stagedText = readFileSync(stagedPath, 'utf8')
+        rewrittenText = stagedText.replace('alpha', 'alphb')
+        assert.notEqual(rewrittenText, stagedText)
+        assert.equal(rewrittenText.length, stagedText.length)
+        writeFileSync(stagedPath, rewrittenText)
+        assert.equal(lstatSync(stagedPath, { bigint: true }).ino, before.ino)
         isRecordRefused = true
         throw Object.assign(new Error('no space left on device'), {
           code: 'ENOSPC',
@@ -14590,21 +14655,25 @@ test('A setup whose publish record cannot be written deletes the staged copy of 
       () => undefined,
       (failure: unknown) => failure,
     )
+  // A name the setup left empty reads as 'absent', so the assertion below names it.
+  const stagedAfter = existsSync(stagedPath)
+    ? readFileSync(stagedPath, 'utf8')
+    : 'absent'
   const storageAfter = await recordsInIfPresent(storage)
 
   // Assert
   assert.equal(isRecordRefused, true)
   assert.equal(
     error instanceof Error ? error.message : error,
-    'no space left on device',
+    `no space left on device Codebook left the file at ${stagedPath} as it is, because it could not confirm that it was still the copy of Devin Desktop's MCP config Codebook had written there (it could not read that file again); look at it before you use or delete it.`,
   )
-  assert.deepEqual(readdirSync(dirname(configPath)), ['mcp_config.json'])
+  assert.equal(stagedAfter, rewrittenText)
   assert.equal(readFileSync(configPath, 'utf8'), configText)
   assert.deepEqual(storageAfter, [])
 })
 
-test('A staged copy of a setup’s new config that another program wrote into stays when the setup’s publish record cannot be written and the setup cannot read that copy again for lack of file handles', async (context) => {
-  // Value: protects=the cleanup of a refused publish-record write deletes the config's staged copy by its status alone only while that status shows the size and modification time the setup's own write left, so bytes another program wrote into that copy in place stay even when the copy cannot be read again (Cycle 0149 task 15's rule, kept by the ship review's fix for a read that fails); fails_when=the staged copy is gone or no longer holds what stood there after that write, the config changes, or the setup says anything but the record failure; no_claim=a real EMFILE, a real full disk and a real writer (the config module is loaded with an openWithoutFollowing that fails every open of the staged name with EMFILE once seam.beforeRecordWrite appended to the staged copy and cancelled the publish record's write with ENOSPC), a same-size write within one timestamp tick of the setup's own, what a later run does with that copy
+test('A staged copy of a setup’s new config that another program wrote into stays when the setup’s publish record cannot be written and the setup cannot read that copy again for lack of file handles, and the refusal names it', async (context) => {
+  // Value: protects=the cleanup of a refused publish-record write never deletes the config's staged copy when its bytes cannot be read again, so bytes another program wrote into that copy in place stay and the refusal names where they are (Cycle 0149 task 66); fails_when=the staged copy is gone or no longer holds what stood there after that write, the config changes, or the setup answers without the record failure and the staged file's sentence; no_claim=a real EMFILE, a real full disk and a real writer (the config module is loaded with an openWithoutFollowing that fails every open of the staged name with EMFILE once seam.beforeRecordWrite appended to the staged copy and cancelled the publish record's write with ENOSPC), a same-size write whose modification time was set back (the sibling test covers it), what a later run does with that copy
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
@@ -14644,7 +14713,7 @@ test('A staged copy of a setup’s new config that another program wrote into st
   // Assert
   assert.equal(
     error instanceof Error ? error.message : error,
-    'no space left on device',
+    `no space left on device Codebook left the file at ${stagedPath} as it is, because it could not confirm that it was still the copy of Devin Desktop's MCP config Codebook had written there (it could not read that file again); look at it before you use or delete it.`,
   )
   assert.equal(writtenText.endsWith('}\n '), true)
   assert.equal(stagedAfter, writtenText)
