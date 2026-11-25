@@ -392,6 +392,56 @@ test('an installed MCP receipt answers removed with the reason unverified when i
   })
 })
 
+// Value: protects=a publish record whose text parses as JSON but is no object keeping the receipt from standing, as the config module's parseRecord refuses that file as unreadable whatever its JSON shape, so the bridge's check and the window's mark never disagree with the config's refusal by reading it as a record without a note (Cycle 0149, CodeRabbit finding R11); fails_when=the JSON value that is no object reads as no note and the receipt answers installed, or removed with another reason; no_claim=an object without the note (it still reads as no note, its own test), and how such a file came to stand there (the test writes it by hand)
+for (const [shape, text] of [
+  ['null', 'null'],
+  ['an array', '[1]'],
+  ['a number', '42'],
+] as const)
+  test(`an installed MCP receipt answers removed with the reason unverified when its publish record is ${shape}`, async (context) => {
+    // Arrange
+    const storage = await arrangeStorage(context)
+    const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+    await writePrivate(
+      receiptPath,
+      JSON.stringify({ installed: true, installationId: 'installation-a' }),
+    )
+    await writePrivate(join(storage, 'devin-mcp', 'pending.json'), text)
+    // Act
+    const state = await readReceiptState(receiptPath)
+    // Assert
+    assert.deepEqual(state, {
+      state: 'removed',
+      reason: 'unverified',
+      receiptPath,
+    })
+  })
+
+// Value: protects=a publish record that is an object without the unverified note still reading as no note, so a settled record of a write or removal in progress never keeps the receipt from standing (Cycle 0149, CodeRabbit finding R11's kept path); fails_when=the object without the note reads as unverified and the receipt answers removed; no_claim=whether that object is a record of the config module's own shape (the reader never checks the other fields, which are the config module's)
+test('an installed MCP receipt answers installed while its publish record is an object that carries no note', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    receiptPath,
+    JSON.stringify({ installed: true, installationId: 'installation-a' }),
+  )
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-a' },
+  })
+})
+
 // Value: protects=a publish record that others can read keeps the MCP receipt from standing with that record's own reason and path, so the setup can name that file with the mode-600 repair instead of saying only that the setup changed (Cycle 0149 ship review, native adversarial note 3); fails_when=the answer is removed with the reason unverified, or names no record, or the receipt answers installed; no_claim=Windows modes, the sentence itself (devinSetupRefusalSentence's tests)
 test(
   'an installed MCP receipt answers removed with the reason not-private naming its publish record when others can read that record',

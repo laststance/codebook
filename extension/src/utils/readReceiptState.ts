@@ -74,7 +74,7 @@ type KeptReceiptState = Exclude<ReceiptState, { state: 'installed' }>
  * - undefined when nothing there keeps the receipt: the name is empty, or the file there carries no note, or a note that names these very bytes (the old record put back)
  * - `no-answer` when the read failed to look, so nothing is known
  * - removed with `not-private` or `permission` and that `recordPath` when others can read the file there or this user may not: Codebook cannot tell that no note stands, and the learner can repair that mode
- * - removed with `unverified` when the note names other bytes or none, or a file stands there that cannot be read as a record otherwise (a link, too large, no JSON): Codebook cannot tell that no note stands
+ * - removed with `unverified` when the note names other bytes or none, or a file stands there that cannot be read as a record otherwise (a link, too large, no JSON, or a JSON value that is no object, which the config module's parse refuses as unreadable whatever its shape): Codebook cannot tell that no note stands
  * @example
  * verdictOfRecordRead({ state: 'removed', reason: 'missing' }, '/storage/devin-mcp/pending.json', '/storage/devin-mcp/receipt.json', '9f86…') // => undefined
  * verdictOfRecordRead({ state: 'removed', reason: 'not-private' }, '/storage/devin-mcp/pending.json', '/storage/devin-mcp/receipt.json', '9f86…') // => { state: 'removed', reason: 'not-private', receiptPath: '/storage/devin-mcp/receipt.json', recordPath: '/storage/devin-mcp/pending.json' }
@@ -93,6 +93,13 @@ function verdictOfRecordRead(
     return read.reason === 'not-private' || read.reason === 'permission'
       ? { state: 'removed', reason: read.reason, receiptPath, recordPath }
       : { state: 'removed', reason: 'unverified', receiptPath }
+  // A JSON value that is no object is no record, as the config module's parse refuses it whatever its shape: Codebook cannot tell that no note stands.
+  if (
+    typeof read.value !== 'object' ||
+    read.value === null ||
+    Array.isArray(read.value)
+  )
+    return { state: 'removed', reason: 'unverified', receiptPath }
   const note = unverifiedNoteSchema.safeParse(read.value)
   // A note passes only the very bytes it names.
   return note.success && note.data.retiresReceipt.sha256 !== receiptSha256
