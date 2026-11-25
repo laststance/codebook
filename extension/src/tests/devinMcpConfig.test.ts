@@ -8758,8 +8758,14 @@ test("A setup record a sync tool moves away during a refresh's own read of it be
   const publishRecord = JSON.parse(pendingText)
   const stagedPath = join(dirname(configPath), String(publishRecord.stagedName))
   const probePath = join(dirname(configPath), String(publishRecord.probeName))
+  const folderContentPath = 'learner-file.txt'
+  const folderContent = 'learner content that must survive\n'
   mkdirSync(stagedPath)
+  writeFileSync(join(stagedPath, folderContentPath), folderContent)
   mkdirSync(probePath)
+  writeFileSync(join(probePath, folderContentPath), folderContent)
+  const stagedAsidePath = join(home, 'staged-folder-moved-aside')
+  const probeAsidePath = join(home, 'probe-folder-moved-aside')
   const movedPath = join(home, 'pending-moved-away.json')
   let savedText = ''
   let hasEmptied = false
@@ -8791,11 +8797,11 @@ test("A setup record a sync tool moves away during a refresh's own read of it be
   const isPendingAfterFirst = existsSync(pendingPath)
   const movedAfterFirst = readFileSync(movedPath, 'utf8')
   const isReceiptAfterFirst = existsSync(receiptPath)
-  // The sync tool puts the record back, the original config comes back in place, and the learner moves both folders away.
+  // The sync tool puts the record back, the original config comes back in place, and the learner moves both folders away, never deleting what they hold.
   renameSync(movedPath, pendingPath)
   writeFileSync(configPath, savedText)
-  rmSync(stagedPath, { recursive: true })
-  rmSync(probePath, { recursive: true })
+  renameSync(stagedPath, stagedAsidePath)
+  renameSync(probePath, probeAsidePath)
   const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
@@ -8813,6 +8819,14 @@ test("A setup record a sync tool moves away during a refresh's own read of it be
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     mcpServers: { alpha: { command: 'a' } },
   })
+  assert.equal(
+    readFileSync(join(stagedAsidePath, folderContentPath), 'utf8'),
+    folderContent,
+  )
+  assert.equal(
+    readFileSync(join(probeAsidePath, folderContentPath), 'utf8'),
+    folderContent,
+  )
 })
 
 /**
@@ -21147,7 +21161,7 @@ for (const noLinkCode of ['EPERM', 'ENOSYS'] as const) {
 }
 
 test("A first setup that stops inside the write of its record of the entry where Codebook's storage folder cannot give a file a second name leaves no partial record at receipt.json, so the next refresh takes the entry out instead of refusing every run", async (context) => {
-  // Value: protects=on storage without hard links a first setup's record of the entry appears at receipt.json only complete (a rename of its flushed staged file at a name a synchronous look found empty), so a stop inside that write never leaves a record every run refuses (Cycle 0149 task 19); fails_when=the stop hook never runs, anything stands at receipt.json after the setup, a staged name of the receipt stays, the next refresh refuses or answers anything but not-managed, or the config keeps the entry; no_claim=a real process end or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, an open that ends the write right after an exclusive create of receipt.json, before any byte is in it, and a rename that ends it right before publishing at that name; the setup's own take-out of its entry still runs after that stop, where a real process end leaves the entry to the next run's take-back), a file another program puts at that name between the last look and the rename (stated residual on such storage)
+  // Value: protects=on storage without hard links a first setup's record of the entry appears at receipt.json only complete (a rename of its flushed staged file at a name a synchronous look found empty), so a stop inside that write never leaves a record every run refuses (Cycle 0149 task 19); fails_when=the stop hook never runs, anything stands at receipt.json after the setup, a staged name of the receipt stays, the entry does not survive the first run for the refresh to take out, the next refresh refuses or answers anything but not-managed, or the config keeps the entry; no_claim=a real process end or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, an open that ends the write right after an exclusive create of receipt.json, before any byte is in it, and a rename that ends it right before publishing at that name and every later rename into the storage folder the same way, so the first run's own take-out never publishes a record and the entry it published stands for the next run's take-back, as a real process end leaves it), a file another program puts at that name between the last look and the rename (stated residual on such storage)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -21187,6 +21201,9 @@ test("A first setup that stops inside the write of its record of the entry where
             renamePublicationStops += 1
             throw new Error('process ended')
           }
+          // A process that ended inside the receipt's write publishes no record afterward either: the first run's own take-out of its entry never writes its records, so the entry it published survives for the next run's take-back, which is the behavior under test.
+          if (renamePublicationStops > 0 && dirname(to) === recordsPath)
+            throw new Error('process ended')
           return rename(from, to)
         },
         rm,
@@ -21202,6 +21219,8 @@ test("A first setup that stops inside the write of its record of the entry where
   const receiptAfterSetup = existsSync(receiptPath)
     ? `${statSync(receiptPath).size} bytes`
     : 'absent'
+  // The state the refresh starts from proves it the take-back's work: the entry the setup published still stands in the config, with no record of it at receipt.json.
+  const configBeforeRefresh = JSON.parse(readFileSync(configPath, 'utf8'))
 
   // Act
   const refresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
@@ -21214,6 +21233,9 @@ test("A first setup that stops inside the write of its record of the entry where
   assert.equal(canonicalOpenCreates, 0)
   assert.equal(renamePublicationStops, 1)
   assert.equal(receiptAfterSetup, 'absent')
+  assert.deepEqual(configBeforeRefresh, {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
   assert.equal(refresh, 'not-managed')
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     mcpServers: { alpha: { command: 'a' } },
@@ -24514,6 +24536,9 @@ test("A setup whose link fails while a folder appeared at the old record's name 
   const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
     await arrangeMovedAwayConfig(context)
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const folderContentPath = join(receiptPath, 'learner-file.txt')
+  const folderContent = 'learner content that must survive\n'
+  const asidePath = join(home, 'receipt-folder-moved-aside')
   const makingFolder = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
@@ -24521,6 +24546,7 @@ test("A setup whose link fails while a folder appeared at the old record's name 
         link: async (from: string, to: string) => {
           if (to === configPath) {
             mkdirSync(receiptPath)
+            writeFileSync(folderContentPath, folderContent)
             moveBack()
           }
           return link(from, to)
@@ -24548,7 +24574,8 @@ test("A setup whose link fails while a folder appeared at the old record's name 
     : 'absent'
   const retiredName = `receipt.json.${generation}.retired`
   const recordsAfterRefusal = await recordsIn(storage)
-  rmSync(receiptPath, { recursive: true })
+  // The learner follows the refusal: the folder moves to another folder, it is never deleted.
+  renameSync(receiptPath, asidePath)
   const next = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
     (result) => result.status,
     (error: unknown) => error,
@@ -24567,6 +24594,10 @@ test("A setup whose link fails while a folder appeared at the old record's name 
   assert.equal(next, 'current')
   assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+  assert.equal(
+    readFileSync(join(asidePath, 'learner-file.txt'), 'utf8'),
+    folderContent,
+  )
 })
 
 test("A setup whose link fails while it cannot look at the old record's name keeps both files and advises no removal", async (context) => {

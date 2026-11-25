@@ -118,48 +118,57 @@ const SCRIPTED_EMPTY_NAME: PrivateJsonState = {
 
 /**
  * Loads {@link readReceiptState} over a bounded read that answers `/storage/devin-mcp/receipt.json` with {@link SCRIPTED_RECEIPT} unless the script names it, and each read of the publish record's two names and the receipt's dropping name from a script, so a test can place a step of the config module between two of those reads.
- * @param script - Per bare name (`receipt.json`, `receipt.json.codebook-dropping`, `pending.json`, `pending.json.codebook-dropping`), what its reads answer in turn; the last answer repeats; `receipt.json` left out answers {@link SCRIPTED_RECEIPT}, and any other name left out answers {@link SCRIPTED_EMPTY_NAME}.
+ * Scripted answers and the inode lookup bind to the full path of each name beside that receipt: a read or lookup of the same-named file in another folder answers nothing from the script and is recorded in `unexpectedAccesses`, which every test asserts empty, so a product bug that reads the right name in the wrong folder never passes.
+ * @param script - Per bare name (`receipt.json`, `receipt.json.codebook-dropping`, `receipt.json.codebook-dropping-note`, `pending.json`, `pending.json.codebook-dropping`), what its reads answer in turn; the last answer repeats; `receipt.json` left out answers {@link SCRIPTED_RECEIPT}, and any other name left out answers {@link SCRIPTED_EMPTY_NAME}.
  * @param lookupErrorCode - When given, the `code` of the error the inode lookup of the dropping name throws, the way an emptied name (`ENOENT`) or an input error (`EIO`) would.
- * @returns The loaded reader.
+ * @returns The loaded reader, with the `unexpectedAccesses` that every read or lookup off the scripted receipt's folder records.
  */
 async function loadWithScriptedRecordReads(
   script: Record<string, PrivateJsonState[]>,
   lookupErrorCode?: string,
 ) {
   const readsOf = new Map<string, number>()
-  return loadModule<{ readReceiptState: typeof readReceiptState }>(
-    resolve(__dirname, '../utils/readReceiptState.js'),
-    {
-      'node:fs/promises': {
-        // Scripted notes name inode 43; every other name proves nothing.
-        lstat: (path: string) => {
-          if (lookupErrorCode !== undefined)
-            return Promise.reject(
-              Object.assign(new Error('lookup failed'), {
-                code: lookupErrorCode,
-              }),
-            )
-          return Promise.resolve({
-            ino: path.endsWith('.codebook-dropping') ? 43n : 0n,
-          })
-        },
-      },
-      './readPrivateJsonState': {
-        readPrivateJsonState: (path: string): Promise<PrivateJsonState> => {
-          const name = basename(path)
-          // The receipt stands unless the script reads it otherwise.
-          if (name === 'receipt.json' && script[name] === undefined)
-            return Promise.resolve(SCRIPTED_RECEIPT)
-          const answers = script[name] ?? [SCRIPTED_EMPTY_NAME]
-          const count = readsOf.get(name) ?? 0
-          readsOf.set(name, count + 1)
-          return Promise.resolve(
-            answers[Math.min(count, answers.length - 1)] ?? SCRIPTED_EMPTY_NAME,
+  const unexpectedAccesses: string[] = []
+  const loaded = await loadModule<{
+    readReceiptState: typeof readReceiptState
+  }>(resolve(__dirname, '../utils/readReceiptState.js'), {
+    'node:fs/promises': {
+      // Scripted notes name inode 43 of the receipt's dropping name at its full path; every other name proves nothing.
+      lstat: (path: string) => {
+        if (path !== '/storage/devin-mcp/receipt.json.codebook-dropping') {
+          unexpectedAccesses.push(path)
+          return Promise.resolve({ ino: 0n })
+        }
+        if (lookupErrorCode !== undefined)
+          return Promise.reject(
+            Object.assign(new Error('lookup failed'), {
+              code: lookupErrorCode,
+            }),
           )
-        },
+        return Promise.resolve({ ino: 43n })
       },
     },
-  )
+    './readPrivateJsonState': {
+      readPrivateJsonState: (path: string): Promise<PrivateJsonState> => {
+        const name = basename(path)
+        // The script's names sit beside `/storage/devin-mcp/receipt.json` only: the same-named file anywhere else is no scripted read.
+        if (path !== join('/storage/devin-mcp', name)) {
+          unexpectedAccesses.push(path)
+          return Promise.resolve(SCRIPTED_EMPTY_NAME)
+        }
+        // The receipt stands unless the script reads it otherwise.
+        if (name === 'receipt.json' && script[name] === undefined)
+          return Promise.resolve(SCRIPTED_RECEIPT)
+        const answers = script[name] ?? [SCRIPTED_EMPTY_NAME]
+        const count = readsOf.get(name) ?? 0
+        readsOf.set(name, count + 1)
+        return Promise.resolve(
+          answers[Math.min(count, answers.length - 1)] ?? SCRIPTED_EMPTY_NAME,
+        )
+      },
+    },
+  })
+  return { ...loaded, unexpectedAccesses }
 }
 
 // protects=a receipt that stands being told from the other states; fails_when=an installed receipt answers removed or its fields are lost; no_claim=the bridge's reconnect behavior
@@ -313,7 +322,7 @@ test('an installed MCP receipt answers removed with the reason unverified while 
 // Value: protects=a live rewrite of the publish record that puts the record back at its name between the read of that name and the read of its dropping name never hides its note: both names read empty, so the record's name is read once more and the note found there counts (Cycle 0149 task 39; red team 2, the live-rewrite gap); fails_when=one empty read of the record's name reads as no note and the receipt answers installed; no_claim=real file timing (scripted reads answer the record's name empty, the dropping name empty, then the record's name with the note), and a second rewrite that begins before the third read (the stated residual)
 test('an installed MCP receipt answers removed with the reason unverified when a rewrite puts its noted publish record back at its name between the reads of both names', async () => {
   // Arrange
-  const { readReceiptState: readWithRewrite } =
+  const { readReceiptState: readWithRewrite, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'pending.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_NOTED_RECORD],
       'pending.json.codebook-dropping': [SCRIPTED_EMPTY_NAME],
@@ -327,12 +336,13 @@ test('an installed MCP receipt answers removed with the reason unverified when a
     reason: 'unverified',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a read of the publish record that fails to look (descriptor exhaustion, EIO) leaves the receipt unknown rather than standing or removed (Cycle 0149 ship review, specialist note on unverifiedVerdictOf); fails_when=the failed read answers installed, so a window marks itself and the bridge connects past a note it could not read, or removed, so a transient failure ends the bridge; no_claim=which codes count as no answer (readPrivateJsonState's own tests); scripted reads answer the record's name with no-answer and the dropping name empty
 test('an installed MCP receipt answers no-answer when the read of its publish record fails to look', async () => {
   // Arrange
-  const { readReceiptState: readWithFailedRecord } =
+  const { readReceiptState: readWithFailedRecord, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'pending.json': [{ state: 'no-answer' }],
     })
@@ -344,12 +354,13 @@ test('an installed MCP receipt answers no-answer when the read of its publish re
     state: 'no-answer',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a note that receipt.json is unverified at the publish record's dropping name outranks a read of the record's name that failed to look (unverifiedVerdictOf's order: a name that keeps the receipt from standing comes before a read that gave no answer), so a window already marked loses its mark and the bridge refuses the receipt, as every setup, refresh and removal refuses that file (Cycle 0149 ship review, the testing reader's note on readReceiptState.ts:166); fails_when=the failed read decides and the receipt answers no-answer, which keeps a window's mark that the note should take away, or the receipt answers installed or removed with another reason; no_claim=real file timing and which codes count as no answer (scripted reads answer the record's name with no-answer and its dropping name with a record whose note names other bytes; readPrivateJsonState's own tests)
 test("an installed MCP receipt answers removed with the reason unverified when its publish record's dropping name holds the note although the read of the record's name fails to look", async () => {
   // Arrange
-  const { readReceiptState: readWithFailedRecordName } =
+  const { readReceiptState: readWithFailedRecordName, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'pending.json': [{ state: 'no-answer' }],
       'pending.json.codebook-dropping': [SCRIPTED_NOTED_RECORD],
@@ -365,12 +376,13 @@ test("an installed MCP receipt answers removed with the reason unverified when i
     reason: 'unverified',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=the same order with the names swapped: a note that receipt.json is unverified at the publish record's name outranks a read of its dropping name that failed to look, since unverifiedVerdictOf weighs both names alike, so the receipt never stands and no window keeps its mark beside that note (Cycle 0149 ship review, the testing reader's note on readReceiptState.ts:166, its mirrored case); fails_when=the failed read of the dropping name decides and the receipt answers no-answer, or the receipt answers installed or removed with another reason; no_claim=real file timing and which codes count as no answer (scripted reads answer the record's name with a record whose note names other bytes and its dropping name with no-answer; readPrivateJsonState's own tests)
 test("an installed MCP receipt answers removed with the reason unverified when its publish record holds the note although the read of that record's dropping name fails to look", async () => {
   // Arrange
-  const { readReceiptState: readWithFailedDroppingName } =
+  const { readReceiptState: readWithFailedDroppingName, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'pending.json': [SCRIPTED_NOTED_RECORD],
       'pending.json.codebook-dropping': [{ state: 'no-answer' }],
@@ -386,6 +398,7 @@ test("an installed MCP receipt answers removed with the reason unverified when i
     reason: 'unverified',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a publish record that stands but cannot be read as a record (here no JSON) keeps the receipt from standing, since Codebook cannot tell that no note stands there (Cycle 0149 ship review, specialist note on unverifiedVerdictOf); fails_when=the unreadable record reads as no note and the receipt answers installed; no_claim=the other unreadable forms (a link, too large), which take the same branch
@@ -687,7 +700,7 @@ test('an MCP receipt answers removed with the reason missing when the dropping n
 // Value: protects=a rewrite of Codebook's record of the entry that publishes its new record and deletes the old one between the read of receipt.json and the read of its dropping name never reads as a removal: both names read empty, so receipt.json is read once more and the record found there stands (Cycle 0149 ship review, specialist testing note; task 39's three-read rule for the publish record); fails_when=one empty read of receipt.json decides and the receipt answers removed with the reason missing; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name empty, then receipt.json with the record), and a second rewrite or a delete that begins before the third read (the stated residual)
 test('an MCP receipt that a rewrite publishes between the reads of receipt.json and its dropping name answers installed', async () => {
   // Arrange
-  const { readReceiptState: readWithRewrite } =
+  const { readReceiptState: readWithRewrite, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
       'receipt.json.codebook-dropping': [SCRIPTED_EMPTY_NAME],
@@ -700,12 +713,13 @@ test('an MCP receipt that a rewrite publishes between the reads of receipt.json 
     state: 'installed',
     receipt: { installed: true, installationId: 'installation-b' },
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a read of the receipt's dropping name that fails to look (descriptor exhaustion, EIO) while receipt.json reads empty leaves the receipt unknown, since Codebook may hold its record there at that moment, so a transient failure never ends a connected bridge (Cycle 0149 ship review, specialist testing note); fails_when=the empty receipt.json decides and the receipt answers removed with the reason missing; no_claim=which codes count as no answer (readPrivateJsonState's own tests); scripted reads answer receipt.json empty and its dropping name with no-answer
 test('an MCP receipt answers no-answer when receipt.json is empty and the read of its dropping name fails to look', async () => {
   // Arrange
-  const { readReceiptState: readWithFailedDropping } =
+  const { readReceiptState: readWithFailedDropping, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME],
       'receipt.json.codebook-dropping': [{ state: 'no-answer' }],
@@ -718,6 +732,7 @@ test('an MCP receipt answers no-answer when receipt.json is empty and the read o
     state: 'no-answer',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a file at the receipt's dropping name that is no record (here no JSON) never stands for Codebook's record of the entry: the empty receipt.json still answers removed with the reason missing (Cycle 0149 ship review, specialist testing note); fails_when=that file answers for the receipt, as installed, unparsable or no-answer; no_claim=the other unreadable forms (a link, too large, a mode others can read), which take the same branch
@@ -750,7 +765,7 @@ test('a skill receipt that is not there answers removed with the reason missing 
 // Value: protects=a record at the receipt's dropping name stands for Codebook's record of the entry only while the dropping note Codebook writes before every move of that record names it, the rule every setup, refresh and removal follows (they refuse such a file as one a backup or sync tool may have put there), so a stale or restored file at that private name never marks a window or connects the bridge (Cycle 0149 ship review pass 3, red team 2 on readReceiptState.ts:109); fails_when=the record at the dropping name answers installed without any note beside it; no_claim=real files (scripted reads answer receipt.json empty, its dropping name with an installed record and its note's name empty), the inode the config module's run start also checks
 test('an MCP receipt answers removed with the reason missing when receipt.json is empty and its dropping name holds a record that no dropping note names', async () => {
   // Arrange
-  const { readReceiptState: readWithUnnotedDropping } =
+  const { readReceiptState: readWithUnnotedDropping, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME],
       'receipt.json.codebook-dropping': [
@@ -770,12 +785,13 @@ test('an MCP receipt answers removed with the reason missing when receipt.json i
     reason: 'missing',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a dropping note that names other bytes than the file at the receipt's dropping name (a backup or sync tool replaced the moved record there, or the note is an older move's) proves nothing, so that file never stands for Codebook's record of the entry, as every setup, refresh and removal refuses it (Cycle 0149 ship review pass 3, red team 2); fails_when=the file at the dropping name answers installed beside a note that names other bytes; no_claim=real files (scripted reads), the inode the config module's run start also checks
 test('an MCP receipt answers removed with the reason missing when receipt.json is empty and the dropping note names other bytes than the record at its dropping name', async () => {
   // Arrange
-  const { readReceiptState: readWithOtherNote } =
+  const { readReceiptState: readWithOtherNote, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME],
       'receipt.json.codebook-dropping': [
@@ -802,12 +818,13 @@ test('an MCP receipt answers removed with the reason missing when receipt.json i
     reason: 'missing',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a dropping note of another shape than the config module's (here its moved version without the inode that module's schema requires) proves nothing, so the reader refuses what every setup, refresh and removal refuses, also when it names the very bytes at the dropping name (Cycle 0149 ship review pass 3, red team 2); fails_when=the record at the dropping name answers installed beside a note that module reads as no note; no_claim=real files (scripted reads), every other shape that module refuses (its schema's other fields take the same parse)
 test('an MCP receipt answers removed with the reason missing when receipt.json is empty and the note beside its dropping name lacks the inode of the move', async () => {
   // Arrange
-  const { readReceiptState: readWithShapelessNote } =
+  const { readReceiptState: readWithShapelessNote, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME],
       'receipt.json.codebook-dropping': [
@@ -836,12 +853,13 @@ test('an MCP receipt answers removed with the reason missing when receipt.json i
     reason: 'missing',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a record that Codebook moved to the receipt's dropping name, with the dropping note it wrote before the move naming that record's bytes, still answers for the receipt while receipt.json is empty, so a bridge check or a window's mark that lands while Codebook rewrites or deletes its record of the entry keeps finding the setup as it stood (Cycle 0149 ship review pass 3, red team 2; pass 2's specialist testing note); fails_when=the noted record answers removed or no-answer, or its fields are lost; no_claim=real files (scripted reads), the inode the config module's run start also checks
 test('an MCP receipt that Codebook holds at its dropping name answers installed with its fields while the dropping note names those very bytes', async () => {
   // Arrange
-  const { readReceiptState: readWithNotedDropping } =
+  const { readReceiptState: readWithNotedDropping, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME],
       'receipt.json.codebook-dropping': [
@@ -872,12 +890,13 @@ test('an MCP receipt that Codebook holds at its dropping name answers installed 
     state: 'installed',
     receipt: { installed: true, installationId: 'installation-a' },
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a read of the dropping note that fails to look (descriptor exhaustion, EIO) while receipt.json reads empty and its dropping name holds a record leaves the receipt unknown, since that note may name the record, so a transient failure neither ends a connected bridge nor unmarks a window (Cycle 0149 ship review pass 3, red team 2); fails_when=the record at the dropping name answers installed without its note being read, or the receipt answers removed; no_claim=which codes count as no answer (readPrivateJsonState's own tests); scripted reads
 test('an MCP receipt answers no-answer when receipt.json is empty, its dropping name holds a record and the read of the dropping note fails to look', async () => {
   // Arrange
-  const { readReceiptState: readWithFailedNote } =
+  const { readReceiptState: readWithFailedNote, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME],
       'receipt.json.codebook-dropping': [
@@ -897,12 +916,13 @@ test('an MCP receipt answers no-answer when receipt.json is empty, its dropping 
     state: 'no-answer',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a lookup of the moved record's inode that fails to look (EIO and the like) leaving the receipt unknown rather than missing: the file at the dropping name may be the very record the dropping note names, so neither a window's mark nor the bridge's check ever reads an uninspectable setup as deleted (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState); fails_when=the failed lookup reads as a record no note names, receipt.json is read once more and the receipt answers removed with the reason missing; no_claim=which failure codes count as an observed absence (ENOENT and ENOTDIR, their own tests); scripted reads answer receipt.json empty, its dropping name with the record the note names, and the lookup fails with EIO
 test("an MCP receipt answers no-answer when receipt.json is empty, its dropping name holds a record the dropping note names and the lookup of that record's inode fails to look", async () => {
   // Arrange
-  const { readReceiptState: readWithFailedLookup } =
+  const { readReceiptState: readWithFailedLookup, unexpectedAccesses } =
     await loadWithScriptedRecordReads(
       {
         'receipt.json': [SCRIPTED_EMPTY_NAME],
@@ -936,12 +956,13 @@ test("an MCP receipt answers no-answer when receipt.json is empty, its dropping 
     state: 'no-answer',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a record that is gone from the receipt's dropping name by the lookup of its inode (a delete finished, or a put-back took it back, between the read of its bytes and that lookup) still reading as a record the note no longer names, so receipt.json is read once more and decides — here empty, so the receipt answers removed with the reason missing, the one missing answer a lookup may lead to (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState: the kept ENOENT boundary); fails_when=the observed absence answers no-answer although the lookup proved the record gone, which keeps no window marked but holds every bridge check unknown beside a finished removal; no_claim=real file timing (scripted reads answer receipt.json empty twice and its dropping name with the record, the lookup reports ENOENT)
 test("an MCP receipt answers removed with the reason missing when receipt.json stays empty and the lookup of the moved record's inode reports ENOENT", async () => {
   // Arrange
-  const { readReceiptState: readWithEmptiedName } =
+  const { readReceiptState: readWithEmptiedName, unexpectedAccesses } =
     await loadWithScriptedRecordReads(
       {
         'receipt.json': [SCRIPTED_EMPTY_NAME],
@@ -976,12 +997,13 @@ test("an MCP receipt answers removed with the reason missing when receipt.json s
     reason: 'missing',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=the re-read of receipt.json that decides once the lookup of the moved record's inode observes its dropping name empty with ENOENT: a rewrite that published its new record and finished deleting the old one before that lookup reads as installed with the new record, never as the removal the first empty read of receipt.json would answer — the stays-empty test above cannot tell that re-read from its skip, since its scripted last answer repeats (Cycle 0149 release-head review minors, the ENOENT boundary's re-read proof); fails_when=receipt.json is not read once more after the observed absence, so the receipt answers removed with the reason missing although its new record stands; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name with the record the note names, then receipt.json with the new record, and the lookup reports ENOENT), a second rewrite or a delete that moves the new record before that last read (the stated residual)
 test("an MCP receipt that a rewrite publishes before the lookup of the moved record's inode reports ENOENT answers installed with the new record", async () => {
   // Arrange
-  const { readReceiptState: readWithRepublishedReceipt } =
+  const { readReceiptState: readWithRepublishedReceipt, unexpectedAccesses } =
     await loadWithScriptedRecordReads(
       {
         'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
@@ -1017,12 +1039,13 @@ test("an MCP receipt that a rewrite publishes before the lookup of the moved rec
     state: 'installed',
     receipt: { installed: true, installationId: 'installation-b' },
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a lookup of the moved record's inode that observes no directory at the dropping name (ENOTDIR, the other observed absence removedReasonOf knows) reading as the same emptied name as ENOENT: no file can stand there, so receipt.json is read once more and decides rather than the receipt staying unknown beside a finished removal (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState: the kept ENOENT boundary, its sibling code); fails_when=the observed absence answers no-answer although no record can stand at that name; no_claim=real file timing (scripted reads answer receipt.json empty twice and its dropping name with the record, the lookup reports ENOTDIR)
 test("an MCP receipt answers removed with the reason missing when receipt.json stays empty and the lookup of the moved record's inode reports ENOTDIR", async () => {
   // Arrange
-  const { readReceiptState: readWithNoDirectory } =
+  const { readReceiptState: readWithNoDirectory, unexpectedAccesses } =
     await loadWithScriptedRecordReads(
       {
         'receipt.json': [SCRIPTED_EMPTY_NAME],
@@ -1057,12 +1080,13 @@ test("an MCP receipt answers removed with the reason missing when receipt.json s
     reason: 'missing',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=the re-read of receipt.json that decides once the lookup of the moved record's inode observes no directory at its dropping name (ENOTDIR, the other observed absence): a rewrite that published its new record and finished deleting the old one before that lookup reads as installed with the new record on this sibling code too, never as the removal the first empty read of receipt.json would answer — the stays-empty test above cannot tell that re-read from its skip, since its scripted last answer repeats (Cycle 0149 release-head review minors, the ENOENT boundary's re-read proof, its sibling code); fails_when=receipt.json is not read once more after the observed absence, so the receipt answers removed with the reason missing although its new record stands; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name with the record the note names, then receipt.json with the new record, and the lookup reports ENOTDIR), a second rewrite or a delete that moves the new record before that last read (the stated residual)
 test("an MCP receipt that a rewrite publishes before the lookup of the moved record's inode reports ENOTDIR answers installed with the new record", async () => {
   // Arrange
-  const { readReceiptState: readWithRepublishedReceipt } =
+  const { readReceiptState: readWithRepublishedReceipt, unexpectedAccesses } =
     await loadWithScriptedRecordReads(
       {
         'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
@@ -1098,12 +1122,13 @@ test("an MCP receipt that a rewrite publishes before the lookup of the moved rec
     state: 'installed',
     receipt: { installed: true, installationId: 'installation-b' },
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // Value: protects=a rewrite of Codebook's record of the entry that publishes its new record, deletes the old one at the dropping name and then its dropping note between the read of the dropping name and the read of that note never reads as a removal: the note no longer names the old record, so receipt.json is read once more and the new record found there stands (Cycle 0149 ship review pass 3, red team 2; the three-read rule of pass 2's specialist testing note); fails_when=the empty first read of receipt.json decides and the receipt answers removed with the reason missing, or the old record at the dropping name answers in place of the new one; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name with the old record, its note's name empty, then receipt.json with the new record), a second rewrite or a delete that moves the new record before that last read (the stated residual)
 test('an MCP receipt that a rewrite publishes between the reads of its dropping name and the dropping note answers installed with the new record', async () => {
   // Arrange
-  const { readReceiptState: readWithFinishedRewrite } =
+  const { readReceiptState: readWithFinishedRewrite, unexpectedAccesses } =
     await loadWithScriptedRecordReads({
       'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
       'receipt.json.codebook-dropping': [
@@ -1123,6 +1148,7 @@ test('an MCP receipt that a rewrite publishes between the reads of its dropping 
     state: 'installed',
     receipt: { installed: true, installationId: 'installation-b' },
   })
+  assert.deepEqual(unexpectedAccesses, [])
 })
 
 // protects=a removed skill receipt (installed false) counting as removed; fails_when=it answers installed; no_claim=the MCP receipt
