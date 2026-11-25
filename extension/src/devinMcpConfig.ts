@@ -1891,7 +1891,14 @@ async function dropMovedAfterLink(
   // A look that failed: the name stays, and the publish record leads the next run there.
   if (state !== 'still') return 'kept'
   // The confirmed publish alone makes the old record safe to delete, so the config must still be the very file that confirmed it, checked last before the unlink.
-  if (!isConfigUnchanged(context, confirmed)) return 'kept'
+  let isConfirmedStill: boolean
+  try {
+    isConfirmedStill = isConfigUnchanged(context, confirmed)
+  } catch {
+    // A look that fails proves nothing: the name stays, and the publish record leads the next run there.
+    isConfirmedStill = false
+  }
+  if (!isConfirmedStill) return 'kept'
   return unlink(retiredPath).then(
     (): RetiredNameEnd => 'gone',
     // A name already gone is what the delete was for; another failure keeps the name and the record that leads there.

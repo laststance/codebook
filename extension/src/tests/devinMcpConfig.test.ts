@@ -20060,6 +20060,77 @@ test("A first setup never deletes a file another program put at the old record's
   )
 })
 
+test("A first setup that cannot look at the config right before the old record's delete keeps that record and its publish record and still installs, instead of failing with a raw error", async (context) => {
+  // Value: protects=the last look at the config right before a first setup deletes the old record's private name can fail (a storage fault, not a missing name), and a look that fails proves nothing: the delete must not run, the private name stays with the publish record that leads the next run there, and the confirmed publish still completes instead of the raw file-system error escaping the setup (Cycle 0149 issue 372); fails_when=the setup rejects or is not installed, the retired file or pending.json is gone or changed after the setup, receipt.json does not hold the setup's own record, or the next setup answers anything but current or leaves anything but its own record; no_claim=a real I/O error (the module's lstatSync stand-in throws EIO once, at the look at the config right after the retired receipt's last look passed), a failure of any other look, and which file a failed look would have shown
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await arrangeMovedAwayConfig(context)
+  const recordsFolder = join(storage, 'devin-mcp')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let isArmed = false
+  let hasFailedLook = false
+  const failingLook = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs': {
+        lstatSync: (path: string, options?: StatSyncOptions) => {
+          // Once the retired receipt's last look passed, the look at the config right before its delete fails once, as a storage fault.
+          if (isArmed && !hasFailedLook && path === configPath) {
+            hasFailedLook = true
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          }
+          return lstatSync(path, options)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setup = await failingLook.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      afterLeftoverCheck: (path) => {
+        // The retired receipt's look passed: the look at the config right before the delete comes next.
+        if (path.endsWith('.retired')) isArmed = true
+      },
+    },
+  )
+  const recordsAfterSetup = await recordsIn(storage)
+  const retiredName =
+    recordsAfterSetup.find((name) => name.endsWith('.retired')) ??
+    'no private name'
+
+  // Assert
+  assert.equal(hasFailedLook, true)
+  assert.equal(setup.status, 'installed')
+  assert.deepEqual(recordsAfterSetup, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(
+    readFileSync(join(recordsFolder, retiredName), 'utf8'),
+    receiptText,
+  )
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).generation,
+    setup.generation,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { codebook: ENTRY },
+  })
+
+  // Act
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(next.status, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test("A first setup never deletes another installation's record that a sync tool put at the old record's private name while its config was linked in, and the next setup leaves that record and finds its entry current", async (context) => {
   // Value: protects=a later run deletes at the old record's private name only the file whose bytes the first setup's publish record names (Cycle 0149 task 1, criterion 2; hosted CodeRabbit devinMcpConfig.ts:119), so a valid record of this config that another installation left there while the setup's config was linked in is never deleted beside the setup's own receipt; fails_when=that record is gone or changed after the next setup, the setup answers anything but installed, receipt.json does not hold the setup's own record, or the next setup answers anything but current or leaves anything but its record and that file; no_claim=a real sync tool (the config module is loaded with a link that, for the config's link, first puts another installation's record of this config at the private name at another inode, then links), and a file put there between the last look and the delete (no Node primitive unlinks by inode)
   // Arrange
