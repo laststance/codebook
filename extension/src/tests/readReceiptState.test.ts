@@ -119,10 +119,12 @@ const SCRIPTED_EMPTY_NAME: PrivateJsonState = {
 /**
  * Loads {@link readReceiptState} over a bounded read that answers `/storage/devin-mcp/receipt.json` with {@link SCRIPTED_RECEIPT} unless the script names it, and each read of the publish record's two names and the receipt's dropping name from a script, so a test can place a step of the config module between two of those reads.
  * @param script - Per bare name (`receipt.json`, `receipt.json.codebook-dropping`, `pending.json`, `pending.json.codebook-dropping`), what its reads answer in turn; the last answer repeats; `receipt.json` left out answers {@link SCRIPTED_RECEIPT}, and any other name left out answers {@link SCRIPTED_EMPTY_NAME}.
+ * @param lookupErrorCode - When given, the `code` of the error the inode lookup of the dropping name throws, the way an emptied name (`ENOENT`) or an input error (`EIO`) would.
  * @returns The loaded reader.
  */
 async function loadWithScriptedRecordReads(
   script: Record<string, PrivateJsonState[]>,
+  lookupErrorCode?: string,
 ) {
   const readsOf = new Map<string, number>()
   return loadModule<{ readReceiptState: typeof readReceiptState }>(
@@ -130,10 +132,17 @@ async function loadWithScriptedRecordReads(
     {
       'node:fs/promises': {
         // Scripted notes name inode 43; every other name proves nothing.
-        lstat: (path: string) =>
-          Promise.resolve({
+        lstat: (path: string) => {
+          if (lookupErrorCode !== undefined)
+            return Promise.reject(
+              Object.assign(new Error('lookup failed'), {
+                code: lookupErrorCode,
+              }),
+            )
+          return Promise.resolve({
             ino: path.endsWith('.codebook-dropping') ? 43n : 0n,
-          }),
+          })
+        },
       },
       './readPrivateJsonState': {
         readPrivateJsonState: (path: string): Promise<PrivateJsonState> => {
@@ -886,6 +895,125 @@ test('an MCP receipt answers no-answer when receipt.json is empty, its dropping 
   // The module ran in its own realm, so its answer is compared by its JSON.
   assert.deepEqual(JSON.parse(JSON.stringify(state)), {
     state: 'no-answer',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a lookup of the moved record's inode that fails to look (EIO and the like) leaving the receipt unknown rather than missing: the file at the dropping name may be the very record the dropping note names, so neither a window's mark nor the bridge's check ever reads an uninspectable setup as deleted (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState); fails_when=the failed lookup reads as a record no note names, receipt.json is read once more and the receipt answers removed with the reason missing; no_claim=which failure codes count as an observed absence (ENOENT and ENOTDIR, their own tests); scripted reads answer receipt.json empty, its dropping name with the record the note names, and the lookup fails with EIO
+test("an MCP receipt answers no-answer when receipt.json is empty, its dropping name holds a record the dropping note names and the lookup of that record's inode fails to look", async () => {
+  // Arrange
+  const { readReceiptState: readWithFailedLookup } =
+    await loadWithScriptedRecordReads(
+      {
+        'receipt.json': [SCRIPTED_EMPTY_NAME],
+        'receipt.json.codebook-dropping': [
+          {
+            state: 'read',
+            value: { installed: true, installationId: 'installation-a' },
+            sha256: 'hash of the bytes at the dropping name',
+          },
+        ],
+        'receipt.json.codebook-dropping-note': [
+          {
+            state: 'read',
+            value: {
+              moved: {
+                ino: '43',
+                sha256: 'hash of the bytes at the dropping name',
+              },
+            },
+            sha256: 'hash of the bytes at the dropping note',
+          },
+        ],
+      },
+      'EIO',
+    )
+  // Act
+  const state = await readWithFailedLookup('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'no-answer',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a record that is gone from the receipt's dropping name by the lookup of its inode (a delete finished, or a put-back took it back, between the read of its bytes and that lookup) still reading as a record the note no longer names, so receipt.json is read once more and decides — here empty, so the receipt answers removed with the reason missing, the one missing answer a lookup may lead to (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState: the kept ENOENT boundary); fails_when=the observed absence answers no-answer although the lookup proved the record gone, which keeps no window marked but holds every bridge check unknown beside a finished removal; no_claim=real file timing (scripted reads answer receipt.json empty twice and its dropping name with the record, the lookup reports ENOENT)
+test("an MCP receipt answers removed with the reason missing when receipt.json stays empty and the lookup of the moved record's inode reports ENOENT", async () => {
+  // Arrange
+  const { readReceiptState: readWithEmptiedName } =
+    await loadWithScriptedRecordReads(
+      {
+        'receipt.json': [SCRIPTED_EMPTY_NAME],
+        'receipt.json.codebook-dropping': [
+          {
+            state: 'read',
+            value: { installed: true, installationId: 'installation-a' },
+            sha256: 'hash of the bytes at the dropping name',
+          },
+        ],
+        'receipt.json.codebook-dropping-note': [
+          {
+            state: 'read',
+            value: {
+              moved: {
+                ino: '43',
+                sha256: 'hash of the bytes at the dropping name',
+              },
+            },
+            sha256: 'hash of the bytes at the dropping note',
+          },
+        ],
+      },
+      'ENOENT',
+    )
+  // Act
+  const state = await readWithEmptiedName('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'missing',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a lookup of the moved record's inode that observes no directory at the dropping name (ENOTDIR, the other observed absence removedReasonOf knows) reading as the same emptied name as ENOENT: no file can stand there, so receipt.json is read once more and decides rather than the receipt staying unknown beside a finished removal (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState: the kept ENOENT boundary, its sibling code); fails_when=the observed absence answers no-answer although no record can stand at that name; no_claim=real file timing (scripted reads answer receipt.json empty twice and its dropping name with the record, the lookup reports ENOTDIR)
+test("an MCP receipt answers removed with the reason missing when receipt.json stays empty and the lookup of the moved record's inode reports ENOTDIR", async () => {
+  // Arrange
+  const { readReceiptState: readWithNoDirectory } =
+    await loadWithScriptedRecordReads(
+      {
+        'receipt.json': [SCRIPTED_EMPTY_NAME],
+        'receipt.json.codebook-dropping': [
+          {
+            state: 'read',
+            value: { installed: true, installationId: 'installation-a' },
+            sha256: 'hash of the bytes at the dropping name',
+          },
+        ],
+        'receipt.json.codebook-dropping-note': [
+          {
+            state: 'read',
+            value: {
+              moved: {
+                ino: '43',
+                sha256: 'hash of the bytes at the dropping name',
+              },
+            },
+            sha256: 'hash of the bytes at the dropping note',
+          },
+        ],
+      },
+      'ENOTDIR',
+    )
+  // Act
+  const state = await readWithNoDirectory('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'missing',
     receiptPath: '/storage/devin-mcp/receipt.json',
   })
 })

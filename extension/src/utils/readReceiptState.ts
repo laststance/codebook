@@ -118,19 +118,19 @@ function isMcpReceipt(receiptPath: string): boolean {
   return basename(dirname(receiptPath)) === MCP_RECEIPT_FOLDER
 }
 
-/** What the dropping note beside the MCP entry's receipt says of the record read at its dropping name, as {@link readNotedDropping} answers: `noted` when it names those very bytes, `unnoted` when no such note stands, `no-answer` when its read failed to look. */
+/** What the dropping note beside the MCP entry's receipt says of the record read at its dropping name, as {@link readNotedDropping} answers: `noted` when it names those very bytes, `unnoted` when no such note stands, `no-answer` when its read or the lookup of the record's inode failed to look. */
 type DroppingNoteVerdict = 'noted' | 'unnoted' | 'no-answer'
 
 /**
  * Tells whether the record read at the MCP entry's receipt's dropping name is the one Codebook moved there: the dropping note beside it ({@link DROPPING_NOTE_NAME_SUFFIX}), which every rewrite or delete writes before its move, must be a private note of the config module's shape ({@link droppingNoteSchema}) that names the SHA-256 of those very bytes and the inode of the file at that name, the proof every setup, refresh and removal asks before it puts that file back (`putNotedRecordBack`, which refuses any other file there as one a backup or sync tool may have put back); called only by {@link readReceiptOrDropped}, once the dropping name held something to parse, so a check of a setup that stands or was removed reads no note.
- * Limit: the inode is looked up after the bytes were read, so a replace between the two can still pass when the copy holds the same bytes and the note names its inode; the config module's run start reads the note and file as one tracked step. An inode that cannot be looked up proves nothing.
+ * Limit: the inode is looked up after the bytes were read, so a replace between the two can still pass when the copy holds the same bytes and the note names its inode; the config module's run start reads the note and file as one tracked step. A lookup that observes the name empty proves the record left it; one that fails otherwise cannot tell the file there from the moved record, so nothing is known.
  * @param receiptPath - The MCP entry's `receipt.json`.
  * @param droppedSha256 - The SHA-256 of the bytes read at its dropping name.
  * @param platform - The platform whose file modes are judged.
  * @returns
  * - `noted` when the note names those bytes as the version its move took there
- * - `unnoted` when no note stands there, the file there is no private note of that shape (a link, too large, readable by others, no JSON), or it names other bytes
- * - `no-answer` when the read of the note failed to look, so nothing is known
+ * - `unnoted` when no note stands there, the file there is no private note of that shape (a link, too large, readable by others, no JSON), it names other bytes, or the record left the dropping name before the lookup of its inode
+ * - `no-answer` when the read of the note or the lookup of the record's inode failed to look, so nothing is known
  * @example
  * await readNotedDropping('/storage/devin-mcp/receipt.json', 'cd…', 'darwin') // => 'noted' while a rewrite holds the record at receipt.json.codebook-dropping
  * await readNotedDropping('/storage/devin-mcp/receipt.json', 'cd…', 'darwin') // => 'unnoted' once a backup put a record there without its note
@@ -150,12 +150,23 @@ async function readNotedDropping(
   const note = droppingNoteSchema.safeParse(read.value)
   if (!note.success || note.data.moved.sha256 !== droppedSha256)
     return 'unnoted'
-  // The bounded read gives no inode, so the name is looked at once more; a lookup that fails proves nothing.
-  const inode = await lstat(`${receiptPath}${DROPPING_NAME_SUFFIX}`, {
-    bigint: true,
-  })
-    .then((status) => status.ino.toString())
-    .catch(() => undefined)
+  // The bounded read gives no inode, so the name is looked at once more; a lookup that fails proves nothing unless it observes the name empty.
+  let inode: string
+  try {
+    inode = (
+      await lstat(`${receiptPath}${DROPPING_NAME_SUFFIX}`, { bigint: true })
+    ).ino.toString()
+  } catch (error) {
+    // Not `instanceof Error`: an error from another realm fails that check.
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? error.code
+        : undefined
+    // Any failure but an observed absence cannot tell the file there from the moved record, and an uninspectable setup must never read as removed.
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') return 'no-answer'
+    // The record left the name (the codes removedReasonOf reads as missing), so the note decides no more.
+    return 'unnoted'
+  }
   // Only a note that names these very bytes at this very inode proves that Codebook moved them there.
   return inode === note.data.moved.ino ? 'noted' : 'unnoted'
 }
@@ -169,7 +180,7 @@ async function readNotedDropping(
  * @param platform - The platform whose file modes are judged.
  * @returns
  * - the read of the receipt's name, unless it found that name empty or the receipt is no MCP entry's
- * - for the MCP receipt's empty name: the read of its dropping name while it found a record there that the dropping note names, or failed to look; no answer when the note's read failed to look; the read of the receipt's name once more when the dropping name is empty too, or holds a record no note names; the first read otherwise (a file there that is no record never stands for the receipt)
+ * - for the MCP receipt's empty name: the read of its dropping name while it found a record there that the dropping note names, or failed to look; no answer when the note's read or the lookup of the record's inode failed to look; the read of the receipt's name once more when the dropping name is empty too, or holds a record no note names; the first read otherwise (a file there that is no record never stands for the receipt)
  * @example
  * await readReceiptOrDropped('/storage/devin-mcp/receipt.json', 'darwin') // => { state: 'read', value: { installed: true, installationId: '…' }, sha256: '…' } while a rewrite holds the record at receipt.json.codebook-dropping
  */
