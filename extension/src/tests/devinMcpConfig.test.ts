@@ -27545,6 +27545,167 @@ async function arrangeResavedAfterStoppedFirstSetup(
   }
 }
 
+test('A refresh never deletes the old record of a stopped first setup when a backup rewrites the restored config in place just after recovery drops the staged name, even though the config keeps the staged inode', async (context) => {
+  // Value: protects=the inode proof of a stopped first setup's link is bound to the bytes that setup published: once recovery drops the staged second name, that inode alone no longer proves the publish, so a backup that rewrites the restored old config in place on that inode before the proof is captured never loses the old record that owns the entry now standing (Cycle 0149 task 70); fails_when=the config no longer holds the restored bytes or inode, the old record or the publish record is gone or changed, or the refresh answers anything but the undecided refusal that keeps both records; no_claim=a real backup tool (the config module is loaded with an unlink that rewrites the config in place right after recovery unlinks the staged name), a real process end (seam.afterPublish throws), and a write between the last look and the delete (no Node primitive unlinks by inode or content)
+  // Arrange
+  const { home, storage, configPath, receiptPath, oldConfigText } =
+    await arrangeMovedAwayConfig(context)
+  const recordsFolder = join(storage, 'devin-mcp')
+  const pendingPath = join(recordsFolder, 'pending.json')
+  const retiredText = readFileSync(receiptPath, 'utf8')
+  const busyRetiredName = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path.endsWith('.retired'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    busyRetiredName.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const pending = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(pending.generation)}.retired`
+  const retiredPath = join(recordsFolder, retiredName)
+  const stagedPath = join(dirname(configPath), String(pending.stagedName))
+  const inodeBefore = lstatSync(configPath, { bigint: true }).ino
+  assert.equal(lstatSync(stagedPath, { bigint: true }).ino, inodeBefore)
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  let hasRestoredInPlace = false
+  let inodeAfterRestore: bigint | undefined
+  const restoringAfterStagedDrop = await loadModule<
+    typeof DevinMcpConfigModule
+  >(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          await unlink(path)
+          // The staged name is gone by now; a backup rewrites the restored old config into the published file itself.
+          if (path === stagedPath && !hasRestoredInPlace) {
+            hasRestoredInPlace = true
+            writeFileSync(configPath, oldConfigText)
+            inodeAfterRestore = lstatSync(configPath, { bigint: true }).ino
+          }
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refreshError = await restoringAfterStagedDrop
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(hasRestoredInPlace, true)
+  assert.equal(inodeAfterRestore, inodeBefore)
+  assert.equal(existsSync(retiredPath), true)
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(existsSync(pendingPath), true)
+  assert.equal(lstatSync(configPath, { bigint: true }).ino, inodeBefore)
+  assert.equal(readFileSync(configPath, 'utf8'), oldConfigText)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a "codebook" entry in Devin Desktop's MCP config at ${configPath} that a setup which ended early may have written, and its own old record at ${retiredPath} covers that same entry, so it cannot tell which setup the entry belongs to. Codebook changed nothing and kept both records (${pendingPath}, ${retiredPath}); remove that entry by hand, delete both records, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+})
+
+test("A refresh never deletes a completed first setup's old record when a backup rewrote the restored config in place on the staged inode", async (context) => {
+  // Value: protects=the completed publish record's inode proof is bound to the bytes that setup published just as the staged-name proof is: a backup that rewrites the restored old config in place on that inode before the next run never loses the old record that owns the entry now standing (Cycle 0149 task 70); fails_when=the config no longer holds the restored bytes or inode, the old record or the publish record is gone or changed, or the refresh answers anything but the undecided refusal that keeps both records; no_claim=how the completed record came to stand without the setup's receipt (the test writes that mark and drops the staged name by hand, as the completed setup's cleanup does), a real backup tool (writeFileSync rewrites the config in place), a real process end (seam.afterPublish throws), and a write between the last look and the delete (no Node primitive unlinks by inode or content)
+  // Arrange
+  const { home, storage, configPath, receiptPath, oldConfigText } =
+    await arrangeMovedAwayConfig(context)
+  const recordsFolder = join(storage, 'devin-mcp')
+  const pendingPath = join(recordsFolder, 'pending.json')
+  const retiredText = readFileSync(receiptPath, 'utf8')
+  const busyRetiredName = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path.endsWith('.retired'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    busyRetiredName.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const pending = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(pending.generation)}.retired`
+  const retiredPath = join(recordsFolder, retiredName)
+  const stagedPath = join(dirname(configPath), String(pending.stagedName))
+  writeFileSync(pendingPath, JSON.stringify({ ...pending, phase: 'completed' }))
+  rmSync(stagedPath)
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const inodeBefore = lstatSync(configPath, { bigint: true }).ino
+  writeFileSync(configPath, oldConfigText)
+  assert.equal(lstatSync(configPath, { bigint: true }).ino, inodeBefore)
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a "codebook" entry in Devin Desktop's MCP config at ${configPath} that a setup which ended early may have written, and its own old record at ${retiredPath} covers that same entry, so it cannot tell which setup the entry belongs to. Codebook changed nothing and kept both records (${pendingPath}, ${retiredPath}); remove that entry by hand, delete both records, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), oldConfigText)
+  assert.equal(lstatSync(configPath, { bigint: true }).ino, inodeBefore)
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+})
+
 test('A first setup that stopped after its link, whose config was saved again with the same entry before the next run, keeps the old record aside and refuses instead of bringing back the old installation', async (context) => {
   // Value: protects=a first setup's old record never comes back beside an entry that setup may have published, and the way out the refusal names ends in a new installation id; fails_when=the refresh answers current, receipt.json stands, either record is gone, or the next setup reuses the old id; no_claim=a real process end (seam.afterPublish throws), why the private name's unlink fails (unlink stub EBUSY), a real sync tool (swapFile saves the same bytes at another inode)
   // Arrange
