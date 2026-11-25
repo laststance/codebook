@@ -24021,6 +24021,91 @@ test("A refresh never takes for its record another installation's record that a 
   assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
 })
 
+test("A refresh after a put-back left another installation's record unverified at receipt.json puts the old record back, ends the publish record and answers current once the learner moved that file away and the old record stands at its private name", async (context) => {
+  // Value: protects=the refusal's way out of the note that a put-back left an unverified file at receipt.json (receiptUnverified) works: once the learner moved the file at receipt.json away and the old record the note names stands at its private name, the next run puts that record back, holds its read of receipt.json against the note, which passes the very bytes it names (assertNotedReceipt), ends the publish record with its note and answers current (Cycle 0149 ship review, the state-machines reader's cell unverified × put-back); fails_when=the refresh refuses or answers anything but current, receipt.json is gone or holds other bytes than the old record, the private name or pending.json stays, or the config changes; no_claim=a real sync tool (arrangeUnverifiedPutBack's link puts another installation's record at the private name right before the setup's put-back link), the learner moving the file away and a backup putting the old record back at its private name (rmSync, writeFileSync), and the bridge's reading of the note (readReceiptState.ts)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    oldConfigText,
+    pendingPath,
+    retiredPath,
+  } = await arrangeUnverifiedPutBack(context)
+  rmSync(receiptPath)
+  rmSync(retiredPath)
+  const retiredText = JSON.stringify(receiptBefore)
+  writeFileSync(retiredPath, retiredText, { mode: 0o600 })
+  const noteBefore = (await readRecordFile(storage, 'pending.json'))
+    .retiresReceipt
+
+  // Act
+  const refreshAnswer = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.deepEqual(noteBefore, {
+    sha256: sha256(retiredText),
+    receiptUnverified: true,
+  })
+  assert.equal(refreshAnswer, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), oldConfigText)
+})
+
+test('A refresh while the publish record notes receipt.json unverified takes the very bytes that note names at receipt.json for its record: it drops the spare copy of the old record at its private name, ends the publish record and answers current', async (context) => {
+  // Value: protects=the note that a put-back left an unverified file at receipt.json (receiptUnverified) refuses only other bytes: a file at receipt.json that holds the very bytes the note names passes every read held against it (assertNotedReceipt's branch where the found hash equals the noted one, at assertReceiptVerified's first look, at the read the put-back compares with and at the read the run decides on), so the old record at its private name is a spare copy that goes, the publish record with its note ends, and the refresh answers current (Cycle 0149 ship review, the state-machines reader's cell unverified × put-back, the case of the noted bytes); fails_when=the refresh refuses or answers anything but current, receipt.json is gone or holds other bytes, the private name or pending.json stays, or the config changes; no_claim=a real sync tool (arrangeUnverifiedPutBack's link puts another installation's record at the private name right before the setup's put-back link), the learner moving that file away and a backup putting the old record back at its private name and at receipt.json as two files (rmSync, writeFileSync), and the bridge's reading of the note (readReceiptState.ts)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    oldConfigText,
+    pendingPath,
+    retiredPath,
+  } = await arrangeUnverifiedPutBack(context)
+  rmSync(receiptPath)
+  rmSync(retiredPath)
+  const retiredText = JSON.stringify(receiptBefore)
+  writeFileSync(retiredPath, retiredText, { mode: 0o600 })
+  writeFileSync(receiptPath, retiredText, { mode: 0o600 })
+  const noteBefore = (await readRecordFile(storage, 'pending.json'))
+    .retiresReceipt
+
+  // Act
+  const refreshAnswer = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.deepEqual(noteBefore, {
+    sha256: sha256(retiredText),
+    receiptUnverified: true,
+  })
+  assert.equal(refreshAnswer, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), oldConfigText)
+})
+
 test("A refresh never drops the old record beside another installation's record that a sync tool puts at receipt.json while the old record goes back, while the publish record notes receipt.json unverified: it keeps both files and the publish record and asks to move that record", async (context) => {
   // Value: protects=the comparison a later run's put-back makes when receipt.json is taken reads receipt.json afresh, and that read is held against the publish record's note that receipt.json is unverified (Cycle 0149 task 29: every read of receipt.json that decides ownership), so a record of the same entry put there after the run's first look never makes the old record a spare copy that is deleted; fails_when=the old record's private file is gone or holds other bytes, receipt.json is gone or holds other bytes, pending.json is gone or changed, or the refusal is another sentence; no_claim=a real sync tool (the config module is loaded with a link that, for the first link into receipt.json, writes another installation's record of the same entry there right before it links), the learner moving receipt.json away and a backup putting the old record back at its private name (rmSync, writeFileSync)
   // Arrange
