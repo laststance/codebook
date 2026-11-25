@@ -18147,7 +18147,7 @@ test('A removal that takes back a first setup that created the config keeps a re
 })
 
 test('A removal that takes back a cut-short first setup still answers file-removed when deleting its receipt fails, and names that record for manual deletion', async (context) => {
-  // Value: protects=a removal whose own take-back already took the entry out reporting that result even when the receipt cleanup then fails, with the receipt named for manual deletion instead of the promise rejecting and leaving the removal result unknown (Cycle 0149 release-head review, CodeRabbit minor on devinMcpConfig.ts:11919); fails_when=the removal rejects, answers another status, or omits the cleanup guidance, or the config file stays; no_claim=a real EIO (the loaded module's unlink fails the receipt's dropping name once), and the state the partially moved receipt is left in
+  // Value: protects=a removal whose own take-back already took the entry out reporting that result even when the removal's own receipt cleanup then fails, with the receipt named for manual deletion instead of the promise rejecting and leaving the removal result unknown (Cycle 0149 release-head review, CodeRabbit minor on devinMcpConfig.ts:11919); fails_when=the removal rejects, answers another status, or omits the cleanup guidance, the config file stays, the receipt is gone or changes, or the two receipt-drop attempts are not both made; no_claim=a real EIO (the loaded module's link of the receipt to its dropping name fails before anything moves) or the state a partially moved receipt would be left in
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const recordsPath = join(storage, 'devin-mcp')
@@ -18167,31 +18167,36 @@ test('A removal that takes back a cut-short first setup still answers file-remov
   const cutShortRecord = JSON.parse(
     readFileSync(join(recordsPath, 'pending.json'), 'utf8'),
   )
-  writeFileSync(
-    receiptPath,
-    JSON.stringify({
-      schemaVersion: 1,
-      targetPath: configPath,
-      entrySha256: sha256(ENTRY_CANONICAL),
-      createdFile: true,
-      installed: true,
-      generation: cutShortRecord.generation,
-      installationId: cutShortRecord.installationId,
-      config: {
-        ino: recordedFileId(statSync(configPath, { bigint: true }).ino),
-      },
-    }),
-    { mode: 0o600 },
-  )
+  const adoptedReceiptText = JSON.stringify({
+    schemaVersion: 1,
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: true,
+    installed: true,
+    generation: cutShortRecord.generation,
+    installationId: cutShortRecord.installationId,
+    // An adopted receipt never covers the failed setup's take-back, so inspection finishes that take-back before the removal answers it.
+    adopted: true,
+    config: {
+      ino: recordedFileId(statSync(configPath, { bigint: true }).ino),
+    },
+  })
+  writeFileSync(receiptPath, adoptedReceiptText, { mode: 0o600 })
+  let receiptDropAttempts = 0
   const failingDrop = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
         link: async (from: string, to: string) => {
-          if (to === droppingPath)
-            throw Object.assign(new Error('input/output error'), {
-              code: 'EIO',
-            })
+          if (to === droppingPath) {
+            receiptDropAttempts += 1
+            throw Object.assign(
+              new Error(
+                `receipt drop ${receiptDropAttempts} input/output error`,
+              ),
+              { code: 'EIO' },
+            )
+          }
           return link(from, to)
         },
         lstat,
@@ -18209,12 +18214,15 @@ test('A removal that takes back a cut-short first setup still answers file-remov
   const result = await failingDrop.removeManagedDevinMcpEntry(storage, home)
 
   // Assert
+  // The take-back's adopted-receipt cleanup and the removal answer's own cleanup both try the dropping move; the second is this regression's failure.
+  assert.equal(receiptDropAttempts, 2)
   // The module ran in its own realm, so its answer is compared by its JSON.
   assert.deepEqual(JSON.parse(JSON.stringify(result)), {
     status: 'file-removed',
     path: configPath,
     cleanupFailure: `Codebook could not delete its own record of that entry at ${receiptPath}; delete that record by hand.`,
   })
+  assert.equal(readFileSync(receiptPath, 'utf8'), adoptedReceiptText)
   assert.equal(existsSync(configPath), false)
 })
 
