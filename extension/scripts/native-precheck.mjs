@@ -75,6 +75,15 @@ const PROCESS_KINDS = [
     programs: ['tsc', 'tsc.js'],
     serverOptions: ['--lsp'],
   },
+  // These two build inside their own process (qa-build.mjs bundles with esbuild between its tsc and vsce children,
+  // build-fast.mjs transpiles in-process), so no child names the build while it runs. `esbuild` itself is no program
+  // of any kind: other projects' dev servers keep an `esbuild --service` process open for hours, which would read
+  // busy while nothing of this repository builds; this repository's esbuild runs inside a counted script.
+  {
+    id: 'inProcessBuild',
+    label: 'qa-build.mjs or build-fast.mjs',
+    programs: ['qa-build.mjs', 'build-fast.mjs'],
+  },
   {
     id: 'fallow',
     label: 'fallow',
@@ -119,11 +128,13 @@ It prints kinds and counts only, never a process's arguments, environment or wor
 directory, and it signals no process.
 
 Kinds: node --test (a node process with a --test option), test-shard.mjs,
-run-pregate-tests.mjs, tsc (not an editor's language server, tsc --lsp), fallow (not
-its language or MCP server, fallow lsp-server or mcp-server), c8, pnpm install
-(install, i, add, update, up), package.mjs, check-package.mjs or vsce,
-checkHealth.mjs, gate.mjs. A process counts once, under the program it runs; a
-program whose path holds a space is read as two words and is not counted.
+run-pregate-tests.mjs, tsc (not an editor's language server, tsc --lsp), qa-build.mjs
+or build-fast.mjs (they build inside their own process), fallow (not its language or
+MCP server, fallow lsp-server or mcp-server), c8, pnpm install (install, i, add,
+update, up), package.mjs, check-package.mjs or vsce, checkHealth.mjs, gate.mjs. A
+process counts once, under the program it runs; a program whose path holds a space
+is read as two words and is not counted. esbuild is not counted by itself: other
+projects' dev servers keep its service process open for hours.
 
 Options:
   --max-used-swap-mb <n>  the most used swap that still counts as clear, in MB

@@ -24,6 +24,7 @@ const NOTHING_RUNS = {
   testShard: 0,
   pregateTests: 0,
   tsc: 0,
+  inProcessBuild: 0,
   fallow: 0,
   c8: 0,
   pnpmInstall: 0,
@@ -122,7 +123,7 @@ test('the process listing is read as one row of pid, command and arguments per l
   ])
 })
 
-// Value: protects=every build or test kind this repository starts on the Mac counted, each process once, by the program it runs (node's script, or the binary); fails_when=a kind is missed, a process counts under two kinds (c8 runs `node --test` as its arguments), or pnpm's install is not seen behind --dir; no_claim=kinds this repository does not start
+// Value: protects=every build or test kind this repository starts on the Mac counted, each process once, by the program it runs (node's script, or the binary), the QA build and the fast compile included, which build inside their own process; fails_when=a kind is missed, a process counts under two kinds (c8 runs `node --test` as its arguments), or pnpm's install is not seen behind --dir; no_claim=kinds this repository does not start
 test('each build and test kind the repository starts is counted once per process', () => {
   // Arrange
   const node = '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node'
@@ -225,6 +226,12 @@ test('each build and test kind the repository starts is counted once per process
       ],
     },
     { pid: 5114, command: node, args: ['scripts/gate.mjs'] },
+    { pid: 5115, command: node, args: ['extension/scripts/qa-build.mjs'] },
+    {
+      pid: 5116,
+      command: 'node',
+      args: ['scripts/build-fast.mjs', '--check'],
+    },
   ]
 
   // Act
@@ -236,6 +243,7 @@ test('each build and test kind the repository starts is counted once per process
     testShard: 1,
     pregateTests: 1,
     tsc: 1,
+    inProcessBuild: 2,
     fallow: 2,
     c8: 1,
     pnpmInstall: 1,
@@ -245,7 +253,7 @@ test('each build and test kind the repository starts is counted once per process
   })
 })
 
-// Value: protects=a clear verdict while only unrelated programs run (the editor's TypeScript server, an agent's node CLI, pnpm running a non-install command, a shell whose command line names a test, a commit message naming a script); fails_when=one of them is counted, so the check says busy on a quiet machine; no_claim=every other program on a Mac
+// Value: protects=a clear verdict while only unrelated programs run (the editor's TypeScript server, an agent's node CLI, pnpm running a non-install command, a shell whose command line names a test, a commit message naming a script, another project's dev server keeping an `esbuild --service` process open); fails_when=one of them is counted, so the check says busy on a quiet machine; no_claim=every other program on a Mac
 test('unrelated node programs, a pnpm command that installs nothing and a shell are not counted', () => {
   // Arrange
   const node = '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node'
@@ -278,6 +286,12 @@ test('unrelated node programs, a pnpm command that installs nothing and a shell 
       pid: 6105,
       command: '/usr/bin/git',
       args: ['commit', '-m', 'fix', 'gate.mjs'],
+    },
+    {
+      pid: 6106,
+      command:
+        '/Users/example/other-app/node_modules/@esbuild/darwin-arm64/bin/esbuild',
+      args: ['--service=0.25.0', '--ping'],
     },
   ]
 
@@ -517,6 +531,7 @@ test('a busy machine prints load, swap, one line per kind and the busy verdict l
     'Running test-shard.mjs: 0',
     'Running run-pregate-tests.mjs: 0',
     'Running tsc: 0',
+    'Running qa-build.mjs or build-fast.mjs: 0',
     'Running fallow: 0',
     'Running c8: 0',
     'Running pnpm install: 0',
@@ -622,6 +637,10 @@ test('--help prints the usage, the exit codes and the error codes and exits 0', 
   )
   assert.match(HELP_TEXT, /Error codes: E_USAGE, E_INTERNAL\./)
   assert.match(HELP_TEXT, /--max-used-swap-mb <n>/)
+  assert.match(
+    HELP_TEXT,
+    /tsc \(not [^)]*\), qa-build\.mjs\s+or build-fast\.mjs/,
+  )
   assert.doesNotMatch(HELP_TEXT, /min-free-swap/)
 })
 
