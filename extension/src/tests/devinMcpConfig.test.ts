@@ -9728,12 +9728,13 @@ test("A file another program swaps in at a rollback record's dropping name while
       'node:fs/promises': {
         link,
         lstat: async (...args: Parameters<typeof lstat>) => {
-          // A sync tool swaps its own file in at the dropping name once Codebook moved the settled record there and read it, right as the look before the delete waits.
+          // A sync tool swaps its own file in at the dropping name once Codebook moved the settled record there and read it, right as the look before the delete waits. While the fresh private name the record's own name was renamed to still stands, the dropping name counts a second name of that file, and the move's own look there never fires this.
           if (
             args[0] === droppingPath &&
             !isSwapped &&
             existsSync(droppingPath) &&
-            !existsSync(journalPath)
+            !existsSync(journalPath) &&
+            lstatSync(droppingPath).nlink === 1
           ) {
             isSwapped = true
             swapFile(droppingPath, swappedText)
@@ -10356,12 +10357,13 @@ test("A file a sync tool swaps in at a rollback record's dropping name while Cod
       'node:fs/promises': {
         link,
         lstat: async (...args: Parameters<typeof lstat>) => {
-          // A sync tool swaps its own record in at the dropping name once Codebook moved the settled record there, emptying its name, and read it, right as the look before the delete waits (since Cycle 0149 task 37 the move links first, and its own look at the dropping name while the record's name stands never fires this).
+          // A sync tool swaps its own record in at the dropping name once Codebook moved the settled record there, emptying its name, and read it, right as the look before the delete waits (since Cycle 0149 task 37 the move links first, and its own look at the dropping name while the record's name stands never fires this; while the fresh private name that name was renamed to still stands, the dropping name counts a second name of that file, and the move's own look there never fires this either).
           if (
             args[0] === droppingPath &&
             !isSwapped &&
             existsSync(droppingPath) &&
-            !existsSync(journalPath)
+            !existsSync(journalPath) &&
+            lstatSync(droppingPath).nlink === 1
           ) {
             isSwapped = true
             swapFile(droppingPath, swappedJournalText)
@@ -20827,6 +20829,97 @@ test("A refresh that stopped right after it moved Codebook's record of the entry
     (await recordsIn(storage)).filter((name) => !name.endsWith('.tmp')),
     ['receipt.json'],
   )
+})
+
+test("A record whose dropping name a sync tool moves away in the instant after a rewrite emptied the record's own name is never deleted with its last name: the refusal names the fresh private name holding it, and moving it back lets the next refresh finish", async (context) => {
+  // Value: protects=a tracked record's move empties the record's own name by a rename to a fresh private name once a link gave the record its dropping name, and that fresh name goes only while the dropping name still shows the record it is another name of, so a sync tool that moves the dropping file away in that instant never costs the record its last name: the rewrite stops before anything is published, the refusal names the fresh private name the record stands at, and moving it back lets the next refresh finish (Cycle 0149 release review, CodeRabbit R05); fails_when=the hook does not fire, the refresh resolves or says anything but the sentence naming the fresh private name, that file is gone or changed, anything stands at receipt.json or its dropping name, another record or a dropping note stays, or the retry answers anything but current or leaves the record without an installation id; no_claim=a real sync tool (the config module is loaded with a rename that, right after it empties receipt.json onto the fresh private name, moves the dropping file out of the records folder), a real older build (the receipt is rewritten without its installation id), storage without hard links (the move is a rename there), what the learner does with the file the sync tool moved away
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const recordsPath = join(storage, 'devin-mcp')
+  const receiptPath = join(recordsPath, 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const olderReceipt = await readRecordFile(storage, 'receipt.json')
+  // A receipt of an older build holds no installation id, so the refresh rewrites it.
+  delete olderReceipt.installationId
+  const olderReceiptText = JSON.stringify(olderReceipt)
+  writeFileSync(receiptPath, olderReceiptText)
+  const syncMovedPath = join(home, 'receipt-moved-by-a-sync-tool.json')
+  let vacatedPath = ''
+  const movingAtVacate = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          if (
+            from === receiptPath &&
+            to.endsWith('.tmp') &&
+            vacatedPath === ''
+          ) {
+            // The rename that empties receipt.json once a link gave its file the dropping name as well; a sync tool moves that dropping file away in the same instant. Named before the await, so the hook fires once.
+            vacatedPath = to
+            await rename(from, to)
+            renameSync(droppingPath, syncMovedPath)
+            return
+          }
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refreshError = await movingAtVacate
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the refresh left empty reads as 'absent', so the assertions below name it.
+  const receiptAfterRefusal = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const droppingAfterRefusal = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const vacatedAfterRefusal =
+    vacatedPath !== '' && existsSync(vacatedPath)
+      ? readFileSync(vacatedPath, 'utf8')
+      : 'absent'
+  const recordsAfterRefusal = await recordsIn(storage)
+
+  // Assert
+  assert.notEqual(vacatedPath, '')
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook moved its record at ${receiptPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and then could not tell that the file at ${droppingPath} is still that record (a backup or sync tool may have moved or replaced it), so it left the record at ${vacatedPath} and went no further; move the file at ${vacatedPath} back to ${receiptPath} if nothing stands there, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(vacatedAfterRefusal, olderReceiptText)
+  assert.equal(receiptAfterRefusal, 'absent')
+  assert.equal(droppingAfterRefusal, 'absent')
+  // The file the sync tool moved away is the same record, which no build reads at that name.
+  assert.equal(readFileSync(syncMovedPath, 'utf8'), olderReceiptText)
+  assert.deepEqual(recordsAfterRefusal, [basename(vacatedPath)])
+
+  // Act: the way out the refusal names — the record's file goes back to its empty name.
+  renameSync(vacatedPath, receiptPath)
+  const retry = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.deepEqual(retry, { status: 'current', path: configPath })
+  assert.match(
+    (await readRecordFile(storage, 'receipt.json')).installationId,
+    /^[0-9a-f-]{36}$/,
+  )
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
 test("A removal that stopped right after it moved Codebook's record of the entry to its private name to delete it leaves the next removal to put that record back and settle it", async (context) => {
