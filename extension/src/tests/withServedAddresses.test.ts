@@ -46,7 +46,7 @@ const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 type ServedInTurns = { page: number; ordinary: number }
 
 /**
- * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers for each crafted page its shortest time and the shortest time of the ordinary page served in turns with it, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's first time is known, then {@link SERVING_TIMED_RUNS} times one more than {@link PAGE_DEADLINE_RATIO} times that time for each crafted page. The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers for each crafted page its shortest time and the shortest time of the ordinary page served in turns with it, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's first time is known, then {@link SERVING_TIMED_RUNS} times one more than {@link PAGE_DEADLINE_RATIO} times the ordinary page's latest measured time for each crafted page (its first time, then the shortest of its runs in turns with each crafted page that finished). The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
  * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} once for the deadline; then, for each crafted page, it serves the crafted page and the ordinary page in turns, {@link SERVING_TIMED_RUNS} times each ({@link shortestTimesInTurns}), so that each crafted page is compared with an ordinary page in the same thread, served by the same call in the same moments of the machine, and a moment of load on a busy machine lengthens neither measurement alone (Cycle 0049 F6: one run of a crafted page took 830 ms against the ordinary page's 184 ms under nine concurrent runs; Discussion 354: the ordinary page's runs, all taken before the crafted pages' runs, missed the busy moments those met).
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
@@ -100,26 +100,28 @@ for (const [name, page] of Object.entries(workerData.pages)) {
       void worker.terminate().then(() => resolve())
     }
     let deadline = setTimeout(stop, FILTER_DEADLINE_MS)
-    let firstOrdinaryMs = 0
+    // The ordinary page's latest measured time on this machine: first its one run before the crafted pages, then the shortest of its runs in turns with each crafted page, so a runner that slows down after the first measurement still measures every page.
+    let baselineMs = 0
     worker.on(
       'message',
       (
         message:
           { firstOrdinaryMs: number } | ({ name: string } & ServedInTurns),
       ) => {
-        // The first message gives the ordinary page's time on this machine; each later one a crafted page's turns.
-        if ('firstOrdinaryMs' in message)
-          firstOrdinaryMs = message.firstOrdinaryMs
-        else
+        // The first message gives the ordinary page's time on this machine; each later one a crafted page's turns, whose own ordinary measurement freshens the baseline.
+        if ('firstOrdinaryMs' in message) baselineMs = message.firstOrdinaryMs
+        else {
           times[message.name] = {
             page: message.page,
             ordinary: message.ordinary,
           }
-        // Each crafted page gets its own deadline, a multiple of the ordinary page's time on this machine for each of its runs and the ordinary page's run in turns with it, so a slow runner measures every page.
+          baselineMs = message.ordinary
+        }
+        // Each crafted page gets its own deadline, a multiple of the ordinary page's latest measured time on this machine for each of its runs and the ordinary page's run in turns with it, so a slow runner measures every page.
         clearTimeout(deadline)
         deadline = setTimeout(
           stop,
-          SERVING_TIMED_RUNS * (PAGE_DEADLINE_RATIO + 1) * firstOrdinaryMs,
+          SERVING_TIMED_RUNS * (PAGE_DEADLINE_RATIO + 1) * baselineMs,
         )
       },
     )

@@ -15809,7 +15809,7 @@ test('Set Up AI Chat keeps the previous config copy tracked when another config 
     ? JSON.parse(readFileSync(pendingPath, 'utf8'))
     : 'absent'
   const isReceiptAfter = existsSync(receiptPath)
-  // The learner moves the other config away, as the refusal's advice allows; it must still be the config written meanwhile.
+  // Moving the other config away is only how this test empties the config path, not the refusal's displayed guidance for a config that stands (merge the needed settings into it and re-run, which the next test follows). What this test proves is the recovery invariant: once the path stands empty again, the next run puts the tracked copy back on its own. It must still be the config written meanwhile.
   assert.equal(readFileSync(configPath, 'utf8'), foreignText)
   renameSync(configPath, join(dirname(configPath), 'other-config.json'))
   const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
@@ -15825,6 +15825,75 @@ test('Set Up AI Chat keeps the previous config copy tracked when another config 
   assert.equal(next.status, 'not-managed')
   assert.equal(readFileSync(configPath, 'utf8'), configText)
   assert.equal(existsSync(displacedPath), false)
+})
+
+test('Set Up AI Chat installs its entry beside the merged servers when the learner follows the refusal’s guidance: only the needed settings moved from the copy into the config that stands, never the copy over it, and the copy moved aside', async (context) => {
+  // Value: protects=the recovery path the could-not-settle refusal displays for a config that stands being a working one: the learner compares the copy with the config, moves only the settings they need from that copy into the config, which stays in place, moves the copy elsewhere, and the next run settles the interrupted publish record on its own and installs the entry beside every server the merged config holds, so following the displayed guidance loses no setting of either file and keeps the copy where the learner put it; fails_when=the re-run refuses or answers anything but installed, a server of the copy or of the config written meanwhile is missing or changed in the config that stands, the copy the learner moved aside is gone or changed, a private file stays beside the config, or no receipt of the new setup stands; no_claim=a real sync tool (the config module is loaded with a link that deletes the new config once, and its openWithoutFollowing writes another config when the post-link read finds the empty path), a real save (that file is written by the test's injected racing program), and the learner's own editing program (the test writes the merged bytes itself)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const foreignText = '{"mcpServers":{"beta":{"command":"b"}}}\n'
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { module: emptyAfterLink, emptied } =
+    await loadWithEmptyConfigAfterLink(configPath, () => {
+      writeFileSync(configPath, foreignText)
+    })
+  let displacedPath = ''
+
+  // Act
+  const error = await emptyAfterLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterMoveAside: (path) => {
+        displacedPath = path
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // The learner follows the refusal's displayed guidance: they compare the copy with the config that stands and move only the settings they need — the alpha server the copy alone holds — into that config, which stays in place, never the copy over the config.
+  const copyServers = JSON.parse(readFileSync(displacedPath, 'utf8'))
+    .mcpServers as object
+  const standingConfig = JSON.parse(readFileSync(configPath, 'utf8')) as {
+    mcpServers?: object
+  }
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      ...standingConfig,
+      mcpServers: { ...standingConfig.mcpServers, ...copyServers },
+    })}\n`,
+  )
+  // ... and afterwards move that copy elsewhere, then run Codebook: Set Up AI Chat again.
+  const copyAsidePath = join(home, 'previous-config-copy.json')
+  renameSync(displacedPath, copyAsidePath)
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook found a copy of your config that Codebook kept at ${displacedPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(emptied.count, 1)
+  assert.equal(next.status, 'installed')
+  // Every server of both files stands beside the new entry: beta of the config written meanwhile, alpha of the copy, codebook of this run.
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: {
+      beta: { command: 'b' },
+      alpha: { command: 'a' },
+      codebook: ENTRY,
+    },
+  })
+  // The copy the learner moved aside is never touched, and no private file or record stays.
+  assert.equal(readFileSync(copyAsidePath, 'utf8'), configText)
+  assert.equal(existsSync(displacedPath), false)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).generation,
+    next.generation,
+  )
 })
 
 /**
@@ -17036,7 +17105,8 @@ test("A setup record's rewrite that stops inside its publication where Codebook'
   const pendingPath = join(recordsPath, 'pending.json')
   const droppingPath = `${pendingPath}.codebook-dropping`
   let isArmed = false
-  let hasStopped = false
+  let canonicalOpenCreates = 0
+  let renamePublicationStops = 0
   const endingInsidePublication = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
@@ -17053,28 +17123,23 @@ test("A setup record's rewrite that stops inside its publication where Codebook'
         lstat,
         mkdir,
         open: async (...args: Parameters<typeof open>) => {
-          // The process ends right after an exclusive create of the setup record's own name, before any byte is in it.
-          if (
-            isArmed &&
-            !hasStopped &&
-            args[0] === pendingPath &&
-            args[1] === 'wx'
-          ) {
-            hasStopped = true
+          // An exclusive create of the setup record's own name is no stop this test injects but the regression it watches for: a correct write stages the bytes under a temporary name and publishes them by link or rename, so this hook never fires on it.
+          if (isArmed && args[0] === pendingPath && args[1] === 'wx') {
+            canonicalOpenCreates += 1
             await (await open(...args)).close()
-            throw new Error('process ended')
+            throw new Error('canonical direct creation regression')
           }
           return open(...args)
         },
         rename: async (from: string, to: string) => {
-          // The process ends right before the rewrite's staged file is renamed to the setup record's own name.
+          // The process ends right before the rewrite's staged file is renamed to the setup record's own name, once.
           if (
             isArmed &&
-            !hasStopped &&
+            renamePublicationStops === 0 &&
             to === pendingPath &&
             from.endsWith('.tmp')
           ) {
-            hasStopped = true
+            renamePublicationStops += 1
             throw new Error('process ended')
           }
           return rename(from, to)
@@ -17109,7 +17174,9 @@ test("A setup record's rewrite that stops inside its publication where Codebook'
   )
 
   // Assert
-  assert.equal(hasStopped, true)
+  // The two stop routes are counted apart: no exclusive create of the record's own name ever fired (correct writes stage the bytes and publish them by link or rename), and the one stop is the pre-publish rename's.
+  assert.equal(canonicalOpenCreates, 0)
+  assert.equal(renamePublicationStops, 1)
   // Never an empty or partial record: the record the setup's claim wrote, whole.
   assert.equal(JSON.parse(pendingAfterSetup).targetPath, configPath)
   assert.equal('phase' in JSON.parse(pendingAfterSetup), false)
@@ -21086,7 +21153,8 @@ test("A first setup that stops inside the write of its record of the entry where
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
   const recordsPath = join(storage, 'devin-mcp')
   const receiptPath = join(recordsPath, 'receipt.json')
-  let hasStopped = false
+  let canonicalOpenCreates = 0
+  let renamePublicationStops = 0
   const endingInsideReceiptWrite = await loadModule<
     typeof DevinMcpConfigModule
   >(
@@ -21105,18 +21173,18 @@ test("A first setup that stops inside the write of its record of the entry where
         lstat,
         mkdir,
         open: async (...args: Parameters<typeof open>) => {
-          // The write ends right after an exclusive create of receipt.json itself, before any byte is in it.
+          // An exclusive create of receipt.json itself is no stop this test injects but the regression it watches for: a correct write stages the bytes under a temporary name and publishes them by link or rename, so this hook never fires on it.
           if (args[0] === receiptPath && args[1] === 'wx') {
-            hasStopped = true
+            canonicalOpenCreates += 1
             await (await open(...args)).close()
-            throw new Error('process ended')
+            throw new Error('canonical direct creation regression')
           }
           return open(...args)
         },
         rename: async (from: string, to: string) => {
           // The write ends right before the receipt's bytes are published at its name.
           if (to === receiptPath) {
-            hasStopped = true
+            renamePublicationStops += 1
             throw new Error('process ended')
           }
           return rename(from, to)
@@ -21142,7 +21210,9 @@ test("A first setup that stops inside the write of its record of the entry where
   )
 
   // Assert
-  assert.equal(hasStopped, true)
+  // The two stop routes are counted apart: no exclusive create of receipt.json ever fired (correct writes stage the bytes and publish them by link or rename), and the one stop is the pre-publish rename's.
+  assert.equal(canonicalOpenCreates, 0)
+  assert.equal(renamePublicationStops, 1)
   assert.equal(receiptAfterSetup, 'absent')
   assert.equal(refresh, 'not-managed')
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {

@@ -978,6 +978,47 @@ test("an MCP receipt answers removed with the reason missing when receipt.json s
   })
 })
 
+// Value: protects=the re-read of receipt.json that decides once the lookup of the moved record's inode observes its dropping name empty with ENOENT: a rewrite that published its new record and finished deleting the old one before that lookup reads as installed with the new record, never as the removal the first empty read of receipt.json would answer — the stays-empty test above cannot tell that re-read from its skip, since its scripted last answer repeats (Cycle 0149 release-head review minors, the ENOENT boundary's re-read proof); fails_when=receipt.json is not read once more after the observed absence, so the receipt answers removed with the reason missing although its new record stands; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name with the record the note names, then receipt.json with the new record, and the lookup reports ENOENT), a second rewrite or a delete that moves the new record before that last read (the stated residual)
+test("an MCP receipt that a rewrite publishes before the lookup of the moved record's inode reports ENOENT answers installed with the new record", async () => {
+  // Arrange
+  const { readReceiptState: readWithRepublishedReceipt } =
+    await loadWithScriptedRecordReads(
+      {
+        'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
+        'receipt.json.codebook-dropping': [
+          {
+            state: 'read',
+            value: { installed: true, installationId: 'installation-a' },
+            sha256: 'hash of the bytes at the dropping name',
+          },
+        ],
+        'receipt.json.codebook-dropping-note': [
+          {
+            state: 'read',
+            value: {
+              moved: {
+                ino: '43',
+                sha256: 'hash of the bytes at the dropping name',
+              },
+            },
+            sha256: 'hash of the bytes at the dropping note',
+          },
+        ],
+      },
+      'ENOENT',
+    )
+  // Act
+  const state = await readWithRepublishedReceipt(
+    '/storage/devin-mcp/receipt.json',
+  )
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-b' },
+  })
+})
+
 // Value: protects=a lookup of the moved record's inode that observes no directory at the dropping name (ENOTDIR, the other observed absence removedReasonOf knows) reading as the same emptied name as ENOENT: no file can stand there, so receipt.json is read once more and decides rather than the receipt staying unknown beside a finished removal (Cycle 0149 release-head review, CodeRabbit minor on readReceiptState: the kept ENOENT boundary, its sibling code); fails_when=the observed absence answers no-answer although no record can stand at that name; no_claim=real file timing (scripted reads answer receipt.json empty twice and its dropping name with the record, the lookup reports ENOTDIR)
 test("an MCP receipt answers removed with the reason missing when receipt.json stays empty and the lookup of the moved record's inode reports ENOTDIR", async () => {
   // Arrange
@@ -1015,6 +1056,47 @@ test("an MCP receipt answers removed with the reason missing when receipt.json s
     state: 'removed',
     reason: 'missing',
     receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=the re-read of receipt.json that decides once the lookup of the moved record's inode observes no directory at its dropping name (ENOTDIR, the other observed absence): a rewrite that published its new record and finished deleting the old one before that lookup reads as installed with the new record on this sibling code too, never as the removal the first empty read of receipt.json would answer — the stays-empty test above cannot tell that re-read from its skip, since its scripted last answer repeats (Cycle 0149 release-head review minors, the ENOENT boundary's re-read proof, its sibling code); fails_when=receipt.json is not read once more after the observed absence, so the receipt answers removed with the reason missing although its new record stands; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name with the record the note names, then receipt.json with the new record, and the lookup reports ENOTDIR), a second rewrite or a delete that moves the new record before that last read (the stated residual)
+test("an MCP receipt that a rewrite publishes before the lookup of the moved record's inode reports ENOTDIR answers installed with the new record", async () => {
+  // Arrange
+  const { readReceiptState: readWithRepublishedReceipt } =
+    await loadWithScriptedRecordReads(
+      {
+        'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
+        'receipt.json.codebook-dropping': [
+          {
+            state: 'read',
+            value: { installed: true, installationId: 'installation-a' },
+            sha256: 'hash of the bytes at the dropping name',
+          },
+        ],
+        'receipt.json.codebook-dropping-note': [
+          {
+            state: 'read',
+            value: {
+              moved: {
+                ino: '43',
+                sha256: 'hash of the bytes at the dropping name',
+              },
+            },
+            sha256: 'hash of the bytes at the dropping note',
+          },
+        ],
+      },
+      'ENOTDIR',
+    )
+  // Act
+  const state = await readWithRepublishedReceipt(
+    '/storage/devin-mcp/receipt.json',
+  )
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-b' },
   })
 })
 
