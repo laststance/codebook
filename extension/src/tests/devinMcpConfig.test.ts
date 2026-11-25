@@ -16247,6 +16247,179 @@ test('A backup that puts an older config back right after an update linked its n
   assert.equal(existsSync(pendingPath), true)
 })
 
+test('An update whose config is written in place right after its link drops the staged name when its handover record cannot be written, so the next update is not refused for a second link', async (context) => {
+  // Value: protects=an update whose read right after the link finds its own file with other bytes (a write in place kept the inode) hands the moved-aside copy over and drops the staged second name of the config before that handover, so the handover's fallback, which drops the publish record of an update when its handed write fails, never strands that name as a second link no record names, which every later update and removal would refuse (Cycle 0149 release-head review M4); fails_when=the staged name stays beside the config, the config keeps a second link, or the plain retry is refused or answers anything but updated; no_claim=a real in-place write (the config module is loaded with a link that writes the previous bytes back into the config in place once, right after it linked the staged file in) and a real ENOSPC (seam.beforeRecordWrite fails only the handed record), what a later run does with the handed copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const preUpdateText = readFileSync(configPath, 'utf8')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let stagedPath = ''
+  const writingAtLink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // Only the update's publish link, once: a program writes the previous config's bytes back into the new config in place right after it, so both names of the file show them.
+          if (to === configPath && stagedPath === '') {
+            stagedPath = from
+            writeFileSync(configPath, preUpdateText)
+          }
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let displacedPath = ''
+
+  // Act
+  const error = await writingAtLink
+    .writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterMoveAside: (path) => {
+        displacedPath = path
+      },
+      beforeRecordWrite: ({ record }) => {
+        if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // A name the update left empty reads as 'absent', so the assertions below name it.
+  const recordAfter = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const copyAfter = existsSync(displacedPath)
+    ? readFileSync(displacedPath, 'utf8')
+    : 'absent'
+  const configAfter = readFileSync(configPath, 'utf8')
+  const linkCountAfter = statSync(configPath).nlink
+  const stagedAfter = existsSync(stagedPath)
+  const retry = await writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+
+  // Assert
+  assert.notEqual(stagedPath, '')
+  assert.notEqual(displacedPath, '')
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file; Codebook kept a private copy of your previous Devin MCP config at ${displacedPath} (it holds the settings of your other servers), so delete that copy when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+  )
+  // The handed write failed on the full disk and the record of the update was dropped: nothing later would ever name the staged file.
+  assert.equal(recordAfter, 'absent')
+  assert.equal(stagedAfter, false)
+  assert.equal(configAfter, preUpdateText)
+  assert.equal(linkCountAfter, 1)
+  assert.equal(copyAfter, preUpdateText)
+  assert.equal(retry.status, 'updated')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
+  })
+})
+
+test('An update whose config is written in place right after its link and replaced before the cleanup’s staged look keeps the staged name with the edited bytes, and the refusal names it', async (context) => {
+  // Value: protects=the staged-name cleanup of an update whose read right after the link finds its own file with other bytes keeps that name when another config took the config path meanwhile and the file only that name reaches holds bytes written into it after the link, so the only copy of those changes is never deleted unseen, and the refusal names where it is (Cycle 0149 release-head review M4, the edited-apart route of the other branch's cleanup); fails_when=the staged name is gone or no longer holds the edit, the refusal does not name it with the edited-apart sentence, the config is not the file that replaced it, or the publish record stays; no_claim=a real in-place write and a real backup tool (the config module is loaded with a link that writes the edit into the config in place once, right after it linked the staged file in, and an lstatSync stand-in that renames another config over the config path once, right before the cleanup's synchronous look at the staged name) and a real ENOSPC (seam.beforeRecordWrite fails only the handed record), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const editedText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY }, theme: 'edited in place' })}\n`
+  const restoredText = '{"mcpServers":{"alpha":{"command":"restored"}}}\n'
+  let stagedPath = ''
+  let isSwapped = false
+  let lastLookedAt = ''
+  const racing = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs': {
+        lstatSync: (path: string, options?: StatSyncOptions) => {
+          const followsConfigLook = lastLookedAt === configPath
+          lastLookedAt = path
+          const staged = lstatSync(path, {
+            bigint: true,
+            throwIfNoEntry: false,
+          })
+          const config = lstatSync(configPath, {
+            bigint: true,
+            throwIfNoEntry: false,
+          })
+          // Only the look at the staged name right after the look at the config name, while both names still show the new config, once: a backup puts an older config back at the config path.
+          if (
+            followsConfigLook &&
+            !isSwapped &&
+            stagedPath !== '' &&
+            path === stagedPath &&
+            staged !== undefined &&
+            staged.ino === config?.ino
+          ) {
+            isSwapped = true
+            swapFile(configPath, restoredText)
+          }
+          return lstatSync(path, options)
+        },
+      },
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // Only the update's publish link, once: Devin Desktop writes into the new config in place right after it, so both names of the file show the edit.
+          if (to === configPath && stagedPath === '') {
+            stagedPath = from
+            writeFileSync(configPath, editedText)
+          }
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let displacedPath = ''
+
+  // Act
+  const error = await racing
+    .writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterMoveAside: (path) => {
+        displacedPath = path
+      },
+      beforeRecordWrite: ({ record }) => {
+        if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // Names the update left empty read as 'absent', so the assertions below name them.
+  const stagedAfter = existsSync(stagedPath)
+    ? readFileSync(stagedPath, 'utf8')
+    : 'absent'
+  const configAfter = readFileSync(configPath, 'utf8')
+
+  // Assert
+  assert.notEqual(stagedPath, '')
+  assert.equal(isSwapped, true)
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file; Codebook kept a private copy of your previous Devin MCP config at ${displacedPath} (it holds the settings of your other servers), so delete that copy when you no longer need it, then run Codebook: Set Up AI Chat again. ${editedApartSentence(stagedPath)}`,
+  )
+  assert.equal(stagedAfter, editedText)
+  assert.equal(configAfter, restoredText)
+  assert.equal(existsSync(pendingPath), false)
+})
+
 /**
  * Loads the config module with a synchronous look that, once, right after the cleanup's look at the config name found the setup's new config and right before its look at the staged name, writes an edit into that config in place (when one is given) and then renames another config over the config path, the way an edit followed by a backup or sync tool that lands between those two looks would.
  * @param configPath - The config file.
