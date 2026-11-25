@@ -11939,6 +11939,91 @@ test('A receipt a sync tool moves away right after a refresh published it to ado
   )
 })
 
+test("An update whose record of the entry a backup replaces while the update deletes that record's staged name keeps its record of the update, says so, and the next setup records the updated entry", async (context) => {
+  // Value: protects=an update deletes its own record of the change only while receipt.json still shows the receipt its write published once that write's cleanup of its staged name ended, so a record a backup puts there meanwhile stays untouched, the update says so, and the next setup records the updated entry from the update's own record (Cycle 0149 final-range review CRF11); fails_when=the update resolves or says anything but the changed-record sentence of receipt.json, receipt.json is not the swapped-in file with its bytes, a private name of it stays, pending.json is gone or is not the update's record, or the next setup answers anything but current with a receipt of the update's generation; no_claim=a real backup tool (the config module is loaded with a link that notes the staged name the update links in at receipt.json and an unlink that, once, right after the update's cleanup deleted that name, swaps the record the first setup wrote back in at receipt.json, at another inode), a first setup (which takes its entry out on that refusal), a swap after the look that follows the cleanup, while pending.json is deleted (decided as one after the run)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let stagedReceiptPath: string | undefined
+  let swappedIno: bigint | undefined
+  const swapping = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // The staged name the update's write links in at receipt.json; the write's cleanup deletes it afterwards.
+          if (to === receiptPath) stagedReceiptPath = from
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          await unlink(path)
+          // Only the cleanup of that staged name, once: the name the update's move of the old record vacates is another `receipt.json.<uuid>.tmp`.
+          if (swappedIno !== undefined || path !== stagedReceiptPath) return
+          // A backup puts the record the first setup wrote back at receipt.json, at another inode, while the update cleans up.
+          swapFile(receiptPath, receiptText)
+          swappedIno = statSync(receiptPath, { bigint: true }).ino
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const updateOutcome = await swapping
+    .writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+  const receiptAfterUpdate = readFileSync(receiptPath, 'utf8')
+  const receiptInoAfterUpdate = statSync(receiptPath, { bigint: true }).ino
+  const recordsAfterUpdate = await recordsIn(storage)
+  // A record the update deleted reads as 'absent', so the assertions below name it.
+  const updateRecord = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+  const nextOutcome = await writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.notEqual(swappedIno, undefined)
+  assert.equal(
+    updateOutcome,
+    `Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
+  )
+  assert.equal(receiptAfterUpdate, receiptText)
+  assert.equal(receiptInoAfterUpdate, swappedIno)
+  assert.deepEqual(recordsAfterUpdate, ['pending.json', 'receipt.json'])
+  assert.notEqual(updateRecord, 'absent')
+  assert.equal(
+    updateRecord.entrySha256,
+    'ac2315e6a57265f50d9ac50f2f4ea13720f46de69a96edf77f972d1912caa196',
+  )
+  assert.equal(nextOutcome, 'current')
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).generation,
+    updateRecord.generation,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
+  })
+})
+
 test('A setup leaves a record a backup restores at pending.json after the setup wrote its receipt, instead of deleting it with its own record, and still reports the entry installed', async (context) => {
   // Value: protects=a setup deletes its own record of the change only as the version it last wrote, so a record a backup or sync tool put at pending.json after that write stays for the next run (Cycle 0148 task 33); fails_when=the record put at pending.json is gone or changes, the setup does not answer installed without a cleanup notice, or the config or the receipt is not the setup's; no_claim=a real backup tool (seam.beforeRecordWrite renames another record over pending.json once, right before the receipt's rename, after the setup's completed record was written), a restore between the last look and the unlink (no Node primitive unlinks by inode), what the next run does with that record
   // Arrange

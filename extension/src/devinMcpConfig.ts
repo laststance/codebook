@@ -4355,7 +4355,7 @@ function otherConfigReceiptRefusal(
  * Writes Codebook's record of the entry (`receipt.json`) without ever replacing a file this run did not read there; called by {@link recordPublishedEntry}, {@link adoptPending} and {@link withInstallationId}, every write of that record.
  * A valid record of the entry in another config that the run's read found there is never written over: the write refuses before it stages anything ({@link assertNoOtherConfigReceipt}).
  * The bytes are staged and flushed under a fresh private name beside it first ({@link stageRecord}); after the seam the name is read through the thread pool ({@link receiptNameState}). While it shows the version this run read or last wrote ({@link Context.receiptVersion}), that version is noted beside it together with the version this write publishes ({@link withDroppingNote}) and then replaced through its dropping name right after the last looks still find that file ({@link publishReceipt}, {@link replaceReceipt}): it moves aside first and the new record is linked in at the emptied name, so a record another program renames over that name after the look moves instead and stays, and a run that stops with the record at its dropping name leaves the next run the proof that the file there is that version, which it puts back, or deletes beside the new record the note names once that record was published ({@link settleDroppedRecord}); while it shows nothing and no version is known (none was read there, or this run deleted it or moved it aside itself), the name is claimed ({@link claimReceiptName}), which never replaces a file; an empty name where a version is known (another program moved that record away) and anything else there stay as they are and the write is refused. The staged name goes afterwards while it shows the file this call wrote ({@link dropStagedRecord}).
- * Limits: those of {@link replaceReceipt} and {@link claimReceiptName}; a file put at the name right after the link is not looked at again here, and the next write or delete of this run finds it.
+ * Limits: those of {@link replaceReceipt} and {@link claimReceiptName}; a file put at the name right after the link, or while the staged name is cleaned up, is not looked at again here: a caller whose next step deletes the record of that setup reads the name again first and goes on only while it still shows the version this write published ({@link publishedReceiptCheck}: {@link recordPublishedEntry}, {@link adoptPending}), and otherwise the next write or delete of this run finds it.
  * @param context - The run; its seam is called after the bytes were flushed and before the look at the name.
  * @param value - The complete receipt.
  * @param assertStill - What else must still hold, looked at right before the move or link, after an awaited look at its names, and again after the move ({@link replaceReceipt}) or before the rename that publishes where links fail ({@link claimReceiptName}).
@@ -4545,7 +4545,7 @@ async function claimReceiptName(
 }
 
 /**
- * Builds the refusal for a write of Codebook's record of the entry that found `receipt.json` no longer showing the record the run read there, or could not read it again; thrown by {@link writeReceipt}, {@link receiptNameState} and {@link claimReceiptName}, so nothing is written at that name and the run goes no further. A first setup takes its entry out instead of naming it ({@link takeOutUnrecordedEntry}); an update, an adoption ({@link adoptPending}) and an installation-id backfill ({@link withInstallationId}) reject with it.
+ * Builds the refusal for a write of Codebook's record of the entry that found `receipt.json` no longer showing the record the run read there, or could not read it again; thrown by {@link writeReceipt}, {@link receiptNameState} and {@link claimReceiptName}, so nothing is written at that name and the run goes no further, and by the look {@link publishedReceiptCheck} gives a setup ({@link recordPublishedEntry}) once that name no longer shows the record its write published, so the setup's own record stays. A first setup takes its entry out instead of naming it ({@link takeOutUnrecordedEntry}); an update, an adoption ({@link adoptPending}) and an installation-id backfill ({@link withInstallationId}) reject with it.
  * @param context - The run; its paths and retry are named, and whether it knows a version there ({@link Context.receiptVersion}) picks the sentence for another file.
  * @param kind - `changed` for another file or other bytes there, `gone` for an empty name where the run read its record, `unread` for a read that failed.
  * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
@@ -6397,7 +6397,7 @@ function isPendingStale(
  * Writes the receipt for an entry an interrupted run published; called by {@link settlePending}.
  * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), and while the rollback journal's name still shows what settlement left there (`assertLeft`), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say), or a rollback record of that setup it puts back, never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
  * The record then ends only while that look still holds too, and once it ended, `pending.json` is read again through the thread pool and looked at once more synchronously ({@link adoptedRecordCheck}): it must show what the record's end left there (nothing, or what stays of it), so a record a backup or sync tool puts there while the adopted one stands at its dropping name ({@link deleteThroughDroppingName}) is never left beside this receipt. When a record it rests on changed by then (it came back or changed after the receipt's rename): a rollback record at its name, or another file, nothing or a name that cannot be read again at `pending.json` (a same-generation record with the take-back mark, say), anywhere in the cause chain of what the record's end or that last look threw ({@link hasRecordConflictCause}), the record that stands stays and the receipt this call published goes back out ({@link withdrawAdoptedReceipt}), so the next run settles those records first and takes the setup back when they say so.
- * The record ends only while `receipt.json` still shows the receipt this call published, too: once the receipt's write (and its cleanup of the staged name) returned, that name is read again through the thread pool, and its synchronous look joins the record's last looks ({@link adoptedReceiptCheck}), so a receipt another program moved away, replaced or made unreadable meanwhile keeps the record, and the next run decides that setup again; nothing goes back out then, since that receipt is no longer this call's file.
+ * The record ends only while `receipt.json` still shows the receipt this call published, too: once the receipt's write (and its cleanup of the staged name) returned, that name is read again through the thread pool, and its synchronous look joins the record's last looks ({@link publishedReceiptCheck}), so a receipt another program moved away, replaced or made unreadable meanwhile keeps the record, and the next run decides that setup again; nothing goes back out then, since that receipt is no longer this call's file.
  * Limit: a record put at `pending.json` after that last look, or after the run, is decided without this run, like one restored after the run; so is a receipt moved away after the record's last look.
  * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @param pending - The pending record.
@@ -6443,7 +6443,10 @@ async function adoptPending(
   )
   try {
     // The receipt must still stand as its write published it once that write's awaited cleanup of its staged name ended, also right before the record ends: a receipt another program moved away or replaced meanwhile never lets the only record of this setup go.
-    const assertReceiptLeft = await adoptedReceiptCheck(context)
+    const assertReceiptLeft = await publishedReceiptCheck(
+      context,
+      adoptedReceiptConflictError,
+    )
     await retirePending(
       context,
       retained,
@@ -6479,57 +6482,57 @@ function withKeptAdoptedReceipt(context: Context, error: unknown): unknown {
   return error
 }
 
-/** What the read of `receipt.json` after an adoption's receipt write found ({@link adoptedReceiptCheck}): the file there (none for an empty name), or the failure of that read. */
-type AdoptedReceiptRead =
+/** What the read of `receipt.json` after a write of Codebook's record of the entry found ({@link publishedReceiptCheck}): the file there (none for an empty name), or the failure of that read. */
+type PublishedReceiptRead =
   { standing: InspectedCopy | undefined } | { cause: unknown }
 
 /**
- * Reads `receipt.json` through the thread pool once an adoption's receipt write returned, and gives the synchronous look that must still find there the version that write published ({@link Context.receiptVersion}) right before the adopted record ends; called only by {@link adoptPending}, which joins it after the other looks its record's end rests on ({@link retirePending}), so a receipt another program moved away, replaced or made unreadable during that write's awaited cleanup of its staged name ({@link dropStagedRecord}), or after it, never lets the only record of that setup go.
- * The read decides nothing by itself: its verdict comes at the synchronous look ({@link adoptedReceiptVerdict}), after the looks at the records the adoption rests on, so a rollback record or setup record that changed meanwhile is what the run says first, and the adoption then takes back out a receipt that may still be its own ({@link withdrawAdoptedReceipt}).
- * Limit: a receipt moved away or replaced after the record's last look before its rename or unlink, or after the run, is decided without this run, like one moved after the run.
- * @param context - The run; its receipt version is the one the adoption's write published.
- * @returns The look at `receipt.json` ({@link StillLook}); right before the record's rename or unlink it throws the {@link adoptedReceiptConflictError} of the kind {@link adoptedReceiptVerdict} tells when that name does not show the receipt the write published. Nothing is written or deleted then.
+ * Reads `receipt.json` through the thread pool once a write of Codebook's record of the entry returned ({@link writeReceipt}), and gives the synchronous look that must still find there the version that write published ({@link Context.receiptVersion}) before the record of that setup goes; called by {@link adoptPending}, which joins it after the other looks the adopted record's end rests on ({@link retirePending}), and by {@link recordPublishedEntry}, which runs it right away, before a setup's own record goes ({@link dropPending}), so a receipt another program moved away, replaced or made unreadable during that write's awaited cleanup of its staged name ({@link dropStagedRecord}), or after it, never lets the only other record of that entry go.
+ * The read decides nothing by itself: its verdict comes at the synchronous look ({@link publishedReceiptVerdict}), for an adoption after the looks at the records it rests on, so a rollback record or setup record that changed meanwhile is what the run says first, and the adoption then takes back out a receipt that may still be its own ({@link withdrawAdoptedReceipt}).
+ * Limit: a receipt moved away or replaced after that look (for an adoption, the record's last look before its rename or unlink), or after the run, is decided without this run, like one moved after the run.
+ * @param context - The run; its receipt version is the one the write published.
+ * @param conflictOf - Builds the refusal the look throws: the {@link adoptedReceiptConflictError} for an adoption, the {@link receiptConflictError} for a setup.
+ * @returns The look at `receipt.json` ({@link StillLook}); it throws what `conflictOf` builds for the kind {@link publishedReceiptVerdict} tells when that name does not show the receipt the write published. Nothing is written or deleted then.
  * @example
- * await retirePending(run, retained, bothLooks(assertLeft, await adoptedReceiptCheck(run))) // throws, keeping pending.json, once a sync tool moved receipt.json away after the adoption published it
+ * await retirePending(run, retained, bothLooks(assertLeft, await publishedReceiptCheck(run, adoptedReceiptConflictError))) // throws, keeping pending.json, once a sync tool moved receipt.json away after the adoption published it
  */
-async function adoptedReceiptCheck(context: Context): Promise<StillLook> {
+async function publishedReceiptCheck(
+  context: Context,
+  conflictOf: typeof receiptConflictError,
+): Promise<StillLook> {
   const path = context.receiptPath
   const written = context.receiptVersion.current
-  const read: AdoptedReceiptRead = await inspectCopy(path).then(
+  const read: PublishedReceiptRead = await inspectCopy(path).then(
     (standing) => ({ standing }),
     (cause: unknown) => ({ cause }),
   )
   return {
     names: [path],
     assert: (): void => {
-      const kind = adoptedReceiptVerdict(path, written, read)
+      const kind = publishedReceiptVerdict(path, written, read)
       if (kind === undefined) return
-      throw adoptedReceiptConflictError(
-        context,
-        kind,
-        'cause' in read ? read.cause : undefined,
-      )
+      throw conflictOf(context, kind, 'cause' in read ? read.cause : undefined)
     },
   }
 }
 
 /**
- * Tells, from the read after an adoption's receipt write and one synchronous look right after it, whether `receipt.json` still shows the receipt that write published; called only by the look {@link adoptedReceiptCheck} gives.
+ * Tells, from the read after a write of Codebook's record of the entry and one synchronous look right after it, whether `receipt.json` still shows the receipt that write published; called only by the look {@link publishedReceiptCheck} gives.
  * @param path - `receipt.json`.
  * @param written - The version the write published ({@link Context.receiptVersion}).
- * @param read - What the read through the thread pool found ({@link AdoptedReceiptRead}).
+ * @param read - What the read through the thread pool found ({@link PublishedReceiptRead}).
  * @returns
  * - undefined while the read found that inode and those bytes and the name still shows that file (its inode, size and times: {@link isStagedNameStill})
  * - `gone` when the read found the name empty, or the look finds it empty now
  * - `changed` when either found another file or other bytes, or the read found something that is no record at all ({@link isOtherFileCause})
  * - `unread` when the read failed otherwise
  * @example
- * adoptedReceiptVerdict(receiptPath, written, { standing: undefined }) // => 'gone'
+ * publishedReceiptVerdict(receiptPath, written, { standing: undefined }) // => 'gone'
  */
-function adoptedReceiptVerdict(
+function publishedReceiptVerdict(
   path: string,
   written: RecordVersion | undefined,
-  read: AdoptedReceiptRead,
+  read: PublishedReceiptRead,
 ): JournalConflictError['kind'] | undefined {
   if ('cause' in read)
     return isOtherFileCause(read.cause) ? 'changed' : 'unread'
@@ -6543,7 +6546,7 @@ function adoptedReceiptVerdict(
 }
 
 /**
- * Builds the refusal of an adoption whose receipt no longer stands at `receipt.json` as its write published it ({@link adoptedReceiptCheck}): the record of that setup stays, and so does what stands at `receipt.json`, and the next run decides that setup again (it adopts it again while the config still holds that entry); a {@link ReceiptConflictError}, so it names its own file and way out and never takes the adoption's receipt back out ({@link hasRecordConflictCause}).
+ * Builds the refusal of an adoption whose receipt no longer stands at `receipt.json` as its write published it ({@link publishedReceiptCheck}): the record of that setup stays, and so does what stands at `receipt.json`, and the next run decides that setup again (it adopts it again while the config still holds that entry); a {@link ReceiptConflictError}, so it names its own file and way out and never takes the adoption's receipt back out ({@link hasRecordConflictCause}).
  * @param context - The run; its paths and retry are named.
  * @param kind - `gone` for an empty name, `changed` for another file or other bytes, `unread` for a read that failed.
  * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
@@ -9378,15 +9381,16 @@ async function publishEntry(
 
 /**
  * Writes the receipt of a publish and words what the publish left; the last steps of {@link publishEntry}, once the config stands.
- * A first setup never leaves an entry without a receipt: when that receipt cannot be written its entry is taken out again ({@link takeOutUnrecordedEntry}); an update keeps the old receipt and rejects. When another program kept the completed record from being written ({@link Published.recordConflict}), the receipt is written only while the config is still the file this setup published with its entry, and the copies are worded as the record that stands leaves them ({@link settleRecordConflict}).
+ * A first setup never leaves an entry without a receipt: when that receipt cannot be written, or `receipt.json` no longer shows it once its write's awaited cleanup of the staged name ended ({@link publishedReceiptCheck}), its entry is taken out again ({@link takeOutUnrecordedEntry}); an update keeps its own record of the change and what stands at `receipt.json` (the old receipt while nothing was written there), and rejects. When another program kept the completed record from being written ({@link Published.recordConflict}), the receipt is written only while the config is still the file this setup published with its entry, and the copies are worded as the record that stands leaves them ({@link settleRecordConflict}).
  * @param context - The run.
  * @param written - The receipt this publish writes.
  * @param published - What the publish reported ({@link Published}).
  * @param isFirst - Whether the publish is a first setup ({@link isFirstSetup}).
  * @returns The generation recorded in the receipt and, when something stays, the sentences that name it.
- * @throws The {@link PublishUncoveredError} of {@link settleRecordConflict}; the take-out's refusal for a first setup whose receipt could not be written; the receipt write's failure for an update.
+ * @throws The {@link PublishUncoveredError} of {@link settleRecordConflict}; the take-out's refusal for a first setup whose receipt could not be written or no longer stands; for an update, the receipt write's failure, or the {@link receiptConflictError} when `receipt.json` no longer shows the receipt that write published once its cleanup ended (the file there and the update's own record stay).
  * @example
  * await recordPublishedEntry(context, written, published, true) // => { generation: written.generation }
+ * await recordPublishedEntry(context, written, published, false) // throws the `changed` receipt conflict, keeping pending.json, once a backup put another record at receipt.json while the write deleted its staged name
  */
 async function recordPublishedEntry(
   context: Context,
@@ -9401,8 +9405,15 @@ async function recordPublishedEntry(
     : { copies: leftCopiesOf(published) }
   try {
     await writeReceipt(context, written, settled.configStill)
+    // The receipt must still stand as its write published it once that write's awaited cleanup of its staged name ended: the setup's own record, which may go next, is the only other record of this entry.
+    const assertReceiptLeft = await publishedReceiptCheck(
+      context,
+      receiptConflictError,
+    )
+    await lookAheadAt(assertReceiptLeft.names)
+    assertReceiptLeft.assert()
   } catch (cause) {
-    // A config that is no longer the published file is not this setup's to take anything out of; an update keeps the old receipt and rejects as before.
+    // A config that is no longer the published file is not this setup's to take anything out of; an update keeps its own record of the change and rejects as before.
     if (cause instanceof PublishUncoveredError || !isFirst) throw cause
     throw await takeOutUnrecordedEntry(
       context,
