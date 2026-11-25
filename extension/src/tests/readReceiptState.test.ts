@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, join, normalize, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { DEVIN_DESCRIPTOR_LIMIT_BYTES } from '../constants'
@@ -151,8 +151,8 @@ async function loadWithScriptedRecordReads(
     './readPrivateJsonState': {
       readPrivateJsonState: (path: string): Promise<PrivateJsonState> => {
         const name = basename(path)
-        // The script's names sit beside `/storage/devin-mcp/receipt.json` only: the same-named file anywhere else is no scripted read.
-        if (path !== join('/storage/devin-mcp', name)) {
+        // The script's names sit beside `/storage/devin-mcp/receipt.json` only: the same-named file anywhere else is no scripted read. normalize first: the reader hands both joined and concatenated spellings over, which Windows spells with backslashes or slashes, and join always answers backslashes there.
+        if (normalize(path) !== join('/storage/devin-mcp', name)) {
           unexpectedAccesses.push(path)
           return Promise.resolve(SCRIPTED_EMPTY_NAME)
         }
