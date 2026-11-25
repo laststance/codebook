@@ -1207,6 +1207,51 @@ export async function didCopyChange(held: HeldCopy): Promise<boolean> {
   }
 }
 
+/**
+ * Reads the config once through one open file as the byte proof that the publish this run confirmed still stands at the config name: the file this run wrote, with the bytes it wrote; called by {@link discardDisplaced} before the copy of the previous config may be deleted.
+ * A copy whose publish no longer stands may be the only one of the learner's previous config: another file, or none, stands at the config name, and the staged name goes with its own cleanup while it holds exactly the bytes this run wrote ({@link dropPublishedStage}), so a copy deleted then survives nowhere. The read is also the awaited look at the config name that the synchronous look right before the delete re-proves ({@link isPublishedReadStill}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers.
+ * @param context - The run; its config path is read.
+ * @param published - The inode and the bytes' hash of the file this run wrote at the staged name, which the link made the config ({@link Replacement.stagedVersion}).
+ * @returns The read, whose size and times the last look re-proves, when the config still is that file with those bytes; undefined when the name shows another file, other bytes, nothing or a file that cannot be read — none of which proves the publish stands, so the copy stays.
+ * @example
+ * await readStandingPublished(context, stagedVersion) // => undefined once a backup put another config at the config path after the link
+ */
+async function readStandingPublished(
+  context: Context,
+  published: RecordVersion,
+): Promise<InspectedCopy | undefined> {
+  // A read that failed proves nothing about the file there, exactly as other bytes or another file do: the copy stays.
+  const read = await inspectCopy(context.path).catch(() => undefined)
+  if (
+    read === undefined ||
+    read.ino !== published.ino ||
+    read.sha256 !== published.sha256
+  )
+    return undefined
+  return read
+}
+
+/**
+ * Tells, by one synchronous look, whether the config name still shows the file a read of it just found (inode, size and times), so the bytes that read verified are still there right before the displaced copy's delete; called by {@link discardDisplaced} after {@link readStandingPublished}, the same re-proof {@link unlinkStagedWhileStill} gives its read before its unlink.
+ * Limit: a swap or a write between this look and the unlink is not seen; no Node primitive unlinks by inode.
+ * @param context - The run; its config path is looked at.
+ * @param read - The config as {@link readStandingPublished} read it.
+ * @returns `true` when the name still shows that read; `false` when it shows another file, other size or times, nothing, or the look failed, which proves nothing.
+ * @example
+ * isPublishedReadStill(context, standing) // => false once a sync tool put another config at the config path after the read
+ */
+function isPublishedReadStill(context: Context, read: InspectedCopy): boolean {
+  try {
+    return showsChecked(
+      lstatSync(context.path, { bigint: true, throwIfNoEntry: false }),
+      read,
+    )
+  } catch {
+    // A look that failed proves nothing: the copy stays.
+    return false
+  }
+}
+
 /** What {@link discardDisplaced} did with the displaced copy: `deleted` (also when a copy that changed is gone from its private name by the time it would be kept, so nothing stays to name); `kept` (it changed or could not be deleted, so it stays and is reported); `unrecorded` (the completed record could not be written, so nothing was deleted). */
 type DiscardOutcome = 'deleted' | 'kept' | 'unrecorded'
 
@@ -1223,10 +1268,12 @@ const KEPT_COPY_SUFFIX = 'codebook-kept'
  * Deletes the displaced copy after the config was published or removed, unless a writer changed it since the comparison; called by {@link settlePublished} and by the removal.
  * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) or moved out of recovery's reach ({@link keepFromRecovery}); any other copy that stays, also an unchanged one whose last look or delete failed, is reported as one a later run deletes ({@link KeptFile.isLeftover}). When the completed record cannot be written nothing is deleted.
+ * A publish's copy goes only while the config this run published still stands at the config name with the bytes this run wrote: once a backup or sync tool puts another config there, or writes into it, the copy may be the only one of the learner's previous config — the staged name, unedited, goes with its own cleanup ({@link dropPublishedStage}) and the config name shows the other file — so a copy deleted then survives nowhere. One read through one open file proves those bytes ({@link readStandingPublished}), and one synchronous look at the config name, then the one at the displaced name, right before the delete re-proves that read ({@link isPublishedReadStill}); a read or look that proves nothing keeps the copy, exactly as a legitimate edit of Devin Desktop's in that window does — the copy is named, and the learner loses nothing.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared.
+ * @param published - The inode and the bytes' hash of the config this run published ({@link Replacement.stagedVersion}); undefined for a removal, which has no published config to prove.
  * @returns The {@link Discarded} outcome with the copy as it stays.
  */
 async function discardDisplaced(
@@ -1234,6 +1281,7 @@ async function discardDisplaced(
   journal: Pending,
   displacedPath: string,
   held: HeldCopy,
+  published?: RecordVersion,
 ): Promise<Discarded> {
   const copy: KeptFile = { path: displacedPath, holds: 'previous' }
   const completion = await markCompleted(context, journal)
@@ -1241,8 +1289,19 @@ async function discardDisplaced(
     return { outcome: 'unrecorded', copy, ...recordConflictOf(completion) }
   // A copy a writer changed since the comparison, or a name that shows another file now, is handed to the learner.
   const isChanged = await didCopyChange(held)
-  // A storage that already stalls holds this step here, not at the synchronous look at that name below.
-  await lookAheadAt([displacedPath])
+  // The byte proof that the publish still stands, read only for a copy that could go: a changed copy stays either way, and a removal has no publish to prove.
+  const standing =
+    published === undefined || isChanged
+      ? undefined
+      : await readStandingPublished(context, published)
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the config name, then the displaced name.
+  await lookAheadAt(
+    published === undefined ? [displacedPath] : [context.path, displacedPath],
+  )
+  // The publish must still stand for the copy to go; a read or look that proved nothing keeps it, exactly as a failing delete does.
+  const isStanding =
+    published === undefined ||
+    (standing !== undefined && isPublishedReadStill(context, standing))
   const look = isChanged
     ? 'changed'
     : lookAtComparedName(context, displacedPath, held)
@@ -1252,7 +1311,7 @@ async function discardDisplaced(
     return kept ? { outcome: 'kept', copy: kept } : { outcome: 'deleted', copy }
   }
   // The completed record still names this unchanged copy, so the next run deletes it while it holds the recorded bytes: its sentence says so.
-  if (look === 'unknown' || !(await didUnlink(displacedPath)))
+  if (look === 'unknown' || !isStanding || !(await didUnlink(displacedPath)))
     return { outcome: 'kept', copy: { ...copy, isLeftover: true } }
   return { outcome: 'deleted', copy }
 }
@@ -2586,7 +2645,7 @@ async function linkInStaged(
 }
 
 /**
- * Cleans up after the config was published: the record turns to completed, the displaced copy is deleted unless a writer changed it since the comparison, and the staged name is unlinked while it is only a second name of the published config or holds just the bytes this run wrote ({@link dropPublishedStage}); called by {@link replaceConfig}.
+ * Cleans up after the config was published: the record turns to completed, the displaced copy is deleted unless a writer changed it since the comparison or the published config no longer stands at the config name with the bytes this run wrote ({@link discardDisplaced}), and the staged name is unlinked while it is only a second name of the published config or holds just the bytes this run wrote ({@link dropPublishedStage}); called by {@link replaceConfig}.
  * @param context - The run.
  * @param replacement - The staged file with the inode this run wrote there, the displaced copy and the record.
  * @param held - The displaced copy as it was compared.
@@ -2602,6 +2661,7 @@ async function settlePublished(
     journal,
     displaced.path,
     held,
+    stagedVersion,
   )
   const stagedKept = await dropPublishedStage(context, temporary, stagedVersion)
   return {
@@ -2697,7 +2757,7 @@ async function dropLastPublishedName(
 
 /**
  * Replaces an existing config without ever replacing a file that was not compared: the staged file is complete and flushed, the pending record names it, the probe and the private name, the config is moved aside, the displaced file is opened without following a link and made private, its inode and bytes are compared with what was read through that handle, and only then is the staged file linked in (a link never replaces).
- * A difference puts the displaced file back with its original permissions and refuses, and so does an empty config name right after the link. A config that appeared at the name meanwhile is kept, together with the displaced copy, and the refusal names that copy. After a successful publish the displaced copy is deleted only while the same open file still has the size, times and bytes (hash read through the same handle) it had at the comparison; a copy that changed or was named in a refusal is handed to the learner and never deleted by a later run.
+ * A difference puts the displaced file back with its original permissions and refuses, and so does an empty config name right after the link. A config that appeared at the name meanwhile is kept, together with the displaced copy, and the refusal names that copy. After a successful publish the displaced copy is deleted only while the same open file still has the size, times and bytes (hash read through the same handle) it had at the comparison and the published config still stands at the config name with the bytes this run wrote ({@link discardDisplaced}); a copy that changed or was named in a refusal is handed to the learner and never deleted by a later run.
  * Limit of the delete: a write that lands between the final check and the unlink is not seen ({@link didCopyChange}), exactly as a write between the move-aside and the open is not.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
  * @param context - The run.
@@ -11601,12 +11661,16 @@ async function finishCutShortSetup(
   const { outcome, keptLeft } = result
   // The config was saved again or is not Codebook's to touch: the record is settled as before.
   if (outcome === 'replaced-config' || outcome === 'not-ours') return undefined
-  if (outcome !== 'took-out' || keptLeft.length > 0)
+  if (outcome !== 'took-out')
     throw new Error(
       `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome, context)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
-  // An adopted receipt of this setup goes with its entry, before the record that proves the take-back ends.
+  // An adopted receipt of this setup goes with its entry only while the entry stays out, and before any kept copy is reported: a backup or sync tool that put the entry back meanwhile refuses here, so the take-back never says the entry is out when it is not.
   const receiptLeft = await dropAdoptedReceiptOf(context, pending, receipt)
+  if (keptLeft.length > 0)
+    throw new Error(
+      `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome, context)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
+    )
   await retirePending(
     context,
     retained,
