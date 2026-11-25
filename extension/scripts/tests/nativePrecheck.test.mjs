@@ -364,8 +364,8 @@ test("the precheck's own process and its ps are not counted, even inside a node 
   assert.deepEqual(counts, NOTHING_RUNS)
 })
 
-// Value: protects=a clear verdict on a quiet Mac with free swap at or above the limit; fails_when=a zero count or enough free swap gives a reason; no_claim=the printed lines (the run tests below)
-test('a quiet machine with enough free swap is clear', () => {
+// Value: protects=a clear verdict on a quiet Mac whose used swap is below the limit; fails_when=a zero count or used swap below the limit gives a reason; no_claim=the printed lines (the run tests below)
+test('a quiet machine with used swap below the limit is clear', () => {
   // Arrange
   const facts = {
     swap: { totalMb: 4096, usedMb: 2048, freeMb: 2048 },
@@ -373,13 +373,13 @@ test('a quiet machine with enough free swap is clear', () => {
   }
 
   // Act
-  const judgement = decideVerdict(facts, 2048)
+  const judgement = decideVerdict(facts, 8192)
 
   // Assert
   assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
 })
 
-// Value: protects=a Mac that has allocated no swap at all counting as free (macOS allocates swap only under pressure); fails_when=a zero total with zero free is judged below the limit; no_claim=none beyond protects
+// Value: protects=a Mac that has allocated no swap at all judged clear (macOS allocates swap only under pressure); fails_when=a zero total with zero used and zero free gives a reason; no_claim=none beyond protects
 test('a machine with no swap allocated is clear', () => {
   // Arrange
   const facts = {
@@ -388,7 +388,22 @@ test('a machine with no swap allocated is clear', () => {
   }
 
   // Act
-  const judgement = decideVerdict(facts, 2048)
+  const judgement = decideVerdict(facts, 8192)
+
+  // Assert
+  assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
+})
+
+// Value: protects=a quiet Mac with one barely used swapfile judged clear (macOS adds swap one swapfile at a time, so `free` is only the unused part of the swap already allocated, not the room left); fails_when=the small free amount of a fresh swapfile (974 MB) makes the verdict busy, as the free-swap rule did; no_claim=how much room macOS can still allocate
+test('a machine with one barely used swapfile is clear', () => {
+  // Arrange
+  const facts = {
+    swap: { totalMb: 1024, usedMb: 50, freeMb: 974 },
+    processes: NOTHING_RUNS,
+  }
+
+  // Act
+  const judgement = decideVerdict(facts, 8192)
 
   // Assert
   assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
@@ -403,32 +418,47 @@ test('a running suite makes the machine busy and the reason names it', () => {
   }
 
   // Act
-  const judgement = decideVerdict(facts, 2048)
+  const judgement = decideVerdict(facts, 8192)
 
   // Assert
   assert.deepEqual(judgement, { verdict: 'busy', reasons: ['5 node --test'] })
 })
 
-// Value: protects=low free swap stopping the native check while nothing builds (the swap stays full after the builds end); fails_when=free swap below the limit gives a clear verdict or the reason does not name the free MB and the limit; no_claim=none beyond protects
-test('free swap below the limit makes the machine busy and the reason names both numbers', () => {
+// Value: protects=heavy swap use stopping the native check while nothing builds (the swap stays used after the builds end; the VM stopped at about 14 to 15.3 GB used); fails_when=used swap above the limit gives a clear verdict or the reason does not name the used MB and the limit; no_claim=none beyond protects
+test('used swap above the limit makes the machine busy and the reason names both numbers', () => {
   // Arrange
   const facts = {
-    swap: { totalMb: 16384, usedMb: 15564.25, freeMb: 819.75 },
+    swap: { totalMb: 10240, usedMb: 9216, freeMb: 1024 },
     processes: NOTHING_RUNS,
   }
 
   // Act
-  const judgement = decideVerdict(facts, 2048)
+  const judgement = decideVerdict(facts, 8192)
 
   // Assert
   assert.deepEqual(judgement, {
     verdict: 'busy',
-    reasons: ['free swap 819.75 MB below 2048 MB'],
+    reasons: ['used swap 9216 MB above 8192 MB'],
   })
 })
 
+// Value: protects=the limit being the most used swap that still counts as clear; fails_when=used swap exactly at the limit is judged busy; no_claim=none beyond protects
+test('used swap exactly at the limit is clear', () => {
+  // Arrange
+  const facts = {
+    swap: { totalMb: 9216, usedMb: 8192, freeMb: 1024 },
+    processes: NOTHING_RUNS,
+  }
+
+  // Act
+  const judgement = decideVerdict(facts, 8192)
+
+  // Assert
+  assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
+})
+
 // Value: protects=every reason of a busy machine named at once, so one rerun is enough after fixing them; fails_when=the verdict stops at the first reason; no_claim=none beyond protects
-test('a machine that builds and is low on swap names both reasons', () => {
+test('a machine that builds and uses swap above the limit names both reasons', () => {
   // Arrange
   const facts = {
     swap: { totalMb: 16384, usedMb: 15564.25, freeMb: 819.75 },
@@ -436,22 +466,22 @@ test('a machine that builds and is low on swap names both reasons', () => {
   }
 
   // Act
-  const judgement = decideVerdict(facts, 2048)
+  const judgement = decideVerdict(facts, 8192)
 
   // Assert
   assert.deepEqual(judgement, {
     verdict: 'busy',
-    reasons: ['1 tsc', '2 pnpm install', 'free swap 819.75 MB below 2048 MB'],
+    reasons: ['1 tsc', '2 pnpm install', 'used swap 15564.25 MB above 8192 MB'],
   })
 })
 
-// Value: protects=a machine whose swap or process list cannot be read never judged clear (the rule needs the swap shown free and no build seen); fails_when=an unknown swap or process list gives a clear verdict or no reason; no_claim=why the reading failed
+// Value: protects=a machine whose swap or process list cannot be read never judged clear (the rule needs the used swap shown within the limit and no build seen); fails_when=an unknown swap or process list gives a clear verdict or no reason; no_claim=why the reading failed
 test('a machine whose swap and process list cannot be read is busy and says so', () => {
   // Arrange
   const facts = { swap: undefined, processes: undefined }
 
   // Act
-  const judgement = decideVerdict(facts, 2048)
+  const judgement = decideVerdict(facts, 8192)
 
   // Assert
   assert.deepEqual(judgement, {
@@ -493,12 +523,12 @@ test('a busy machine prints load, swap, one line per kind and the busy verdict l
     'Running package.mjs, check-package.mjs or vsce: 0',
     'Running checkHealth.mjs: 0',
     'Running gate.mjs: 1',
-    'PRECHECK: busy 1 node --test, 1 gate.mjs, free swap 819.75 MB below 2048 MB',
+    'PRECHECK: busy 1 node --test, 1 gate.mjs, used swap 15564.25 MB above 8192 MB',
   ])
 })
 
-// Value: protects=--json printing the same facts and verdict as one JSON object, and --min-free-swap-mb setting the limit; fails_when=the object lacks a fact, the limit is not applied, or more than one line is printed; no_claim=none beyond protects
-test('--json prints the facts and the verdict as one object, judged against --min-free-swap-mb, and exits 0 when clear', async () => {
+// Value: protects=--json printing the same facts and verdict as one JSON object, and --max-used-swap-mb setting the limit (1228.25 MB used is clear under the default 8192 MB and busy under 1024 MB); fails_when=the object lacks a fact, the limit is not applied, or more than one line is printed; no_claim=none beyond protects
+test('--json prints the facts and the verdict as one object, judged against --max-used-swap-mb', async () => {
   // Arrange
   const readings = {
     loadAverages: [1.234, 2, 3.5],
@@ -509,20 +539,20 @@ test('--json prints the facts and the verdict as one object, judged against --mi
 
   // Act
   const result = await runWithReadings(
-    ['--json', '--min-free-swap-mb', '512'],
+    ['--json', '--max-used-swap-mb', '1024'],
     readings,
   )
 
   // Assert
-  assert.equal(result.exitCode, 0)
+  assert.equal(result.exitCode, 3)
   assert.equal(result.out.length, 1)
   assert.deepEqual(JSON.parse(result.out[0]), {
     load: { oneMinute: 1.23, fiveMinutes: 2, fifteenMinutes: 3.5, cores: 8 },
     swap: { totalMb: 2048, usedMb: 1228.25, freeMb: 819.75 },
     processes: NOTHING_RUNS,
-    minFreeSwapMb: 512,
-    verdict: 'clear',
-    reasons: [],
+    maxUsedSwapMb: 1024,
+    verdict: 'busy',
+    reasons: ['used swap 1228.25 MB above 1024 MB'],
   })
 })
 
@@ -591,12 +621,14 @@ test('--help prints the usage, the exit codes and the error codes and exits 0', 
     /Exit codes: 0 clear; 3 busy, the verdict line names why; 2 failed before a verdict; 64 usage\./,
   )
   assert.match(HELP_TEXT, /Error codes: E_USAGE, E_INTERNAL\./)
+  assert.match(HELP_TEXT, /--max-used-swap-mb <n>/)
+  assert.doesNotMatch(HELP_TEXT, /min-free-swap/)
 })
 
 // Value: protects=a usage error under the delivery commands' contract: code on the first line, fix on the last, exit 64, nothing on stdout, from the real entry point; fails_when=a bad limit is accepted, the check runs anyway, or the lines or exit code change; no_claim=every bad combination of options
 test('a limit that is no whole number is a usage error with its code first and its fix last', () => {
   // Arrange
-  const argv = [SCRIPT_PATH, '--min-free-swap-mb', 'lots']
+  const argv = [SCRIPT_PATH, '--max-used-swap-mb', 'lots']
 
   // Act
   const result = spawnSync(process.execPath, argv, { encoding: 'utf8' })
@@ -605,7 +637,25 @@ test('a limit that is no whole number is a usage error with its code first and i
   assert.equal(result.status, 64)
   assert.equal(result.stdout, '')
   assert.deepEqual(result.stderr.trimEnd().split('\n'), [
-    'E_USAGE: --min-free-swap-mb takes a whole number of MB (got lots)',
+    'E_USAGE: --max-used-swap-mb takes a whole number of MB (got lots)',
     'Fix: node extension/scripts/native-precheck.mjs --help',
   ])
+})
+
+// Value: protects=the replaced option refused instead of silently ignored (--min-free-swap-mb was added this cycle, is unreleased and keeps no alias); fails_when=the old option is accepted, so a caller believes a free-swap limit applies; no_claim=none beyond protects
+test('the replaced --min-free-swap-mb option is a usage error', () => {
+  // Arrange
+  const argv = [SCRIPT_PATH, '--min-free-swap-mb', '2048']
+
+  // Act
+  const result = spawnSync(process.execPath, argv, { encoding: 'utf8' })
+
+  // Assert
+  assert.equal(result.status, 64)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /^E_USAGE: .*--min-free-swap-mb/)
+  assert.equal(
+    result.stderr.trimEnd().split('\n').at(-1),
+    'Fix: node extension/scripts/native-precheck.mjs --help',
+  )
 })

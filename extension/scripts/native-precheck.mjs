@@ -1,6 +1,6 @@
 // Prints the Mac's load, swap and running builds before a native check in the macOS Space, and says whether the check may start (Discussion 359).
 //
-//   node extension/scripts/native-precheck.mjs [--min-free-swap-mb <n>] [--json]
+//   node extension/scripts/native-precheck.mjs [--max-used-swap-mb <n>] [--json]
 //
 // The Space's VM stops when the Mac's swap fills while builds, suites and package tests run on the Mac beside it. The
 // driving agent runs this from the repository root on the Mac before each native step and starts the step only on
@@ -17,8 +17,11 @@ import {
 } from './utils/commandContract.mjs'
 import { isRunAsScript } from './utils/isRunAsScript.mjs'
 
-/** The least free swap that counts as clear when `--min-free-swap-mb` is not given (Discussion 359: the VM stopped at 14 to 15.3 of 16 GB used). */
-const DEFAULT_MIN_FREE_SWAP_MB = 2048
+/**
+ * The most used swap that still counts as clear when `--max-used-swap-mb` is not given.
+ * Discussion 359: the Space's VM stopped twice with about 14 to 15.3 GB of the Mac's swap used (15.25 of 16 GB, 13.97 of 15.36 GB); 8 GB leaves that much room for the builds and the native check that follow.
+ */
+const DEFAULT_MAX_USED_SWAP_MB = 8192
 
 /** How long `ps` or `sysctl` may take, and how much `ps` may print: a table with every argument of every process is a few megabytes at most. */
 const READ_TIMEOUT_MS = 5_000
@@ -99,17 +102,19 @@ const VERDICT_BUSY = 'busy'
 
 /** The `--help` text: usage, what it reads and prints, the kinds, options, example, exit codes and error codes. */
 export const HELP_TEXT = `Usage:
-  node extension/scripts/native-precheck.mjs [--min-free-swap-mb <n>] [--json]
+  node extension/scripts/native-precheck.mjs [--max-used-swap-mb <n>] [--json]
 
 Run on the Mac from the repository root before each native step in the macOS Space:
 the Space's VM stops when the Mac's swap fills. Prints the 1, 5 and 15 minute load
 averages and the core count, the swap's total, used and free MB (sysctl -n
 vm.swapusage on macOS; "unknown" elsewhere) and, per kind, how many build or test
 processes run on this machine, then one verdict line:
-  PRECHECK: clear           no such process runs and free swap is at the limit or
-                            above (no swap allocated counts as free)
-  PRECHECK: busy <reasons>  a kind runs, free swap is below the limit, or the swap
+  PRECHECK: clear           no such process runs and used swap is at the limit or
+                            below (no swap allocated counts as none used)
+  PRECHECK: busy <reasons>  a kind runs, used swap is above the limit, or the swap
                             or the process list cannot be read
+Used swap decides, not free: macOS adds swap one swapfile at a time, so free is
+only the unused part of the swap already allocated, not the room left.
 It prints kinds and counts only, never a process's arguments, environment or working
 directory, and it signals no process.
 
@@ -121,8 +126,8 @@ checkHealth.mjs, gate.mjs. A process counts once, under the program it runs; a
 program whose path holds a space is read as two words and is not counted.
 
 Options:
-  --min-free-swap-mb <n>  the least free swap that counts as clear, in MB
-                          (default ${DEFAULT_MIN_FREE_SWAP_MB})
+  --max-used-swap-mb <n>  the most used swap that still counts as clear, in MB
+                          (default ${DEFAULT_MAX_USED_SWAP_MB})
   --json                  print the same facts as one JSON object instead of lines
   --help                  print this text
 
@@ -156,10 +161,10 @@ function usageRefusal(message) {
  * Why: a bad limit must stop the run before anything is read, under the delivery commands' usage contract. Called by {@link runNativePrecheck}.
  *
  * @param {string[]} argv - Arguments after the script name.
- * @returns {{ mode: 'help' } | { mode: 'check', json: boolean, minFreeSwapMb: number }} The mode; `check` carries the output form and the swap limit in MB.
+ * @returns {{ mode: 'help' } | { mode: 'check', json: boolean, maxUsedSwapMb: number }} The mode; `check` carries the output form and the used-swap limit in MB.
  * @throws {CommandRefusal} `E_USAGE` (exit 64) for an unknown option, a stray argument or a limit that is no whole number.
  * @example
- * parsePrecheckArguments(['--json', '--min-free-swap-mb', '512']) // => { mode: 'check', json: true, minFreeSwapMb: 512 }
+ * parsePrecheckArguments(['--json', '--max-used-swap-mb', '4096']) // => { mode: 'check', json: true, maxUsedSwapMb: 4096 }
  */
 function parsePrecheckArguments(argv) {
   let values
@@ -169,31 +174,31 @@ function parsePrecheckArguments(argv) {
       options: {
         help: { type: 'boolean' },
         json: { type: 'boolean' },
-        'min-free-swap-mb': { type: 'string' },
+        'max-used-swap-mb': { type: 'string' },
       },
     }))
   } catch (error) {
     throw usageRefusal(oneLine(error))
   }
   if (values.help) return { mode: 'help' }
-  const limitText = values['min-free-swap-mb']
+  const limitText = values['max-used-swap-mb']
   // Digits only: a sign, a decimal point or `1e3` is no whole number of MB.
   if (limitText !== undefined && !/^\d+$/.test(limitText))
     throw usageRefusal(
-      `--min-free-swap-mb takes a whole number of MB (got ${limitText})`,
+      `--max-used-swap-mb takes a whole number of MB (got ${limitText})`,
     )
   return {
     mode: 'check',
     json: values.json === true,
-    minFreeSwapMb:
-      limitText === undefined ? DEFAULT_MIN_FREE_SWAP_MB : Number(limitText),
+    maxUsedSwapMb:
+      limitText === undefined ? DEFAULT_MAX_USED_SWAP_MB : Number(limitText),
   }
 }
 
 /**
  * Reads the swap line of `sysctl -n vm.swapusage` as MB.
  *
- * Why: the Space's VM stops when the Mac's swap fills, so free swap is one of the two facts the verdict rests on. Called by {@link gatherFacts}; tests call it with hard-coded lines.
+ * Why: the Space's VM stops when the Mac's swap fills, so used swap is one of the two facts the verdict rests on. Called by {@link gatherFacts}; tests call it with hard-coded lines.
  *
  * @param {string | undefined} text - The line `sysctl` printed, or `undefined` when it could not run (another system).
  * @returns {{ totalMb: number, usedMb: number, freeMb: number } | undefined} The three amounts in MB; `undefined` when the text holds no swap line.
@@ -322,16 +327,17 @@ export function countProcessKinds(rows, ownPid) {
  *
  * Why: the judgement stays a pure function of the facts and the limit, so the tests pin it without a machine. Called by {@link runNativePrecheck}.
  * - Each kind with a count names `<count> <label>`.
- * - Free swap below the limit names both numbers; no swap allocated (total 0) counts as free.
- * - A process list or swap that could not be read is a reason too: the rule needs the swap shown free and no build seen.
+ * - Used swap above the limit names both numbers; no swap allocated (used 0) and any amount at or below the limit are clear. Used decides, not free: macOS adds swap one swapfile at a time, so free is only the unused part of the swap already allocated, not the room left.
+ * - A process list or swap that could not be read is a reason too: the rule needs the used swap shown within the limit and no build seen.
  *
- * @param {{ swap?: { totalMb: number, freeMb: number }, processes?: Record<string, number> }} facts - What {@link gatherFacts} read.
- * @param {number} minFreeSwapMb - The least free swap that counts as clear, in MB.
+ * @param {{ swap?: { usedMb: number }, processes?: Record<string, number> }} facts - What {@link gatherFacts} read.
+ * @param {number} maxUsedSwapMb - The most used swap that still counts as clear, in MB.
  * @returns {{ verdict: 'clear' | 'busy', reasons: string[] }} `clear` with no reason, or `busy` with every reason in report order.
  * @example
- * decideVerdict({ swap: { totalMb: 0, usedMb: 0, freeMb: 0 }, processes: { nodeTest: 2 } }, 2048) // => { verdict: 'busy', reasons: ['2 node --test'] }
+ * decideVerdict({ swap: { totalMb: 0, usedMb: 0, freeMb: 0 }, processes: { nodeTest: 2 } }, 8192) // => { verdict: 'busy', reasons: ['2 node --test'] }
+ * decideVerdict({ swap: { totalMb: 10240, usedMb: 9216, freeMb: 1024 }, processes: {} }, 8192) // => { verdict: 'busy', reasons: ['used swap 9216 MB above 8192 MB'] }
  */
-export function decideVerdict({ swap, processes }, minFreeSwapMb) {
+export function decideVerdict({ swap, processes }, maxUsedSwapMb) {
   const reasons = []
   if (processes === undefined) reasons.push('process list unknown')
   else
@@ -339,8 +345,8 @@ export function decideVerdict({ swap, processes }, minFreeSwapMb) {
       if (processes[kind.id] > 0)
         reasons.push(`${processes[kind.id]} ${kind.label}`)
   if (swap === undefined) reasons.push('swap unknown')
-  else if (swap.totalMb > 0 && swap.freeMb < minFreeSwapMb)
-    reasons.push(`free swap ${swap.freeMb} MB below ${minFreeSwapMb} MB`)
+  else if (swap.usedMb > maxUsedSwapMb)
+    reasons.push(`used swap ${swap.usedMb} MB above ${maxUsedSwapMb} MB`)
   return {
     verdict: reasons.length === 0 ? VERDICT_CLEAR : VERDICT_BUSY,
     reasons,
@@ -480,7 +486,7 @@ export async function runNativePrecheck(argv, seams, progress) {
   progress.enter('read the machine')
   const facts = gatherFacts(seams.readMachine(), seams.ownPid)
   progress.enter('judge the facts')
-  const judgement = decideVerdict(facts, parsed.minFreeSwapMb)
+  const judgement = decideVerdict(facts, parsed.maxUsedSwapMb)
   // One JSON object for a caller that parses, else one line per fact.
   if (parsed.json)
     seams.print(
@@ -488,7 +494,7 @@ export async function runNativePrecheck(argv, seams, progress) {
         load: facts.load,
         swap: facts.swap ?? null,
         processes: facts.processes ?? null,
-        minFreeSwapMb: parsed.minFreeSwapMb,
+        maxUsedSwapMb: parsed.maxUsedSwapMb,
         ...judgement,
       }),
     )
