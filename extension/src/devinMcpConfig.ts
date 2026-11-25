@@ -3856,11 +3856,13 @@ async function settleVacatedName(
   await link(vacatedPath, context.pendingPath).catch(() => {
     throw leftoverReplacedError(vacatedPath)
   })
-  // The awaited link may have given a sync tool time to replace this name; never unlink that file.
-  if (inodeNow(vacatedPath) !== vacated.ino)
-    throw leftoverReplacedError(vacatedPath)
-  // The link may also have given a sync tool time to empty the record's name or put another file there: this second name may then be the moved file's last one, so it stays, named. A look that failed proves nothing either, since it cannot tell that the file still has another name.
+  // The awaited link may have given a sync tool time to empty the record's name or put another file there: this second name may then be the moved file's last one, so it stays, named. A look that failed proves nothing either, since it cannot tell that the file still has another name.
   if (inodeNow(context.pendingPath) !== vacated.ino)
+    throw vacatedFileKeptError(context, vacatedPath)
+  // The last looks at this second name, closest to its unlink: a replacement is never unlinked, and the same file whose other name went in the instant between these looks counts no other name any more (a look at its link count tells), so it stays, named, as the moved file's possible last one.
+  if (!isStagedNameStill(vacatedPath, { ino: vacated.ino }))
+    throw leftoverReplacedError(vacatedPath)
+  if (!isStagedNameStill(vacatedPath, { ino: vacated.ino, isShared: true }))
     throw vacatedFileKeptError(context, vacatedPath)
   await unlink(vacatedPath).catch(() => undefined)
   throw bothRecordNamesError(context)

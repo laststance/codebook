@@ -22087,6 +22087,87 @@ test("A rewrite whose moved-aside file loses the record's name right after its l
   )
 })
 
+test("A rewrite whose moved-aside file loses the record's name between the last looks never deletes its last name, the link count tells", async (context) => {
+  // Value: protects=the last look at the vacated second name counting the file's names, so a sync tool that empties the record's name in the instant after its own look there makes the rewrite keep the moved file's possible last name instead of unlinking it (Cycle 0149 task 74, the inter-check window of devinMcpConfig.ts:3860-3862); fails_when=the refresh resolves or throws another sentence, the foreign file is gone or changed, or the record is lost from its dropping name; no_claim=a real sync tool (the loaded module empties the record's name inside the look at it right after the link back), and the small window after the last synchronous look, which no unlink-by-inode primitive can close
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const olderReceipt = await readRecordFile(storage, 'receipt.json')
+  delete olderReceipt.installationId
+  writeFileSync(receiptPath, JSON.stringify(olderReceipt))
+  const firstForeignText = 'the file a sync tool put at receipt.json first'
+  let vacatedPath = ''
+  let linked = false
+  let emptied = false
+  const emptying = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs': {
+        ...require('node:fs'),
+        lstatSync: (path: string, options?: object) => {
+          const { lstatSync: realLstatSync } = require('node:fs')
+          const result = realLstatSync(path, options)
+          // The look at the record's name right after the moved-aside file's link back; a sync tool empties that name in the same instant, after the look already answered, so only the vacated name's link count still tells.
+          if (path === receiptPath && linked && !emptied) {
+            emptied = true
+            rmSync(path)
+          }
+          return result
+        },
+      },
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          if (from === vacatedPath && to === receiptPath) linked = true
+        },
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          if (
+            from === receiptPath &&
+            to.endsWith('.tmp') &&
+            vacatedPath === ''
+          ) {
+            vacatedPath = to
+            rmSync(from)
+            writeFileSync(from, firstForeignText)
+          }
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refreshError = await emptying
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.notEqual(vacatedPath, '')
+  assert.equal(linked, true)
+  assert.equal(emptied, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found another file at ${receiptPath} while it rewrote or deleted its record there, moved it aside to ${vacatedPath} and put it back at ${receiptPath}, but that name no longer shows it now (a backup or sync tool may have moved or replaced it just now), so the file at ${vacatedPath} may be its only copy; Codebook left it there and went no further; move the file at ${vacatedPath} to another folder and keep it, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(vacatedPath, 'utf8'), firstForeignText)
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(
+    readFileSync(`${receiptPath}.codebook-dropping`, 'utf8'),
+    JSON.stringify(olderReceipt),
+  )
+})
+
 test("A removal that stopped right after it moved Codebook's record of the entry to its private name to delete it leaves the next removal to put that record back and settle it", async (context) => {
   // Value: protects=a delete of Codebook's record of the entry notes the version it moves to receipt.json's private name before it moves it, so a removal that really stops right after that move leaves the next run the proof to put that record back, and the next removal settles it instead of every later run refusing that record as a file it cannot prove (Cycle 0149 task 55; README line 95's dropping note); fails_when=the stop is not reached, the stop leaves a file at receipt.json or anything but the record at its private name, the next removal answers anything but not-managed, the config gets the entry back or loses the other server, or a record, its private name or its dropping note stays; no_claim=a real process end (the config module is loaded so that the rename which empties receipt.json during the removal's move, and every later link, rename, unlink, removal and write, fail as after the process ended), storage without hard links (the move is a rename there), the stopped run's vacated name (it stays under its fresh private name, as after any stop; no build reads such a name)
   // Arrange
