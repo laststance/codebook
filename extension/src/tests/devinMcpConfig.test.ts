@@ -4359,6 +4359,54 @@ test('A first setup whose receipt cannot be written takes its own entry out agai
   assert.equal(retry.status, 'installed')
 })
 
+test('A first setup whose receipt is moved away while its setup record is being deleted takes its entry back out', async (context) => {
+  // Value: protects=a first setup never reports installed when its receipt disappears after the receipt's post-write check but before the setup record goes: the record is kept long enough for the existing take-back, the published entry is removed, and a retry can install normally; fails_when=the first setup resolves installed, leaves its entry or the config it created, or the retry is refused; no_claim=a real sync tool (the seam moves receipt.json away once, at the setup record's last look before its delete), and a move after the record's last synchronous look; seam=seam.afterLeftoverCheck armed by the receipt's beforeRecordWrite
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const movedReceiptPath = join(
+    storage,
+    'devin-mcp',
+    'receipt.json.moved-by-sync-tool',
+  )
+  let receiptWriteSeen = false
+  let receiptMoved = false
+  const seam: DevinMcpTestSeam = {
+    beforeRecordWrite: ({ path }) => {
+      if (path === receiptPath) receiptWriteSeen = true
+    },
+    afterLeftoverCheck: (path) => {
+      if (!receiptWriteSeen || receiptMoved || path !== pendingPath) return
+      receiptMoved = true
+      renameSync(receiptPath, movedReceiptPath)
+    },
+  }
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, seam)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.equal(
+      error.message,
+      `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else. Codebook found nothing at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it had read its record there (a backup or sync tool may have moved it away), so it wrote no record there and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+    )
+    return true
+  })
+  assert.equal(receiptMoved, true)
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(existsSync(movedReceiptPath), true)
+
+  // Act
+  const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(retry.status, 'installed')
+})
+
 test('A refresh after a first setup whose receipt and rollback both failed takes the entry back instead of adopting it as installed', async (context) => {
   // protects=a failed first setup is never adopted as installed when a full disk stopped its receipt and its rollback journal; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of the first refusal, the real ENOSPC code; seam=seam.afterPublish puts folders where the receipt and the rollback journal go, standing for the full disk
   // Arrange

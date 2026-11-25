@@ -824,9 +824,35 @@ function linkedElsewhereRefusal({ path, retry }: Context): Error {
   )
 }
 
-/** Removes the pending record; a failure leaves a record that the next run finds stale. A tracked journal ({@link Context.journalVersion}) goes only while its name shows the version this run settled or wrote ({@link removeRecord}). */
-function dropPending(context: Context): Promise<void> {
-  return removeRecord(context).catch(() => undefined)
+/**
+ * Removes the pending record; a failure leaves a record that the next run finds stale. A tracked journal ({@link Context.journalVersion}) goes only while its name shows the version this run settled or wrote ({@link removeRecord}).
+ * @param context - The run; its pending path is the record.
+ * @param assertStill - A synchronous look at other names that must still hold right before the delete ({@link removeRecord}); its failure is thrown again after the delete is abandoned, so the caller can run the failure handling that needs the record it kept. Any other failure still leaves a stale record and is swallowed, as before.
+ * @throws What `assertStill` threw; nothing is deleted then.
+ * @example
+ * await dropPending(context, assertReceiptLeft) // throws the receipt conflict, keeping pending.json, once receipt.json moved away before the delete
+ */
+async function dropPending(
+  context: Context,
+  assertStill?: StillLook,
+): Promise<void> {
+  let stillFailure: unknown
+  let stillFailed = false
+  const guardedStill: StillLook | undefined = assertStill && {
+    names: assertStill.names,
+    assert: (): void => {
+      try {
+        assertStill.assert()
+      } catch (error) {
+        // Remember why the guarded delete stopped before swallowing it as an ordinary cleanup failure.
+        stillFailure = error
+        stillFailed = true
+        throw error
+      }
+    },
+  }
+  await removeRecord(context, guardedStill).catch(() => undefined)
+  if (stillFailed) throw stillFailure
 }
 
 /**
@@ -9412,6 +9438,9 @@ async function recordPublishedEntry(
     )
     await lookAheadAt(assertReceiptLeft.names)
     assertReceiptLeft.assert()
+    // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it; one that goes here goes only while the receipt still stands.
+    if (keptLeft.length === 0 && !isRetiredKept)
+      await dropPending(context, assertReceiptLeft)
   } catch (cause) {
     // A config that is no longer the published file is not this setup's to take anything out of; an update keeps its own record of the change and rejects as before.
     if (cause instanceof PublishUncoveredError || !isFirst) throw cause
@@ -9423,8 +9452,6 @@ async function recordPublishedEntry(
       isRetiredKept,
     )
   }
-  // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it.
-  if (keptLeft.length === 0 && !isRetiredKept) await dropPending(context)
   const cleanupFailure = [
     cleanupFailureOf(settled.copies.asTracked),
     settled.sentence,
