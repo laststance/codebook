@@ -11801,7 +11801,7 @@ test("A rollback record and a marked setup record a backup restores while a refr
   const journalAfterFirst = existsSync(journalPath)
     ? readFileSync(journalPath, 'utf8')
     : 'absent'
-  // The learner runs setup again, as that refusal asks: the rerun finds the adopted record at its dropping name beside the restored one and names both.
+  // The automatic refresh meets the same conflict: it finds the adopted record at its dropping name beside the restored one and names both.
   const rerunOutcome = await refreshManagedDevinMcpEntry(
     storage,
     ENTRY,
@@ -11844,6 +11844,93 @@ test("A rollback record and a marked setup record a backup restores while a refr
   assert.equal(existsSync(pendingPath), false)
   assert.equal(existsSync(droppingPath), false)
   assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(keptRecordPath, 'utf8'), markedRecordText)
+})
+
+test('Set Up AI Chat follows its both-names way out: it refuses while both setup-record names stand, then installs after pending.json is moved aside', async (context) => {
+  // Value: protects=the guided setup path named in the both-names refusal: Codebook: Set Up AI Chat itself, not only the activation refresh, refuses before either record is touched, and once the learner keeps the file at pending.json elsewhere it puts the proven moved record back, finishes the interrupted setup's take-back and installs a fresh receipted entry (Cycle 0149 exact-head CodeRabbit minor); fails_when=the first setup resolves or says anything but the both-names sentence, either record, the rollback record or the config changes before the way out, the guided retry does not install, the learner's other server or the kept record is lost, or a record or receipt is left inconsistent; no_claim=a real backup tool (the test writes the restored records and the dropping note directly, as the first refresh in the previous test leaves them), a receipt that stayed behind (none stands in this state), Devin Desktop loading the new entry
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const droppingNotePath = `${pendingPath}.codebook-dropping-note`
+  const journalPath = `${pendingPath}.rollback`
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000003010',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  const olderRecordText = JSON.stringify(olderRecord)
+  await writeFile(pendingPath, olderRecordText)
+  leaveStoppedMove(pendingPath)
+  const markedRecordText = JSON.stringify({ ...olderRecord, takeBack: true })
+  writeFileSync(pendingPath, markedRecordText)
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000003011',
+    publishGeneration: olderRecord.generation,
+  })}\n`
+  await writeFile(journalPath, restoredJournalText)
+  const configBefore = readFileSync(configPath, 'utf8')
+  const keptRecordPath = join(home, 'kept-record.json')
+
+  // Act
+  const refusal = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const isReceiptAfterRefusal = existsSync(receiptPath)
+  const pendingAfterRefusal = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const droppingAfterRefusal = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const journalAfterRefusal = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  // The learner follows the both-names way out: the file at pending.json goes to another folder and is kept.
+  renameSync(pendingPath, keptRecordPath)
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    refusal instanceof Error ? refusal.message : refusal,
+    bothRecordNamesRefusal(pendingPath),
+  )
+  assert.equal(isReceiptAfterRefusal, false)
+  assert.equal(pendingAfterRefusal, markedRecordText)
+  assert.equal(droppingAfterRefusal, olderRecordText)
+  assert.equal(journalAfterRefusal, restoredJournalText)
+  assert.equal(configAfterRefusal, configBefore)
+  assert.equal(setup.status, 'installed')
+  assert.equal(setup.path, configPath)
+  assert.equal(setup.cleanupFailure, undefined)
+  assert.equal(setup.disabled, undefined)
+  assert.match(setup.generation, /^[0-9a-f-]{36}$/)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  assert.equal(receipt.generation, setup.generation)
+  assert.equal(receipt.entrySha256, ENTRY_HASH)
+  assert.equal(receipt.createdFile, false)
+  assert.equal(receipt.installed, true)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(droppingNotePath), false)
   assert.equal(readFileSync(keptRecordPath, 'utf8'), markedRecordText)
 })
 
@@ -15775,6 +15862,7 @@ test('An edit written in place into a setup’s new config right before a backup
     (failure: unknown) => failure,
   )
   const recordAfterSetup = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  const configAfterSetup = readFileSync(configPath, 'utf8')
   await writeManagedDevinMcpEntry(storage, ENTRY, home).catch(() => undefined)
   // A name a run left empty reads as 'absent', so the assertions below name it.
   const stagedAfterNextRun = existsSync(stagedPath)
@@ -15788,6 +15876,7 @@ test('An edit written in place into a setup’s new config right before a backup
   )
   assert.equal(recordAfterSetup.phase, 'completed')
   assert.equal(recordAfterSetup.stagedName, basename(stagedPath))
+  assert.equal(configAfterSetup, restoredText)
   assert.equal(stagedAfterNextRun, editedText)
 })
 
