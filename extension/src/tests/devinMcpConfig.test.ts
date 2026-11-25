@@ -21495,6 +21495,94 @@ test('An adoption a restored rollback record stops after its receipt writes the 
   assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
 })
 
+test('An adoption a restored rollback record stops puts back the receipt the run read first, not one a sync tool traded it for', async (context) => {
+  // Value: protects=the withdrawal of an adoption that could not end its record putting back the receipt the run's deciding read saw, whose version is the only one the adoption's receipt write compare-and-swaps on, so the receipt the write actually replaced is always that one and never a receipt a sync tool traded it for while the run decided (Cycle 0149 ship review pass 3, red team major on devinMcpConfig.ts adoptPending); fails_when=receipt.json is gone or holds anything but the receipt the first setup wrote, the first refresh says anything but the rollback record's changed sentence, or the restored records change; no_claim=a real sync tool (seam.afterStat, at the run's deciding read whose open handle still reads the tracked receipt, moves that file aside once and writes the traded receipt at its name, and seam.beforeRecordWrite trades them back right before the adoption's receipt write), a real backup tool (the config module is loaded with a rename that, once, restores the rollback record and the setup record right after Codebook moved that record aside to end it), a real full disk (seam.beforeRecordWrite fails the update's receipt write with ENOSPC, which leaves its completed record), a file put at receipt.json between the withdrawal's look and its write
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      beforeRecordWrite: ({ path }) => {
+        if (path === receiptPath) throw noSpaceLeft()
+      },
+    }),
+    { message: 'no space left on device' },
+  )
+  const receiptObject = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const updateGeneration = JSON.parse(pendingText).generation
+  // The rollback record of that same setup names no private file, so its settlement changes nothing beside the config.
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001771',
+    publishGeneration: updateGeneration,
+  })}\n`
+  // A receipt of this config a sync tool trades the standing one for: another write's generation and installation, never the read one's.
+  const tradedReceipt = {
+    ...receiptObject,
+    generation: 'c0ffee00-0000-4000-8000-000000001772',
+    installationId: 'c0ffee00-0000-4000-8000-000000001773',
+  }
+  const trackedAsidePath = join(home, 'receipt-read-aside.json')
+  const tradedAsidePath = join(home, 'receipt-traded-aside.json')
+  const journalBackupPath = join(home, 'journal-from-backup.json')
+  const recordBackupPath = join(home, 'record-from-backup.json')
+  let hasRestored = false
+  const restoring = await loadWithAfterRename((from) => {
+    // The step of the move that leaves the setup record at its dropping name alone: the rename that empties its name.
+    if (from !== pendingPath || existsSync(pendingPath) || hasRestored) return
+    hasRestored = true
+    // A backup restores the folder right after the adoption moved its setup record aside to end it: the rollback record, and the setup record at its own name.
+    writeFileSync(journalBackupPath, restoredJournalText)
+    renameSync(journalBackupPath, journalPath)
+    writeFileSync(recordBackupPath, pendingText)
+    renameSync(recordBackupPath, pendingPath)
+  })
+  let hasTraded = false
+  let hasTradedBack = false
+
+  // Act
+  const firstOutcome = await restoring
+    .refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterStat: (path) => {
+        if (path !== receiptPath || hasTraded) return
+        hasTraded = true
+        // A sync tool trades the receipt for another write's while the run's deciding read still reads the one it opened: the tracked file keeps its inode aside, and the traded receipt stands at the name.
+        renameSync(receiptPath, trackedAsidePath)
+        writeFileSync(receiptPath, JSON.stringify(tradedReceipt))
+      },
+      beforeRecordWrite: ({ path }) => {
+        if (path !== receiptPath || hasTradedBack) return
+        hasTradedBack = true
+        // The sync tool is done right before the adoption writes its receipt: the traded receipt moves aside and the file the run read is back at its name, on the very inode that read tracked.
+        renameSync(receiptPath, tradedAsidePath)
+        renameSync(trackedAsidePath, receiptPath)
+      },
+    })
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+
+  // Assert
+  assert.equal(hasTraded, true)
+  assert.equal(hasTradedBack, true)
+  assert.equal(hasRestored, true)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(receiptPath, 'utf8')), receiptObject)
+  assert.equal(readFileSync(journalPath, 'utf8'), restoredJournalText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+})
+
 test('A refresh that adds the installation id to an older record never writes over a record a backup restored at receipt.json after the refresh read it, says so, and the next refresh adds it', async (context) => {
   // Value: protects=the backfill of an older record's installation id replaces receipt.json only while that name still shows the record the refresh read there, so a record a backup put back at another inode stays, the refresh says so, and the next refresh adds the id (Cycle 0149 task 12, D5's backfill writer); fails_when=the refresh resolves or says anything but the changed-record sentence of receipt.json, receipt.json changes, or the next refresh answers anything but current with a receipt that holds an installation id; no_claim=a real backup tool (seam.beforeRecordWrite puts a copy of the record the refresh read back at receipt.json, at another inode, once, right before the backfill writes its own), a real older build (the receipt is rewritten without its installation id), a file put there between the last look and the rename
   // Arrange

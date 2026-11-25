@@ -4498,13 +4498,8 @@ function isStagedNameStill(staged: string, read: LeftoverLookback): boolean {
   }
 }
 
-/** The receipt, when it covers this run's config path; a read that does not move the run's {@link Context.receiptVersion} ({@link readReceiptWithVersion}). */
-async function readReceipt(context: Context): Promise<Receipt | undefined> {
-  return (await readReceiptWithVersion(context)).receipt
-}
-
 /**
- * Reads `receipt.json` through one handle, as {@link readVersionedRecord} does, and gives the receipt together with the version of the file that read saw; called by {@link readReceipt}, and by {@link settleAfterRecovery}, whose read is the one the run's decisions rest on, so it keeps that version, and the config path a record of another config names, as {@link Context.receiptVersion}.
+ * Reads `receipt.json` through one handle, as {@link readVersionedRecord} does, and gives the receipt together with the version of the file that read saw; called by {@link settleAfterRecovery}, whose read is the one the run's decisions rest on, so it keeps that version, and the config path a record of another config names, as {@link Context.receiptVersion}.
  * @param context - The run.
  * @returns The receipt when it covers this run's config path (undefined otherwise), the inode and bytes' hash of the file read there whatever config it covers (undefined when the name is empty), and, for a valid record of another config, the config path it names (`otherConfigPath`), so that occupied name is never taken for an empty one.
  * @throws What {@link readRecord} throws for a record that is a link, no regular file, too large, unreadable or of another shape.
@@ -6544,7 +6539,7 @@ async function undoForeignLink(
  * @returns The receipt that now stands.
  * @throws A {@link refusal} when the entry is neither the pending one nor the receipted one; what {@link retirePending} throws, such as the {@link HeldJournalConflictError} of a held journal's look (the record then stays as it is); what {@link adoptPending} throws, such as the {@link JournalBackConflictError} of a rollback record that appeared at its name.
  * @example
- * const receipt = await settlePending(context, current, await readReceipt(context), pending, look, undefined)
+ * const receipt = await settlePending(context, current, (await readReceiptWithVersion(context)).receipt, pending, look, undefined)
  */
 async function settlePending(
   context: Context,
@@ -6588,6 +6583,7 @@ async function settlePending(
       pending,
       pending.entrySha256,
       look.identity,
+      receipt,
       retained,
       // The receipt is published, and the record ends, only while every other name the adoption rests on still shows what this run left there: the old record's private name, and the held journal or else the rollback journal's name as settlement left it.
       bothLooks(
@@ -6641,23 +6637,23 @@ function isPendingStale(
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
  * @param identity - The identity of the config that stands.
+ * @param replacedReceipt - The receipt read together with the version tracked in context.receiptVersion.current; it is the only receipt this adoption may replace, and the value a withdrawal puts back.
  * @param retained - What stays of the record after recovery; undefined when nothing stays.
  * @param assertLeft - The synchronous look at the other names the adoption rests on (the old record's private name, the rollback journal's name: {@link retiredNameCheck}, {@link journalLeftCheck}), run right before the receipt's rename after the publish record's own look, and right before the record's rename or unlink; undefined when nothing else must hold.
  * @returns The receipt that was written.
  * @throws The {@link adoptedReceiptConflictError} when `receipt.json` no longer shows the receipt this call published before the record ends; the record stays. A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when such a conflict stops the record's end or the look after it (`changed` for a file at `pending.json` after its delete). The {@link receiptConflictError} when `receipt.json` no longer shows the record this run read there ({@link writeReceipt}): that file stays and no receipt is written. What the receipt's write and {@link retirePending} throw otherwise.
  * @example
- * await adoptPending(run, pending, pending.entrySha256, look.identity, undefined, await journalLeftCheck(run, undefined)) // => the adopted receipt; it rejects, leaving no receipt and both records, once a backup put the rollback record of that setup back
+ * await adoptPending(run, pending, pending.entrySha256, look.identity, receipt, undefined, await journalLeftCheck(run, undefined)) // => the adopted receipt; it rejects, leaving no receipt and both records, once a backup put the rollback record of that setup back
  */
 async function adoptPending(
   context: Context,
   pending: Pending,
   entrySha256: string,
   identity: FileIdentity,
+  replacedReceipt: Receipt | undefined,
   retained: Pending | undefined,
   assertLeft?: StillLook,
 ): Promise<Receipt> {
-  // The receipt this adoption replaces, kept for the take-back: a withdrawal puts it back while the name still shows the receipt this call published, so the entry it records never loses its record when the adoption's answer is no.
-  const replacedReceipt = await readReceipt(context)
   const adopted: Receipt = {
     schemaVersion: 1,
     targetPath: context.path,
@@ -11582,7 +11578,7 @@ function recordRefusalOf(
  * @param isStagedLinked - What {@link isStagedNameLinked} found before recovery; it proves a first setup's link to {@link settleRetiredReceipt}.
  * @param otherJournalVersion - The version of another config's rollback journal that {@link settleRollbackJournal} read and left at that name ({@link SettledJournal.otherVersion}); undefined when it left that name empty or holds the journal. An adoption without a held journal rests on that name still showing it ({@link settlePending}).
  * @returns The {@link Inspection}.
- * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, the held journal's look ({@link HeldJournal.lookStill}), {@link settlePending} and {@link retireHeldJournal} throw; the `receipt-unverified` refusal of {@link assertNotedReceipt} when the publish record notes that receipt.json is unverified and its read of that name found other bytes than the ones the note names, before anything is decided on that read; a conflict at a held run's publish record is worded as that record's ({@link publishRecordConflict}), one at the held journal's name as that journal's.
+ * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceiptWithVersion}, {@link finishCutShortSetup}, the held journal's look ({@link HeldJournal.lookStill}), {@link settlePending} and {@link retireHeldJournal} throw; the `receipt-unverified` refusal of {@link assertNotedReceipt} when the publish record notes that receipt.json is unverified and its read of that name found other bytes than the ones the note names, before anything is decided on that read; a conflict at a held run's publish record is worded as that record's ({@link publishRecordConflict}), one at the held journal's name as that journal's.
  * @example
  * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held, false, undefined)
  */
