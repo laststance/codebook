@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -564,14 +564,25 @@ test('a receipt that is not there answers removed with the reason missing', asyn
   assert.deepEqual(state, { state: 'removed', reason: 'missing', receiptPath })
 })
 
-// Value: protects=a bridge check or a window's mark that lands while Codebook rewrites or deletes its record of the entry, which it moves to receipt.json.codebook-dropping first so that receipt.json stands empty for a moment, reads that record there, so a connected bridge whose setup stands never ends with the not-set-up line and a window never unmarks itself in that moment (Cycle 0149 ship review, specialist testing note on readReceiptState.ts:154); fails_when=the empty receipt.json alone decides and the receipt answers removed with the reason missing, or the fields of the record at the dropping name are lost; no_claim=real file timing (the test writes the record at the dropping name and nothing at receipt.json, as the move leaves them), which file the config module's next run keeps there
+// Value: protects=a bridge check or a window's mark that lands while Codebook rewrites or deletes its record of the entry, which it moves to receipt.json.codebook-dropping first so that receipt.json stands empty for a moment, reads that record there, so a connected bridge whose setup stands never ends with the not-set-up line and a window never unmarks itself in that moment (Cycle 0149 ship review, specialist testing note on readReceiptState.ts:154); fails_when=the empty receipt.json alone decides and the receipt answers removed with the reason missing, or the fields of the record at the dropping name are lost; no_claim=real file timing (the test writes the dropping note naming the record's inode and bytes, then the record at the dropping name and nothing at receipt.json, as the move leaves them; pass 3's red team 2 made that note a condition), which file the config module's next run keeps there
 test('an MCP receipt that Codebook holds at its dropping name while receipt.json is empty answers installed with its fields', async (context) => {
   // Arrange
   const storage = await arrangeStorage(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const recordText = JSON.stringify({
+    installed: true,
+    installationId: 'installation-a',
+  })
+  await writePrivate(`${receiptPath}.codebook-dropping`, recordText)
+  // The note Codebook writes before its move names the moved record's inode and bytes.
+  const { ino } = await stat(`${receiptPath}.codebook-dropping`, {
+    bigint: true,
+  })
   await writePrivate(
-    `${receiptPath}.codebook-dropping`,
-    JSON.stringify({ installed: true, installationId: 'installation-a' }),
+    `${receiptPath}.codebook-dropping-note`,
+    JSON.stringify({
+      moved: { ino: ino.toString(), sha256: sha256Of(recordText) },
+    }),
   )
   // Act
   const state = await readReceiptState(receiptPath)
@@ -643,6 +654,183 @@ test('a skill receipt that is not there answers removed with the reason missing 
   const state = await readReceiptState(receiptPath)
   // Assert
   assert.deepEqual(state, { state: 'removed', reason: 'missing', receiptPath })
+})
+
+// Value: protects=a record at the receipt's dropping name stands for Codebook's record of the entry only while the dropping note Codebook writes before every move of that record names it, the rule every setup, refresh and removal follows (they refuse such a file as one a backup or sync tool may have put there), so a stale or restored file at that private name never marks a window or connects the bridge (Cycle 0149 ship review pass 3, red team 2 on readReceiptState.ts:109); fails_when=the record at the dropping name answers installed without any note beside it; no_claim=real files (scripted reads answer receipt.json empty, its dropping name with an installed record and its note's name empty), the inode the config module's run start also checks
+test('an MCP receipt answers removed with the reason missing when receipt.json is empty and its dropping name holds a record that no dropping note names', async () => {
+  // Arrange
+  const { readReceiptState: readWithUnnotedDropping } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME],
+      'receipt.json.codebook-dropping': [
+        {
+          state: 'read',
+          value: { installed: true, installationId: 'installation-a' },
+          sha256: 'hash of the bytes at the dropping name',
+        },
+      ],
+    })
+  // Act
+  const state = await readWithUnnotedDropping('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'missing',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a dropping note that names other bytes than the file at the receipt's dropping name (a backup or sync tool replaced the moved record there, or the note is an older move's) proves nothing, so that file never stands for Codebook's record of the entry, as every setup, refresh and removal refuses it (Cycle 0149 ship review pass 3, red team 2); fails_when=the file at the dropping name answers installed beside a note that names other bytes; no_claim=real files (scripted reads), the inode the config module's run start also checks
+test('an MCP receipt answers removed with the reason missing when receipt.json is empty and the dropping note names other bytes than the record at its dropping name', async () => {
+  // Arrange
+  const { readReceiptState: readWithOtherNote } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME],
+      'receipt.json.codebook-dropping': [
+        {
+          state: 'read',
+          value: { installed: true, installationId: 'installation-a' },
+          sha256: 'hash of the bytes at the dropping name',
+        },
+      ],
+      'receipt.json.codebook-dropping-note': [
+        {
+          state: 'read',
+          value: { moved: { ino: '43', sha256: 'hash of another record' } },
+          sha256: 'hash of the bytes at the dropping note',
+        },
+      ],
+    })
+  // Act
+  const state = await readWithOtherNote('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'missing',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a dropping note of another shape than the config module's (here its moved version without the inode that module's schema requires) proves nothing, so the reader refuses what every setup, refresh and removal refuses, also when it names the very bytes at the dropping name (Cycle 0149 ship review pass 3, red team 2); fails_when=the record at the dropping name answers installed beside a note that module reads as no note; no_claim=real files (scripted reads), every other shape that module refuses (its schema's other fields take the same parse)
+test('an MCP receipt answers removed with the reason missing when receipt.json is empty and the note beside its dropping name lacks the inode of the move', async () => {
+  // Arrange
+  const { readReceiptState: readWithShapelessNote } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME],
+      'receipt.json.codebook-dropping': [
+        {
+          state: 'read',
+          value: { installed: true, installationId: 'installation-a' },
+          sha256: 'hash of the bytes at the dropping name',
+        },
+      ],
+      'receipt.json.codebook-dropping-note': [
+        {
+          state: 'read',
+          value: {
+            moved: { sha256: 'hash of the bytes at the dropping name' },
+          },
+          sha256: 'hash of the bytes at the dropping note',
+        },
+      ],
+    })
+  // Act
+  const state = await readWithShapelessNote('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'missing',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a record that Codebook moved to the receipt's dropping name, with the dropping note it wrote before the move naming that record's bytes, still answers for the receipt while receipt.json is empty, so a bridge check or a window's mark that lands while Codebook rewrites or deletes its record of the entry keeps finding the setup as it stood (Cycle 0149 ship review pass 3, red team 2; pass 2's specialist testing note); fails_when=the noted record answers removed or no-answer, or its fields are lost; no_claim=real files (scripted reads), the inode the config module's run start also checks
+test('an MCP receipt that Codebook holds at its dropping name answers installed with its fields while the dropping note names those very bytes', async () => {
+  // Arrange
+  const { readReceiptState: readWithNotedDropping } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME],
+      'receipt.json.codebook-dropping': [
+        {
+          state: 'read',
+          value: { installed: true, installationId: 'installation-a' },
+          sha256: 'hash of the bytes at the dropping name',
+        },
+      ],
+      'receipt.json.codebook-dropping-note': [
+        {
+          state: 'read',
+          value: {
+            moved: {
+              ino: '43',
+              sha256: 'hash of the bytes at the dropping name',
+            },
+          },
+          sha256: 'hash of the bytes at the dropping note',
+        },
+      ],
+    })
+  // Act
+  const state = await readWithNotedDropping('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-a' },
+  })
+})
+
+// Value: protects=a read of the dropping note that fails to look (descriptor exhaustion, EIO) while receipt.json reads empty and its dropping name holds a record leaves the receipt unknown, since that note may name the record, so a transient failure neither ends a connected bridge nor unmarks a window (Cycle 0149 ship review pass 3, red team 2); fails_when=the record at the dropping name answers installed without its note being read, or the receipt answers removed; no_claim=which codes count as no answer (readPrivateJsonState's own tests); scripted reads
+test('an MCP receipt answers no-answer when receipt.json is empty, its dropping name holds a record and the read of the dropping note fails to look', async () => {
+  // Arrange
+  const { readReceiptState: readWithFailedNote } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME],
+      'receipt.json.codebook-dropping': [
+        {
+          state: 'read',
+          value: { installed: true, installationId: 'installation-a' },
+          sha256: 'hash of the bytes at the dropping name',
+        },
+      ],
+      'receipt.json.codebook-dropping-note': [{ state: 'no-answer' }],
+    })
+  // Act
+  const state = await readWithFailedNote('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'no-answer',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a rewrite of Codebook's record of the entry that publishes its new record, deletes the old one at the dropping name and then its dropping note between the read of the dropping name and the read of that note never reads as a removal: the note no longer names the old record, so receipt.json is read once more and the new record found there stands (Cycle 0149 ship review pass 3, red team 2; the three-read rule of pass 2's specialist testing note); fails_when=the empty first read of receipt.json decides and the receipt answers removed with the reason missing, or the old record at the dropping name answers in place of the new one; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name with the old record, its note's name empty, then receipt.json with the new record), a second rewrite or a delete that moves the new record before that last read (the stated residual)
+test('an MCP receipt that a rewrite publishes between the reads of its dropping name and the dropping note answers installed with the new record', async () => {
+  // Arrange
+  const { readReceiptState: readWithFinishedRewrite } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
+      'receipt.json.codebook-dropping': [
+        {
+          state: 'read',
+          value: { installed: true, installationId: 'installation-a' },
+          sha256: 'hash of the bytes at the dropping name',
+        },
+      ],
+      'receipt.json.codebook-dropping-note': [SCRIPTED_EMPTY_NAME],
+    })
+  // Act
+  const state = await readWithFinishedRewrite('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-b' },
+  })
 })
 
 // protects=a removed skill receipt (installed false) counting as removed; fails_when=it answers installed; no_claim=the MCP receipt

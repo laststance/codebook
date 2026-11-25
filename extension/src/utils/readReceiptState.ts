@@ -37,6 +37,21 @@ const PUBLISH_RECORD_FILE = 'pending.json'
 /** What the config module appends to the name of that record, and of the MCP entry's receipt, for its dropping name (its `DROPPING_SUFFIX`): every rewrite or delete moves the record there first and only then writes the new record at its name or deletes the moved one, so during each such step, and after a run that stopped inside one until the next run puts it back, the record stands only there; the presence check of the entry's record looks there too (`hasDevinEntryReceipt`). */
 export const DROPPING_NAME_SUFFIX = '.codebook-dropping'
 
+/** What the config module appends to the name of the MCP entry's receipt for the dropping note of its move (its `DROPPING_NOTE_SUFFIX`, `droppingNotePathOf`): every rewrite or delete writes that note before it moves the record to its dropping name, and deletes it only once that name is empty again ({@link readNotedDropping}). */
+const DROPPING_NOTE_NAME_SUFFIX = '.codebook-dropping-note'
+
+/** One version of a record as a dropping note names it, mirroring the config module's `noteVersionSchema` (`devinMcpConfig.ts`): the inode as decimal digits and the SHA-256 of the bytes. */
+const notedVersionSchema = z.object({
+  ino: z.string().regex(/^\d+$/),
+  sha256: z.string(),
+})
+
+/** The dropping note beside the MCP entry's receipt, mirroring the config module's `droppingNoteSchema` (`devinMcpConfig.ts`), so a note that module reads as no note proves nothing here either: `moved` names the version the move took to the dropping name, `published` a rewrite's new record. Only `moved.sha256` is compared ({@link readNotedDropping}); the inode is checked only by that module's run start (`provenDroppedRecord`), since the bounded read gives none. */
+const droppingNoteSchema = z.object({
+  moved: notedVersionSchema,
+  published: notedVersionSchema.optional(),
+})
+
 /** The part of that publish record that notes a file a put-back left at `receipt.json` without Codebook verifying it (`retiresReceipt.receiptUnverified`), with the hash of the old record's bytes it names, if any: the config module's record names none after it rewrote an older version's record (`retiresReceipt: {}`), and then no bytes pass ({@link unverifiedVerdictOf}); every other field is the config module's and is not read here. */
 const unverifiedNoteSchema = z.object({
   retiresReceipt: z.object({
@@ -95,15 +110,52 @@ function isMcpReceipt(receiptPath: string): boolean {
   return basename(dirname(receiptPath)) === MCP_RECEIPT_FOLDER
 }
 
+/** What the dropping note beside the MCP entry's receipt says of the record read at its dropping name, as {@link readNotedDropping} answers: `noted` when it names those very bytes, `unnoted` when no such note stands, `no-answer` when its read failed to look. */
+type DroppingNoteVerdict = 'noted' | 'unnoted' | 'no-answer'
+
+/**
+ * Tells whether the record read at the MCP entry's receipt's dropping name is the one Codebook moved there: the dropping note beside it ({@link DROPPING_NOTE_NAME_SUFFIX}), which every rewrite or delete writes before its move, must be a private note of the config module's shape ({@link droppingNoteSchema}) that names the SHA-256 of those very bytes, the proof every setup, refresh and removal asks before it puts that file back (`putNotedRecordBack`, which refuses any other file there as one a backup or sync tool may have put back); called only by {@link readReceiptOrDropped}, once the dropping name held something to parse, so a check of a setup that stands or was removed reads no note.
+ * Limit: the inode the note names is not compared, since the bounded read gives none, so a copy of the very bytes it names on another inode stands here, while the config module's run start refuses it.
+ * @param receiptPath - The MCP entry's `receipt.json`.
+ * @param droppedSha256 - The SHA-256 of the bytes read at its dropping name.
+ * @param platform - The platform whose file modes are judged.
+ * @returns
+ * - `noted` when the note names those bytes as the version its move took there
+ * - `unnoted` when no note stands there, the file there is no private note of that shape (a link, too large, readable by others, no JSON), or it names other bytes
+ * - `no-answer` when the read of the note failed to look, so nothing is known
+ * @example
+ * await readNotedDropping('/storage/devin-mcp/receipt.json', 'cd…', 'darwin') // => 'noted' while a rewrite holds the record at receipt.json.codebook-dropping
+ * await readNotedDropping('/storage/devin-mcp/receipt.json', 'cd…', 'darwin') // => 'unnoted' once a backup put a record there without its note
+ */
+async function readNotedDropping(
+  receiptPath: string,
+  droppedSha256: string,
+  platform: NodeJS.Platform | undefined,
+): Promise<DroppingNoteVerdict> {
+  const read = await readPrivateJsonState(
+    `${receiptPath}${DROPPING_NOTE_NAME_SUFFIX}`,
+    platform,
+  )
+  if (read.state === 'no-answer') return 'no-answer'
+  // An empty name, or a file there that is no private note, proves nothing.
+  if (read.state === 'removed') return 'unnoted'
+  const note = droppingNoteSchema.safeParse(read.value)
+  // Only a note that names these very bytes proves that Codebook moved them there.
+  return note.success && note.data.moved.sha256 === droppedSha256
+    ? 'noted'
+    : 'unnoted'
+}
+
 /**
  * Reads a receipt with the bounded read, and the MCP entry's receipt found missing also at its dropping name ({@link DROPPING_NAME_SUFFIX}), where Codebook's config module holds that record for a moment while it rewrites or deletes it and leaves it after a run that stopped inside one, until the next run puts it back; called only by {@link readReceiptState}, so a bridge check or a window's mark that lands in that moment reads that record instead of a removal.
- * When both names read empty, a rewrite may have published its new record at the receipt's name between the two reads, so that name is read once more and decides, the rule {@link unverifiedVerdictOf} follows for the publish record.
- * Limit: a record is missed only when it moves between its two names before each of these three reads, that is, a rewrite ends after the first read and the next rewrite or delete of that record begins before the third; the next check reads again. While a delete holds the record at its dropping name, that record still answers for the receipt, as a read right before its unlink would.
+ * A record there stands for the receipt only while the dropping note beside the receipt names its bytes ({@link readNotedDropping}), the proof every setup, refresh and removal asks before it takes that file back as its record, so a stale or restored file at that private name never marks a window or connects the bridge.
+ * When both names read empty, a rewrite may have published its new record at the receipt's name between the two reads, so that name is read once more and decides, the rule {@link unverifiedVerdictOf} follows for the publish record; so does a record at the dropping name that no note names, since a rewrite may have published its new record and dropped that note between those reads.
+ * Limits: a record is missed only when it moves between its two names before each of these reads, that is, a rewrite ends after the first read and the next rewrite or delete of that record begins before the last; the next check reads again. While a delete holds the record at its dropping name, that record still answers for the receipt, as a read right before its unlink would. A move whose note could not be written (the config module writes it best effort, for example on a full disk) reads as missing, as every later setup, refresh and removal refuses that file after a stop in it.
  * @param receiptPath - A `receipt.json` of the global storage.
  * @param platform - The platform whose file modes are judged.
  * @returns
  * - the read of the receipt's name, unless it found that name empty or the receipt is no MCP entry's
- * - for the MCP receipt's empty name: the read of its dropping name when it found something to parse there or failed to look; the read of the receipt's name once more when the dropping name is empty too; the first read otherwise (a file there that is no record never stands for the receipt)
+ * - for the MCP receipt's empty name: the read of its dropping name while it found a record there that the dropping note names, or failed to look; no answer when the note's read failed to look; the read of the receipt's name once more when the dropping name is empty too, or holds a record no note names; the first read otherwise (a file there that is no record never stands for the receipt)
  * @example
  * await readReceiptOrDropped('/storage/devin-mcp/receipt.json', 'darwin') // => { state: 'read', value: { installed: true, installationId: '…' }, sha256: '…' } while a rewrite holds the record at receipt.json.codebook-dropping
  */
@@ -121,8 +173,19 @@ async function readReceiptOrDropped(
   // Both names empty: a rewrite may have published its new record after the first read.
   if (isEmptyName(atDropping))
     return readPrivateJsonState(receiptPath, platform)
-  // The record held there, or a read that failed to look, answers for the receipt; a file there that is no record leaves it missing.
-  return atDropping.state === 'removed' ? read : atDropping
+  // A read that failed to look answers for the receipt; a file there that is no record leaves it missing.
+  if (atDropping.state !== 'read')
+    return atDropping.state === 'no-answer' ? atDropping : read
+  const verdict = await readNotedDropping(
+    receiptPath,
+    atDropping.sha256,
+    platform,
+  )
+  // The record the note names answers for the receipt; a note that could not be read leaves it unknown.
+  if (verdict === 'noted') return atDropping
+  if (verdict === 'no-answer') return { state: 'no-answer' }
+  // A record no note names is none Codebook moved there, or its rewrite published the new record and dropped the note after the first read.
+  return readPrivateJsonState(receiptPath, platform)
 }
 
 /**
@@ -170,7 +233,7 @@ async function unverifiedVerdictOf(
 
 /**
  * Looks at one of the Devin setup's receipts and says whether it stands, was removed (with the reason) or cannot be told; called by {@link readDevinInstallationId} and by `checkDevinBridgeReceipts`, so the bridge, the setup and the refresh judge a receipt the same way.
- * The MCP entry's receipt (`devin-mcp/receipt.json`) is read at its dropping name too when its name is empty (`receipt.json.codebook-dropping`, where a rewrite or delete holds it, {@link readReceiptOrDropped}), and stands only while Codebook's publish record beside it, at its name or at its dropping name (`pending.json.codebook-dropping`, where a rewrite or delete holds it), does not note that a put-back left a file there it did not verify, unless that file holds the very bytes the note names, the rule every setup, refresh and removal follows ({@link unverifiedVerdictOf}); that record is read only after the receipt answered installed.
+ * The MCP entry's receipt (`devin-mcp/receipt.json`) is read at its dropping name too when its name is empty (`receipt.json.codebook-dropping`, where a rewrite or delete holds it, while the dropping note beside it names that file's bytes, {@link readReceiptOrDropped}), and stands only while Codebook's publish record beside it, at its name or at its dropping name (`pending.json.codebook-dropping`, where a rewrite or delete holds it), does not note that a put-back left a file there it did not verify, unless that file holds the very bytes the note names, the rule every setup, refresh and removal follows ({@link unverifiedVerdictOf}); that record is read only after the receipt answered installed.
  * @param receiptPath - A `receipt.json` of the global storage (`devin-skill` or `devin-mcp`).
  * @param platform - The platform whose file modes are judged; defaults to this process's platform.
  * @returns A {@link ReceiptState}; never throws.

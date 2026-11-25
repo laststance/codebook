@@ -20462,6 +20462,55 @@ test("A removal that finds a file at its record of the entry's private name keep
   )
 })
 
+test("The window's descriptor mark reads the installation of Codebook's record of the entry that an update which stopped right after it moved that record to its private name left there, and stops reading it once only that move's dropping note is gone", async (context) => {
+  // Value: protects=the lock-free read that marks a window's descriptor takes the record at receipt.json's private name for Codebook's record of the entry only while the dropping note that the rewrite wrote before its move names that file, the proof every setup, refresh and removal asks before it puts that file back, so a window that loads while a stopped update left the record there keeps its mark, and a file there without that note (one a backup or sync tool put back) never marks a window (Cycle 0149 ship review pass 3, red team 2 on readReceiptState.ts:109); fails_when=the stop is not reached or leaves a file at receipt.json or no dropping note, the read with the note answers anything but the installation of the moved record, or the read after only the note was deleted answers that installation; no_claim=a real process end (the config module is loaded so that the rename which empties receipt.json during the update's move, and every later link, rename, unlink, removal and write, fail as after the process ended), the bridge's own check (checkDevinBridgeReceipts reads the MCP receipt through the same readReceiptState), the skill's receipt (written by hand, private), the inode the config module's run start also checks
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const notePath = `${receiptPath}.codebook-dropping-note`
+  const installationId: unknown = (
+    await readRecordFile(storage, 'receipt.json')
+  ).installationId
+  mkdirSync(join(storage, 'devin-skill'), { recursive: true })
+  writeFileSync(
+    join(storage, 'devin-skill', 'receipt.json'),
+    JSON.stringify({ installed: true }),
+    { mode: 0o600 },
+  )
+  const endingAfterMove = await loadEndingAfterStep(
+    // The rename that empties receipt.json once a link gave its file the private name as well.
+    ({ step, from, to }) =>
+      step === 'rename' && from === receiptPath && to.endsWith('.tmp'),
+  )
+  await endingAfterMove.module
+    .writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+    .catch(() => undefined)
+  const isReceiptAfterStop = existsSync(receiptPath)
+  const isNoteAfterStop = existsSync(notePath)
+
+  // Act
+  const markedWithNote = await readStandingDevinInstallationId(
+    storage,
+    createPathReadGate(),
+  )
+  // Only the note goes, as when a sync tool put the file back at the private name without it.
+  rmSync(notePath)
+  const markedWithoutNote = await readStandingDevinInstallationId(
+    storage,
+    createPathReadGate(),
+  )
+
+  // Assert
+  assert.equal(endingAfterMove.hasEnded(), true)
+  assert.equal(isReceiptAfterStop, false)
+  assert.equal(isNoteAfterStop, true)
+  assert.match(String(installationId), /^[0-9a-f-]{36}$/)
+  assert.equal(markedWithNote, installationId)
+  assert.equal(markedWithoutNote, undefined)
+})
+
 test("A setup that put its old record back keeps the window running while its look at receipt.json before the old record's private name goes stalls, and finishes once storage answers", async (context) => {
   // Value: protects=the synchronous last looks before a first setup deletes its old record's private name after that record went back come right after a look at receipt.json through the thread pool, so a storage that already stalls holds that look, not the extension host's thread, where the setup's budget still answers, and once storage answers the private name still goes only after those last looks (Cycle 0148 ship review); fails_when=no look at receipt.json reaches the file system's asynchronous call after the put-back's link stood (the synchronous look blocked the thread instead), the setup settles while that look is held, or after the release the setup answers anything but the changed-file refusal, receipt.json holds anything but the old record or another record stays; no_claim=a real stalled disk (an lstat of receipt.json held after the put-back's link stood, until the test releases it, stands for it), a stall that starts between that look and the synchronous one (no Node primitive closes it), and a real sync tool (seam.afterCheck moves the config back right before the link in its place)
   // Arrange
