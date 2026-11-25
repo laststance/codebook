@@ -1414,11 +1414,11 @@ function lookAtComparedName(
 }
 
 /**
- * Gives the config name its file back after the comparison found it is not the file that was read: a link never replaces a config that appeared meanwhile, only then does the file get its own permissions back through its handle, and the displaced name is unlinked. A copy that cannot go back stays private.
+ * Gives the config name its file back when a write is abandoned before its publish completes (the comparison found another file than the one read, or nothing stood at the config name right after the link): a link never replaces a config that appeared meanwhile, only then does the file get its own permissions back through its handle, and the displaced name is unlinked. A copy that cannot go back stays private.
  * @param context - The run.
  * @param displacedPath - The private name of the displaced file.
  * @param opened - The handle of that file with the mode it had before it was made private; undefined when it could not be opened.
- * @param dropsRecord - Whether the pending record goes once the file is back; `false` while the record still names a stale receipt that could not go back ({@link UnrestoredReceiptError}), so the next run puts that receipt back.
+ * @param dropsRecord - Whether the pending record goes once the file is back; `false` while that record still has the rest of an abandoned publish to settle, or names a stale receipt that could not go back ({@link UnrestoredReceiptError}), so the next run settles those first.
  * @throws A {@link leftCopyRefusal} naming the displaced file when it cannot go back (a new config stands there, or the link failed); an {@link extraNameRefusal} when the file is back but its displaced name could not be deleted (the record stays, so the next run deletes that name).
  */
 async function restoreDisplaced(
@@ -1783,17 +1783,18 @@ function stagedConfigRefusal(
   )
 }
 
-/** What the read of the config right after the link found ({@link linkedConfigState}): `linked` the file this run wrote with its bytes; `other` another file, other bytes or nothing there; `unread` a read that failed twice (no file handle left, a read error), which proves neither. */
-type LinkedConfigState = 'linked' | 'other' | 'unread'
+/** What the read of the config right after the link found ({@link linkedConfigState}): `linked` the file this run wrote with its bytes; `other` another file or other bytes; `empty` nothing there; `unread` a read that failed twice (no file handle left, a read error), which proves neither. */
+type LinkedConfigState = 'linked' | 'other' | 'unread' | 'empty'
 
 /**
  * Reads the config right after the link that put the staged file in place, through one open file, and tells whether it is the file this run wrote there with the bytes it wrote; called by {@link createConfig} and {@link replaceConfig} before anything rests on that publish: the completed record, the delete of the moved-aside original, the staged name's cleanup and the receipt.
  * The last look before the link ({@link assertStagedConfigStill}) leaves a file another program swapped in at the staged name between that look and the link; the link then published that file, and this read sees it at the config name. It equally refuses bytes another program wrote into the config in place right after the link, which nothing can tell from such a swap. A read that fails (for lack of file handles, for example) proves nothing about the file there: it is tried once more, and a second failure is answered apart, so a publish that went through is never taken for another program's file.
  * @param context - The run; its config path is read.
  * @param staged - The inode and bytes this run wrote at the staged name.
- * @returns The {@link LinkedConfigState}: a link, no regular file or one over the size limit at the config name counts as `other` ({@link isOtherFileCause}).
+ * @returns The {@link LinkedConfigState}: nothing at the config name counts as `empty`; a link, no regular file or one over the size limit there counts as `other` ({@link isOtherFileCause}).
  * @example
  * await linkedConfigState(context, stagedVersion) // => 'other' once a sync tool swapped its file in at the staged name right before the link
+ * await linkedConfigState(context, stagedVersion) // => 'empty' once a sync tool moved the new config away right after the link
  * await linkedConfigState(context, stagedVersion) // => 'unread' while no file handle is left for two reads
  */
 async function linkedConfigState(
@@ -1810,9 +1811,23 @@ async function linkedConfigState(
   } catch (cause) {
     return isOtherFileCause(cause) ? 'other' : 'unread'
   }
-  return published?.ino === staged.ino && published.sha256 === staged.sha256
+  if (published === undefined) return 'empty'
+  return published.ino === staged.ino && published.sha256 === staged.sha256
     ? 'linked'
     : 'other'
+}
+
+/**
+ * The refusal for a replacement whose config name was empty right after its link ({@link linkedConfigState}): the moved-aside previous config is already back there, nothing of the publish is recorded as finished, and the record written before the link stays so the next run settles the staged file and any retired receipt; called by {@link replaceConfig}.
+ * @param context - The run; gives the config path, the record's path and the command to run again.
+ * @returns The error, not thrown yet.
+ * @example
+ * emptyAfterLinkRefusal(context) // => 'Codebook put its new version of Devin Desktop's MCP config in place at …, but nothing stood at that path right afterwards …'
+ */
+function emptyAfterLinkRefusal({ path, pendingPath, retry }: Context): Error {
+  return new Error(
+    `Codebook put its new version of Devin Desktop's MCP config in place at ${path}, but nothing stood at that path right afterwards (another program may have moved or deleted it), so Codebook put your previous config back there and did not record that change as finished; its record of that change at ${pendingPath} stays, and the next run reads it first; look at the file, ${retry}.`,
+  )
 }
 
 /**
@@ -2347,7 +2362,8 @@ async function createConfig(
   // The config is not the file this run wrote (a file swapped in at the staged name right before the link), or cannot be read again: nothing rests on it, and the record stays as written before the link, so the next run settles that change as after a stop right there.
   const linkedState = await linkedConfigState(context, stagedVersion)
   if (linkedState === 'unread') throw unreadAfterLinkRefusal(context)
-  if (linkedState === 'other') throw changedWhileWorking(context)
+  // A create has no displaced config to put back, so an empty path after its link keeps the answer every state other than the publish already had.
+  if (linkedState !== 'linked') throw changedWhileWorking(context)
   context.seam?.afterPublish?.(undefined)
   // The config stands: the record says so, in the shape the link left it, and the staged name is only another name of it.
   const completion = await markCompleted(context, linked.journal)
@@ -2579,14 +2595,14 @@ async function dropLastPublishedName(
 
 /**
  * Replaces an existing config without ever replacing a file that was not compared: the staged file is complete and flushed, the pending record names it, the probe and the private name, the config is moved aside, the displaced file is opened without following a link and made private, its inode and bytes are compared with what was read through that handle, and only then is the staged file linked in (a link never replaces).
- * A difference puts the displaced file back with its original permissions and refuses. A config that appeared at the name meanwhile is kept, together with the displaced copy, and the refusal names that copy. After a successful publish the displaced copy is deleted only while the same open file still has the size, times and bytes (hash read through the same handle) it had at the comparison; a copy that changed or was named in a refusal is handed to the learner and never deleted by a later run.
+ * A difference puts the displaced file back with its original permissions and refuses, and so does an empty config name right after the link. A config that appeared at the name meanwhile is kept, together with the displaced copy, and the refusal names that copy. After a successful publish the displaced copy is deleted only while the same open file still has the size, times and bytes (hash read through the same handle) it had at the comparison; a copy that changed or was named in a refusal is handed to the learner and never deleted by a later run.
  * Limit of the delete: a write that lands between the final check and the unlink is not seen ({@link didCopyChange}), exactly as a write between the move-aside and the open is not.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
  * @param context - The run.
  * @param replacement - The staged file, the probe name, the private name, the identity the config had when it was read and the record.
  * @param config - The inode the config will have.
  * @returns The inode, the files that stay afterwards, if any (the pending record stays then), and whether the completed record was written.
- * @throws The refusals of {@link moveConfigAside}, {@link putDisplacedBack} and {@link linkInStaged}; a {@link newConfigRefusal} naming the displaced copy when the config right after the link is not the file this run wrote with its bytes ({@link linkedConfigState}): that copy is handed to the learner ({@link handOver}), the config is left as it is, and nothing else follows (no delete, no cleanup of the staged name, no receipt); the {@link unreadAfterLinkRefusal} naming that copy when the config could not be read again, twice: nothing is handed over or deleted, and the record written before the link keeps tracking that copy, so the next run settles both as after a stop right after the link.
+ * @throws The refusals of {@link moveConfigAside}, {@link putDisplacedBack} and {@link linkInStaged}; the {@link emptyAfterLinkRefusal} when nothing stands at the config name right after the link ({@link linkedConfigState}): the displaced copy goes back there without replacing anything, and the record written before the link stays so the next run settles the rest of that publish; what {@link restoreDisplaced} throws when that copy cannot go back, with the same record kept; a {@link newConfigRefusal} naming the displaced copy when another file or other bytes stand at the config name right after the link: that copy is handed to the learner ({@link handOver}), the config is left as it is, and nothing else follows (no delete, no cleanup of the staged name, no receipt); the {@link unreadAfterLinkRefusal} naming that copy when the config could not be read again, twice: nothing is handed over or deleted, and the record written before the link keeps tracking that copy, so the next run settles both as after a stop right after the link.
  */
 async function replaceConfig(
   context: Context,
@@ -2614,6 +2630,11 @@ async function replaceConfig(
     // A config that cannot be read again proves nothing: the record written before the link keeps tracking the moved-aside original, and the next run settles both on its own checks.
     if (linkedState === 'unread')
       throw unreadAfterLinkRefusal(context, displaced.path)
+    // Nothing stands at the config name: the moved-aside original goes back there without replacing anything. The record written before the link stays either way, so the next run settles the staged file and any retired receipt when this put-back cannot finish.
+    if (linkedState === 'empty') {
+      await restoreDisplaced(context, displaced.path, opened, false)
+      throw emptyAfterLinkRefusal(context)
+    }
     // The config is not the file this run wrote (a file swapped in at the staged name right before the link): the moved-aside original, maybe the only copy of the other servers' settings, is handed to the learner, and no receipt follows.
     if (linkedState === 'other') {
       const isHanded = await handOver(context, linked.journal)

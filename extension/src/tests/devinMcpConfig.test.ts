@@ -14950,6 +14950,69 @@ async function loadWithSwapAtConfigLink(
   return { module, swapped }
 }
 
+/**
+ * Loads the config module with a link that empties the config name once right after the staged config was linked there, the way a sync tool that moves that new config away before Codebook's read after the link would.
+ * @param configPath - The config file.
+ * @param whenEmptyRead - Called once the read after the link finds the empty name, so a test can land another config in the gap before its put-back.
+ * @returns The config module and whether the config name was emptied.
+ * @example
+ * const { module, emptied } = await loadWithEmptyConfigAfterLink(configPath)
+ */
+async function loadWithEmptyConfigAfterLink(
+  configPath: string,
+  whenEmptyRead?: () => void,
+): Promise<{
+  module: typeof DevinMcpConfigModule
+  emptied: { count: number }
+}> {
+  const emptied = { count: 0 }
+  const module = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // Only the link of the staged config at the config name, once.
+          if (
+            to === configPath &&
+            from.endsWith('.tmp') &&
+            emptied.count === 0
+          ) {
+            emptied.count += 1
+            await rm(to)
+          }
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+      './utils/openWithoutFollowing': {
+        openWithoutFollowing: async (path: string) => {
+          try {
+            return await openWithoutFollowing(path)
+          } catch (error) {
+            // The post-link read's ENOENT is the empty path; another program can still land a file before the put-back.
+            if (
+              path === configPath &&
+              emptied.count > 0 &&
+              error instanceof Error &&
+              'code' in error &&
+              error.code === 'ENOENT'
+            )
+              whenEmptyRead?.()
+            throw error
+          }
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  return { module, emptied }
+}
+
 test('A file another program swaps in at the staged name of a setup’s new config while the setup compares the moved-aside config is never put in place as the config, and the config goes back as it was', async (context) => {
   // Value: protects=a replacement links its staged config in only while a read through one open file right before the link shows the inode and bytes the setup wrote at that name, and a synchronous look right after that read still shows it, so a file another program swapped in there while the setup compared the moved-aside config is never published as the config: the previous config goes back as it was, the swapped-in file stays and no receipt or record names a file the setup never verified (Cycle 0149 task 51); fails_when=the config is not the previous one, the swapped-in file is gone or changed, another file stays beside the config, Codebook's storage keeps a record or a receipt, or the setup says anything but the staged-file refusal; no_claim=a real sync tool (seam.afterCompare renames another file over the staged name once, after the comparison and before the link), a swap between the synchronous look and the link (the read of the config right after the link answers that, its own test), what a later run does with the file at the staged name
   // Arrange
@@ -15105,6 +15168,144 @@ test('A file another program swaps in at the staged name of a setup’s new conf
   assert.equal(existsSync(receiptPath), false)
   assert.equal(recordAfter.stagedName, basename(swapped.path))
   assert.equal(recordAfter.phase, undefined)
+})
+
+test('Set Up AI Chat puts the previous config back when the config path is empty right after the new config was linked, and the retry installs', async (context) => {
+  // Value: protects=a config path a sync tool empties right after a replacement's link is told apart from another file standing there: the moved-aside previous config goes back at once instead of being handed over, so its other MCP servers keep loading; fails_when=the config path stays empty, the previous config's private copy stays or changes, the publish record is handed or gone, a receipt stands, or the retry does not install the entry beside the original servers; no_claim=a real sync tool (the config module is loaded with a link that deletes the new config once, right after linking it), a file appearing between the empty path and the put-back (its own test), and a first setup's old receipt
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { module: emptyAfterLink, emptied } =
+    await loadWithEmptyConfigAfterLink(configPath)
+  let displacedPath = ''
+
+  // Act
+  const error = await emptyAfterLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterMoveAside: (path) => {
+        displacedPath = path
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // Names the first run left empty read as 'absent', so the assertions name them.
+  const copyAfter = existsSync(displacedPath)
+    ? readFileSync(displacedPath, 'utf8')
+    : 'absent'
+  const recordAfter = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+  const isReceiptAfter = existsSync(receiptPath)
+  const configAfter = readFileSync(configPath, 'utf8')
+  const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook put its new version of Devin Desktop's MCP config in place at ${configPath}, but nothing stood at that path right afterwards (another program may have moved or deleted it), so Codebook put your previous config back there and did not record that change as finished; its record of that change at ${pendingPath} stays, and the next run reads it first; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(emptied.count, 1)
+  assert.equal(configAfter, configText)
+  assert.equal(copyAfter, 'absent')
+  assert.equal(recordAfter.phase, undefined)
+  assert.equal(isReceiptAfter, false)
+  assert.equal(retry.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+})
+
+test('Set Up AI Chat does not record a first config when its path is empty right after the link, and the retry installs', async (context) => {
+  // Value: protects=a first write whose linked config is moved away before the post-link read is never mistaken for a published config: no receipt or completed record follows, and the next run settles the attempt before installing; fails_when=a receipt or completed record stands after the refusal, the staged config is adopted, or the retry does not install; no_claim=a real sync tool (the config module is loaded with a link that deletes the new config once, right after linking it) or a replacement's moved-aside config (its own tests)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { module: emptyAfterLink, emptied } =
+    await loadWithEmptyConfigAfterLink(configPath)
+
+  // Act
+  const error = await emptyAfterLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // A name the first run left empty reads as 'absent', so the assertions name it.
+  const configAfter = existsSync(configPath)
+    ? readFileSync(configPath, 'utf8')
+    : 'absent'
+  const recordAfter = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+  const isReceiptAfter = existsSync(receiptPath)
+  const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(emptied.count, 1)
+  assert.equal(configAfter, 'absent')
+  assert.equal(recordAfter.phase, undefined)
+  assert.equal(isReceiptAfter, false)
+  assert.equal(retry.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { codebook: ENTRY },
+  })
+})
+
+test('Set Up AI Chat keeps the previous config copy tracked when another config appears before its put-back from the empty path, and the next run puts that copy back', async (context) => {
+  // Value: protects=a put-back that loses the race to another config never records the previous config's copy as handed over: the publish record stays in progress, so once that other config is gone the next run puts the copy back instead of leaving the config path empty; fails_when=the publish record is handed or gone, the other config or the copy changes, the copy goes over the other config, or the next run does not put it back; no_claim=a real sync tool (the config module is loaded with a link that deletes the new config once, and its openWithoutFollowing writes another config when the post-link read finds the empty path), a real save (that file is written by the test's injected racing program), and a first setup's old receipt
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const foreignText = '{"theme":"written meanwhile"}\n'
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { module: emptyAfterLink, emptied } =
+    await loadWithEmptyConfigAfterLink(configPath, () => {
+      writeFileSync(configPath, foreignText)
+    })
+  let displacedPath = ''
+
+  // Act
+  const error = await emptyAfterLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterMoveAside: (path) => {
+        displacedPath = path
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  const recordAfter = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+  const isReceiptAfter = existsSync(receiptPath)
+  // The learner moves the other config away, as the refusal's advice allows.
+  renameSync(configPath, join(dirname(configPath), 'other-config.json'))
+  const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook found a copy of your config that Codebook kept at ${displacedPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(emptied.count, 1)
+  assert.equal(recordAfter.phase, undefined)
+  assert.equal(isReceiptAfter, false)
+  assert.equal(next.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+  assert.equal(existsSync(displacedPath), false)
 })
 
 /**
