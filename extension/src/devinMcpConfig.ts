@@ -6670,8 +6670,7 @@ async function adoptPending(
     installed: true,
     generation: pending.generation ?? randomUUID(),
     // The id the publish recorded before its rename; a record of an older build has none, so the receipt that still stands decides, as it did before.
-    installationId:
-      pending.installationId ?? installationIdOf(replacedReceipt),
+    installationId: pending.installationId ?? installationIdOf(replacedReceipt),
     config: { ino: recordedFileId(identity.ino) },
     // The receipt rests on the entry's hash alone: a record of this setup that asks for its take-back still gets it ({@link isTakeBackCovered}).
     adopted: true,
@@ -12213,7 +12212,12 @@ export async function removeManagedDevinMcpEntry(
           wasUnrecorded,
         )
       const { status, keptLeft } = await takeEntryOut(run, ownership)
-      return dropReceiptAfterRemoval(context, ownership.receipt, status, keptLeft)
+      return dropReceiptAfterRemoval(
+        context,
+        ownership.receipt,
+        status,
+        keptLeft,
+      )
     },
   )
 }
