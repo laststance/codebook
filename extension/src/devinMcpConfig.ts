@@ -4005,14 +4005,18 @@ async function dropAsideRecord(
  * Limit: a swap at the dropping name between this look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode); a stall that starts between the awaited look and this one holds the extension host's thread.
  * @param context - The run; its pending path is the record.
  * @param aside - The dropping name and the moved file ({@link AsideRecord}).
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when the dropping name shows another file or none, or the unlink fails other than for a missing name: what stands at both names stays. A dropping name another program emptied first is no failure.
+ * @param assertBefore - A synchronous last assertion the delete rests on, run with nothing awaited between it, the look at the dropping name and the unlink ({@link finishProvenStep}'s interrupted receipt delete); undefined for a delete that rests on no other file.
+ * @throws What `assertBefore` throws; the refusal naming both names ({@link bothRecordNamesError}) when the dropping name shows another file or none, or the unlink fails other than for a missing name: what stands at both names stays. A dropping name another program emptied first is no failure.
  * @example
  * await unlinkMovedRecord(rollbackContext, aside) // '…/pending.json.rollback.codebook-dropping' is gone
  */
 async function unlinkMovedRecord(
   context: Context,
   { droppingPath, moved }: AsideRecord,
+  assertBefore?: () => void,
 ): Promise<void> {
+  // The delete's other premises, then the moved file itself, are checked with nothing awaited between them and the unlink.
+  assertBefore?.()
   // Only the moved file, unchanged since it was read, goes.
   if (!isStagedNameStill(droppingPath, moved))
     throw bothRecordNamesError(context)
@@ -4106,7 +4110,7 @@ async function settleDroppedRecords(context: Context): Promise<void> {
 }
 
 /**
- * Settles what a rewrite or delete of a tracked record left at its dropping name ({@link moveTrackedAside}) when the run stopped inside that step: beside an empty record name the file goes back there only while it is the record the dropping note names ({@link putNotedRecordBack}), and any other file stays there, named; when it is only another name of the file at the record's name, that name goes; when the note proves it to be the old version of a rewrite that stopped right after it published the new record the note names, it goes while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have deleted it, and when it proves it to be Codebook's record of the entry that a delete moved there, it goes whatever stands at `receipt.json` ({@link finishProvenStep}); beside any other file, even one with the same bytes on another inode, both stay and the run refuses, naming both, so neither is ever deleted. A dropping note beside an empty dropping name names nothing and goes. Called by {@link settleDroppedRecords}.
+ * Settles what a rewrite or delete of a tracked record left at its dropping name ({@link moveTrackedAside}) when the run stopped inside that step: beside an empty record name the file goes back there only while it is the record the dropping note names ({@link putNotedRecordBack}), and any other file stays there, named; when it is only another name of the file at the record's name, that name goes; when the note proves it to be the old version of a rewrite that stopped right after it published the new record the note names, it goes while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have deleted it, and when it proves it to be Codebook's record of the entry that a delete moved there, it goes only while that delete cannot leave the config's entry without a record that owns it ({@link finishProvenStep}); beside any other file, even one with the same bytes on another inode, both stay and the run refuses, naming both, so neither is ever deleted. A dropping note beside an empty dropping name names nothing and goes. Called by {@link settleDroppedRecords}.
  * The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the record's name first and the dropping name last, right before its unlink.
  * Limit: a swap at either name between the last look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run; its pending path is the record.
@@ -4142,13 +4146,142 @@ async function settleDroppedRecord(context: Context): Promise<void> {
   throw bothRecordNamesError(context)
 }
 
+/** A receipt read through one open file ({@link readReceiptAt}): the parsed record, the open file's look a last synchronous look compares, and the SHA-256 of the very bytes that were parsed. */
+type ReadReceipt = {
+  receipt: Receipt
+  look: RecordLook
+  sha256: string
+}
+
+/**
+ * Reads a receipt at one record name through one open file, so the bytes that decide ownership and the look that later proves the same file still stands there come from that one read; called by {@link finishProvenReceiptDelete} for the moved record and for the record standing at `receipt.json`.
+ * @param context - The run.
+ * @param path - The record file to read.
+ * @returns The parsed receipt, its open file's look and those bytes' hash; undefined when nothing stands there, the file cannot be read or its bytes are no receipt. Every caller treats that as no proof, never as a file to delete.
+ * @example
+ * await readReceiptAt(context, context.receiptPath) // => { receipt, look: { ino: 42n, … }, sha256: '9f86…' }
+ */
+async function readReceiptAt(
+  context: Context,
+  path: string,
+): Promise<ReadReceipt | undefined> {
+  const looked = await readLookedRecord(context, path)
+  if (
+    looked === undefined ||
+    looked === 'unread' ||
+    looked.read === 'other' ||
+    looked.sha256 === undefined
+  )
+    return undefined
+  return { receipt: looked.read, look: looked.look, sha256: looked.sha256 }
+}
+
+/**
+ * Reads the moved record at its dropping name and accepts it only as the very file the dropping note proved: same inode and same bytes, now parsed as a receipt; called only by {@link finishProvenReceiptDelete}, because ownership must be taken from the file whose delete is being decided, never assumed from the note alone.
+ * @param context - The run.
+ * @param droppingPath - The dropping name ({@link droppingPathOf}).
+ * @param moved - The dropping name as {@link provenDroppedRecord} inspected it.
+ * @returns The parsed receipt and the look of the file the note names; undefined when that file cannot be read as a receipt or no longer is the file the note names. The interrupted delete then keeps both files instead of guessing.
+ * @example
+ * await readProvenDroppedReceipt(context, droppingPath, proof.moved) // => { receipt, look, sha256 }
+ */
+async function readProvenDroppedReceipt(
+  context: Context,
+  droppingPath: string,
+  moved: InspectedCopy,
+): Promise<ReadReceipt | undefined> {
+  const read = await readReceiptAt(context, droppingPath)
+  // The note proved bytes, not ownership: only the parsed bytes of that same file can tell which entry the delete is about.
+  if (
+    read === undefined ||
+    read.sha256 !== moved.sha256 ||
+    read.look.ino !== moved.ino
+  )
+    return undefined
+  return read
+}
+
+/**
+ * Deletes the moved receipt whose interrupted delete is proven safe, while the config whose entry decided that safety is still the same file right before the unlink; called only by {@link finishProvenReceiptDelete}.
+ * When the standing receipt is part of the proof (it owns the entry the moved receipt also owns), its name is bound too and rechecked synchronously after the config and before the dropping name, with nothing awaited between those looks and the unlink. The residual syscall gap is the one this module accepts throughout: no Node primitive unlinks by inode.
+ * @param context - The run; its pending path is `receipt.json` here.
+ * @param aside - The moved receipt at its dropping name.
+ * @param boundConfig - The config identity whose entry decided the delete ({@link BoundConfig}); `absent` when no config stood.
+ * @param standing - The standing receipt that owns the entry, when the delete rests on it; undefined when the entry the moved receipt owns is out of the config.
+ * @throws The {@link unfinishedReceiptDeleteError} when either bound name no longer shows what decided the delete; what {@link unlinkMovedRecord} throws.
+ * @example
+ * await unlinkProvenReceiptDelete(context, aside, look.identity, standing) // the dropping name goes while the config and receipt.json still stand as read
+ */
+async function unlinkProvenReceiptDelete(
+  context: Context,
+  aside: AsideRecord,
+  boundConfig: BoundConfig,
+  standing?: ReadReceipt,
+): Promise<void> {
+  const names = standing
+    ? [context.path, context.receiptPath, aside.droppingPath]
+    : [context.path, aside.droppingPath]
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt(names)
+  await unlinkMovedRecord(context, aside, () => {
+    // The entry was read from this exact config file; another config decides anew on the next run.
+    if (!isConfigStill(context, boundConfig))
+      throw unfinishedReceiptDeleteError(context)
+    // When the standing receipt is the remaining proof of ownership, only that very file may cover the delete.
+    if (
+      standing &&
+      nameStateNow(context, context.receiptPath, standing.look) !== 'still'
+    )
+      throw unfinishedReceiptDeleteError(context)
+  })
+}
+
+/**
+ * Finishes the interrupted delete of Codebook's record of the entry only when deleting the moved receipt cannot orphan the entry it owns; called only by {@link finishProvenStep} for the receipt's dropping name.
+ * The moved bytes themselves are parsed as receipt A. The delete is safe exactly when A does not own the config's current `codebook` entry, or when the receipt B standing at `receipt.json` owns that same entry; unreadable or unparsable bytes, an unreadable config, and a config or standing receipt that changes before the unlink all keep both files and refuse, because they prove neither half of that disjunction.
+ * @param context - The run; its pending path is `receipt.json` here.
+ * @param aside - The moved receipt at its dropping name.
+ * @throws The {@link unfinishedReceiptDeleteError} when ownership cannot be proven safe; what {@link unlinkProvenReceiptDelete} throws.
+ * @example
+ * await finishProvenReceiptDelete(receiptTrackedContextOf(context), aside) // the interrupted removal's record goes because the standing receipt owns the restored entry
+ */
+async function finishProvenReceiptDelete(
+  context: Context,
+  aside: AsideRecord,
+): Promise<void> {
+  const moved = await readProvenDroppedReceipt(
+    context,
+    aside.droppingPath,
+    aside.moved,
+  )
+  // Without the moved record's own bytes there is no ownership proof; deleting on the note alone could orphan the entry.
+  if (!moved) throw unfinishedReceiptDeleteError(context)
+  let look: ConfigLook
+  try {
+    look = await lookAtConfig(context)
+  } catch {
+    // A config that cannot be read proves neither that the entry is out nor which record owns it.
+    throw unfinishedReceiptDeleteError(context)
+  }
+  const entry = currentEntryOf(look)
+  const boundConfig = look.kind === 'present' ? look.identity : 'absent'
+  // The entry the moved receipt owns is not the one the config holds: deleting its old record cannot orphan that entry.
+  if (!ownsEntry(entry, moved.receipt))
+    return unlinkProvenReceiptDelete(context, aside, boundConfig)
+  const standing = await readReceiptAt(context, context.receiptPath)
+  // Only a standing receipt that owns the same entry is the remaining proof that entry is Codebook's.
+  if (!standing || !ownsEntry(entry, standing.receipt))
+    throw unfinishedReceiptDeleteError(context)
+  await unlinkProvenReceiptDelete(context, aside, boundConfig, standing)
+}
+
 /**
  * Finishes at the run start the step that the dropping note proves stopped with its record at the dropping name beside a file at the record's name; called only by {@link settleDroppedRecord}, once that file is no second name of the moved one.
- * A rewrite that stopped right after it published the new record the note names deletes its old version while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have. A delete of Codebook's record of the entry ({@link dropReceipt}), whose note names no published record, deletes the moved record, the very file the note names, and leaves the file at `receipt.json` as it stands (for example one an older Codebook version, which knows no dropping name, wrote at the emptied name), since that delete rests on no other record, at a synchronous look right after an awaited one that still finds that file there ({@link unlinkMovedRecord}). Any other step is not finished: the deletes of the rollback record and of the setup record, and a rollback record's hold ({@link whileJournalHeld}), keep the moved file, which may be the only proof of a take-back.
+ * A rewrite that stopped right after it published the new record the note names deletes its old version while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have. A delete of Codebook's record of the entry ({@link dropReceipt}), whose note names no published record, deletes the moved record only after its own bytes prove which entry that record owns and only while deleting it cannot leave that entry without a record that owns it ({@link finishProvenReceiptDelete}); a standing record that owns the same entry (for example one an older Codebook version, which knows no dropping name, wrote at the emptied name) still lets the interrupted delete finish. Any other step is not finished: the deletes of the rollback record and of the setup record, and a rollback record's hold ({@link whileJournalHeld}), keep the moved file, which may be the only proof of a take-back.
  * @param context - The run; its pending path is the record.
  * @param droppingPath - The dropping name ({@link droppingPathOf}).
  * @returns `true` once that step is finished and nothing of it stands at the dropping name; `false` when the note proves no such step, so both files stay.
- * @throws What {@link dropAsideRecord} and {@link unlinkMovedRecord} throw.
+ * @throws What {@link dropAsideRecord}, {@link finishProvenReceiptDelete} and {@link unlinkMovedRecord} throw.
  * @example
  * await finishProvenStep(rollbackContextOf(context), droppingPath) // => true; the old version a rewrite moved there is gone beside the new record it published
  * await finishProvenStep(receiptTrackedContextOf(context), droppingPath) // => true; the record a removal's delete moved there is gone, the receipt an older window wrote at receipt.json stays
@@ -4165,11 +4298,9 @@ async function finishProvenStep(
     await dropAsideRecord(context, aside, proof.published)
     return true
   }
-  // Only Codebook's record of the entry has a delete that rests on no other record; any other moved record stays.
+  // Only Codebook's record of the entry has such a delete; any other moved record stays.
   if (context.pendingPath !== context.receiptPath) return false
-  // That delete goes on, whatever stands at receipt.json: a storage that already stalls holds this step here, not at the synchronous look before the unlink.
-  await lookAheadAt([droppingPath])
-  await unlinkMovedRecord(context, aside)
+  await finishProvenReceiptDelete(context, aside)
   return true
 }
 
@@ -4219,6 +4350,23 @@ function bothRecordNamesError(context: Context): JournalConflictError {
   const droppingPath = droppingPathOf(context)
   return new DroppingNameConflictError(
     `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, ${retry}; otherwise move the file at ${pendingPath} to another folder and keep it, ${retry}, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
+    'changed',
+  )
+}
+
+/**
+ * The refusal of an interrupted delete of Codebook's record of the entry whose completion cannot be proven safe ({@link finishProvenReceiptDelete}): the moved record and the file at `receipt.json` both stay, because deleting the moved one without an ownership proof could leave the config's entry without the one file that proves it Codebook's.
+ * Its way out moves the file at `receipt.json` aside: the next run then finds that name empty and puts the proven moved record back there ({@link putNotedRecordBack}), so the entry is managed again and a removal can decide afresh.
+ * @param context - The run; its pending path is `receipt.json`, its retry ends the way out.
+ * @returns The `changed` {@link JournalConflictError}, not thrown yet.
+ * @example
+ * throw unfinishedReceiptDeleteError(receiptTrackedContextOf(context)) // 'Codebook found at …/receipt.json.codebook-dropping its record of the "codebook" entry …'
+ */
+function unfinishedReceiptDeleteError(context: Context): JournalConflictError {
+  const { path, receiptPath, retry } = context
+  const droppingPath = droppingPathOf(context)
+  return new DroppingNameConflictError(
+    `Codebook found at ${droppingPath} its record of the "${SERVER_NAME}" entry in Devin Desktop's MCP config at ${path}, the private name it moves that record to while it deletes it, beside a file at ${receiptPath}, but it cannot confirm either that the entry that record owns is not the one the config holds, or that the file at ${receiptPath} owns that entry, so deleting the moved record could leave the entry without the one file that proves it Codebook's; Codebook left both files as they are and went no further; move the file at ${receiptPath} to another folder, ${retry}; that run puts the file at ${droppingPath} back at ${receiptPath}, so the entry is managed again and the removal can be retried.`,
     'changed',
   )
 }

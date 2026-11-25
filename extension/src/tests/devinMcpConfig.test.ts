@@ -22916,6 +22916,133 @@ test("A removal that stopped right after it moved Codebook's record of the entry
   )
 })
 
+test("A removal's interrupted record delete is never completed beside an entry no standing record owns: both records stay, named, and the entry keeps the one file that proves it Codebook's", async (context) => {
+  // Value: protects=a receipt delete interrupted after its move to the dropping name is completed only when the config entry it owns is out of the config or the record standing at receipt.json owns that entry, so a crash followed by a backup restore of the config and a non-owning record never orphans the restored entry, the learner is told which file to move aside, the next run puts the owning record back, and a following removal can finish (Cycle 0149 round-3 recovery Major); fails_when=the dropping record is deleted, either record or the config changes before the way out, the refusal is another sentence or omits a path, receipt.json is not restored after the non-owning record is moved aside, or the final removal answers anything but removed; no_claim=a real crash (the config module is loaded so the rename that empties receipt.json during the removal's publish is its last successful write), a real backup tool (the test writes the restored config and record itself), and a swap in the syscall gap before the record's unlink
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const droppingNotePath = `${receiptPath}.codebook-dropping-note`
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  const configWithEntry = readFileSync(configPath, 'utf8')
+  const originalReceipt = JSON.parse(receiptText)
+  const ending = await loadEndingAfterStep(
+    // The rename that empties receipt.json once a link gave its file the private name as well.
+    ({ step, from, to }) =>
+      step === 'rename' && from === receiptPath && to.endsWith('.tmp'),
+  )
+  await ending.module
+    .removeManagedDevinMcpEntry(storage, home)
+    .catch(() => undefined)
+  // A backup puts the config with its entry back beside a valid record of that config that does not own the entry.
+  writeFileSync(configPath, configWithEntry)
+  const nonOwningReceiptText = JSON.stringify({
+    ...originalReceipt,
+    entrySha256: sha256('{"command":"not-codebook"}'),
+    generation: 'c0ffee00-0000-4000-8000-000000149573',
+    installationId: 'c0ffee00-0000-4000-8000-000000149574',
+    config: {
+      ino: recordedFileId(statSync(configPath, { bigint: true }).ino),
+    },
+  })
+  writeFileSync(receiptPath, nonOwningReceiptText, { mode: 0o600 })
+
+  // Act
+  const refusalOutcome = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  // A completed interrupted delete leaves no dropping record, so the assertion names it.
+  const droppingAfterRefusal = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const standingAfterRefusal = readFileSync(receiptPath, 'utf8')
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  const noteAfterRefusal = existsSync(droppingNotePath)
+  const keptFolder = join(storage, 'kept-record')
+  mkdirSync(keptFolder)
+  const keptPath = join(keptFolder, 'receipt.json')
+  renameSync(receiptPath, keptPath)
+  const restored = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+  // A deleted owning record never comes back, so the assertion names it.
+  const receiptAfterRestore = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const removed = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(ending.hasEnded(), true)
+  assert.equal(droppingAfterRefusal, receiptText)
+  assert.equal(noteAfterRefusal, true)
+  assert.equal(
+    refusalOutcome,
+    `Codebook found at ${droppingPath} its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, the private name it moves that record to while it deletes it, beside a file at ${receiptPath}, but it cannot confirm either that the entry that record owns is not the one the config holds, or that the file at ${receiptPath} owns that entry, so deleting the moved record could leave the entry without the one file that proves it Codebook's; Codebook left both files as they are and went no further; move the file at ${receiptPath} to another folder, then run Codebook: Set Up AI Chat again; that run puts the file at ${droppingPath} back at ${receiptPath}, so the entry is managed again and the removal can be retried.`,
+  )
+  assert.equal(standingAfterRefusal, nonOwningReceiptText)
+  assert.equal(configAfterRefusal, configWithEntry)
+  assert.equal(readFileSync(keptPath, 'utf8'), nonOwningReceiptText)
+  assert.deepEqual({ ...restored }, { status: 'current', path: configPath })
+  assert.equal(receiptAfterRestore, receiptText)
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(droppingNotePath), false)
+  assert.deepEqual({ ...removed }, { status: 'removed', path: configPath })
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), nonOwningReceiptText)
+})
+
+test("A removal's interrupted record delete is completed when the config still has no entry, and the record standing at receipt.json is preserved", async (context) => {
+  // Value: protects=the ownership check refuses only the unsafe completion: when the entry the moved receipt owns is still out of the config, the interrupted delete finishes even though receipt.json holds a valid record that owns no entry, so crash recovery does not wedge every later run behind the both-names refusal and the standing record is never treated as the interrupted delete's file (Cycle 0149 round-3 recovery Major); fails_when=the dropping record or its note stays, receipt.json changes or is deleted, the reduced config changes, or the refresh answers anything but not-managed; no_claim=a real crash (the config module is loaded so the rename that empties receipt.json during the removal's publish is its last successful write), a real backup tool (the test writes the standing record itself), and a swap in the syscall gap before the record's unlink
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const droppingNotePath = `${receiptPath}.codebook-dropping-note`
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  const originalReceipt = JSON.parse(receiptText)
+  const ending = await loadEndingAfterStep(
+    // The rename that empties receipt.json once a link gave its file the private name as well.
+    ({ step, from, to }) =>
+      step === 'rename' && from === receiptPath && to.endsWith('.tmp'),
+  )
+  await ending.module
+    .removeManagedDevinMcpEntry(storage, home)
+    .catch(() => undefined)
+  const droppingAfterStop = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const reducedConfig = readFileSync(configPath, 'utf8')
+  const nonOwningReceiptText = JSON.stringify({
+    ...originalReceipt,
+    entrySha256: sha256('{"command":"not-codebook"}'),
+    generation: 'c0ffee00-0000-4000-8000-000000149575',
+    installationId: 'c0ffee00-0000-4000-8000-000000149576',
+    config: {
+      ino: recordedFileId(statSync(configPath, { bigint: true }).ino),
+    },
+  })
+  writeFileSync(receiptPath, nonOwningReceiptText, { mode: 0o600 })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(ending.hasEnded(), true)
+  assert.equal(droppingAfterStop, receiptText)
+  assert.deepEqual({ ...result }, { status: 'not-managed', path: configPath })
+  assert.equal(readFileSync(receiptPath, 'utf8'), nonOwningReceiptText)
+  assert.equal(readFileSync(configPath, 'utf8'), reducedConfig)
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(droppingNotePath), false)
+})
+
 test("A refresh that stopped right after it published Codebook's record of the entry with the installation id leaves the next refresh to delete the version it replaced and find the entry current", async (context) => {
   // Value: protects=a rewrite of Codebook's record of the entry notes, before it moves the old version to receipt.json's private name, the new version it publishes, so a run that really stops between that publication and the old version's delete leaves the next run the proof to finish the rewrite: the old version goes while receipt.json shows that new record, which stays, instead of every later run refusing both names (Cycle 0149 task 56, task 36's rule for Codebook's record of the entry); fails_when=the stop is not reached, the stop leaves anything but a record with an installation id at receipt.json or anything but the older record at its private name, the next refresh answers anything but current, receipt.json then holds anything but the record the stopped refresh published, or a private name of the record or its dropping note stays; no_claim=a real process end (the config module is loaded so that the link which publishes the backfilled record at receipt.json, and every later link, rename, unlink, removal and write, fail as after the process ended), a real older build (the receipt is rewritten without its installation id), storage without hard links (the new record is published by a rename there), the stopped run's staged and vacated names (they stay under their fresh private names, as after any stop; no build reads such a name)
   // Arrange
