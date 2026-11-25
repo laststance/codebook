@@ -32063,3 +32063,60 @@ test('A take-back of an adopted interrupted setup keeps its receipt and publish 
   assert.equal(receiptAfterRefusal, adoptedReceiptText)
   assert.equal(pendingAfterRefusal, pendingText)
 })
+
+test('A pre-update config a backup puts back right after a refresh published the receipt that adopts the interrupted update keeps that update’s record and takes the adoption’s receipt back out, putting the receipt it replaced back, so the next refresh settles the record', async (context) => {
+  // Value: protects=an adoption ends the record of the setup it adopts only while the config still is the very file the run read when it decided the adoption, so a backup that puts the pre-update config back after the adoption's receipt was published keeps pending.json, takes that receipt back out and puts the receipt it replaced back, which is exactly the record the restored config's entry rests on, instead of leaving a receipt that owns the update's entry beside the pre-update config (Cycle 0149 round-5 MAJOR-6930); fails_when=the first refresh resolves or says anything but the changed-file sentence, the config does not hold the pre-update bytes, receipt.json is gone or holds anything but the receipt the first setup wrote, pending.json is gone or changed, or the next refresh answers anything but refreshed; no_claim=a real backup tool (the config module is loaded with a link that, once, right after the adoption's link published the receipt at receipt.json, swaps the pre-update config back in), a real full disk (seam.beforeRecordWrite fails the update's receipt write with ENOSPC, which leaves its completed record), a restore after the retirement's last synchronous look, and a restore between the receipt write's own last look and its link, which the write's guard covers before the publish instead
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const configAText = readFileSync(configPath, 'utf8')
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      beforeRecordWrite: ({ path }) => {
+        if (path === receiptPath) throw noSpaceLeft()
+      },
+    }),
+    { message: 'no space left on device' },
+  )
+  const receiptObject = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  let hasRestored = false
+  const restoring = await loadWithAfterRename((_from, to) => {
+    if (to !== receiptPath || hasRestored) return
+    hasRestored = true
+    // A backup puts the pre-update config back right after the adoption's receipt was published, before the adopted record ends.
+    swapFile(configPath, configAText)
+  })
+
+  // Act
+  const firstOutcome = await restoring
+    .refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+  const configAfterFirst = readFileSync(configPath, 'utf8')
+  // A record the first refresh retired or a receipt its withdrawal failed to put back reads as 'absent' or as another record, so the assertions below name them.
+  const pendingAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const receiptAfterFirst = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const next = await refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    firstOutcome,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(configAfterFirst, configAText)
+  assert.equal(pendingAfterFirst, pendingText)
+  assert.deepEqual(JSON.parse(receiptAfterFirst), receiptObject)
+  assert.equal(next.status, 'refreshed')
+})

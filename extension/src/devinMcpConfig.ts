@@ -6865,9 +6865,9 @@ function isPendingStale(
 /**
  * Writes the receipt for an entry an interrupted run published; called by {@link settlePending}.
  * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), and while the rollback journal's name still shows what settlement left there (`assertLeft`), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say), or a rollback record of that setup it puts back, never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
- * The record then ends only while that look still holds too, and once it ended, `pending.json` is read again through the thread pool and looked at once more synchronously ({@link adoptedRecordCheck}): it must show what the record's end left there (nothing, or what stays of it), so a record a backup or sync tool puts there while the adopted one stands at its dropping name ({@link deleteThroughDroppingName}) is never left beside this receipt. When a record it rests on changed by then (it came back or changed after the receipt's rename): a rollback record at its name, or another file, nothing or a name that cannot be read again at `pending.json` (a same-generation record with the take-back mark, say), anywhere in the cause chain of what the record's end or that last look threw ({@link hasRecordConflictCause}), the record that stands stays and the receipt this call published goes back out ({@link withdrawAdoptedReceipt}), so the next run settles those records first and takes the setup back when they say so.
+ * The record then ends only while that look still holds too, and only while the config still is the very file this run read when it decided the adoption (the same look the receipt's publish rests on, joined into the record's last looks): a backup or sync tool that puts another config back after the receipt's rename (the pre-update one, say) never keeps this receipt beside it, because that config's entry may be the one the replaced receipt still records. Once the record ended, `pending.json` is read again through the thread pool and looked at once more synchronously ({@link adoptedRecordCheck}): it must show what the record's end left there (nothing, or what stays of it), so a record a backup or sync tool puts there while the adopted one stands at its dropping name ({@link deleteThroughDroppingName}) is never left beside this receipt. When a record it rests on changed by then (it came back or changed after the receipt's rename): a rollback record at its name, or another file, nothing or a name that cannot be read again at `pending.json` (a same-generation record with the take-back mark, say), anywhere in the cause chain of what the record's end or that last look threw ({@link hasRecordConflictCause}), or when the config changed ({@link AdoptionConfigChangedError}), the record that stands stays and the receipt this call published goes back out ({@link withdrawAdoptedReceipt}), so the next run settles those records first and takes the setup back when they say so.
  * The record ends only while `receipt.json` still shows the receipt this call published, too: once the receipt's write (and its cleanup of the staged name) returned, that name is read again through the thread pool, and its synchronous look joins the record's last looks ({@link publishedReceiptCheck}), so a receipt another program moved away, replaced or made unreadable meanwhile keeps the record, and the next run decides that setup again; nothing goes back out then, since that receipt is no longer this call's file.
- * Limit: a record put at `pending.json` after that last look, or after the run, is decided without this run, like one restored after the run; so is a receipt moved away after the record's last look.
+ * Limit: a record put at `pending.json` after that last look, or after the run, is decided without this run, like one restored after the run; so is a receipt moved away after the record's last look, and a config restored after the record end's last synchronous look at it.
  * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
@@ -6876,7 +6876,7 @@ function isPendingStale(
  * @param retained - What stays of the record after recovery; undefined when nothing stays.
  * @param assertLeft - The synchronous look at the other names the adoption rests on (the old record's private name, the rollback journal's name: {@link retiredNameCheck}, {@link journalLeftCheck}), run right before the receipt's rename after the publish record's own look, and right before the record's rename or unlink; undefined when nothing else must hold.
  * @returns The receipt that was written.
- * @throws The {@link adoptedReceiptConflictError} when `receipt.json` no longer shows the receipt this call published before the record ends; the record stays. A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when such a conflict stops the record's end or the look after it (`changed` for a file at `pending.json` after its delete). The {@link receiptConflictError} when `receipt.json` no longer shows the record this run read there ({@link writeReceipt}): that file stays and no receipt is written. What the receipt's write and {@link retirePending} throw otherwise.
+ * @throws The {@link adoptedReceiptConflictError} when `receipt.json` no longer shows the receipt this call published before the record ends; the record stays. A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when such a conflict stops the record's end or the look after it (`changed` for a file at `pending.json` after its delete). The {@link AdoptionConfigChangedError} when the config is no longer the file this run read: no receipt is written then, or the one written goes back out when the change meets the record's end. The {@link receiptConflictError} when `receipt.json` no longer shows the record this run read there ({@link writeReceipt}): that file stays and no receipt is written. What the receipt's write and {@link retirePending} throw otherwise.
  * @example
  * await adoptPending(run, pending, pending.entrySha256, look.identity, receipt, undefined, await journalLeftCheck(run, undefined)) // => the adopted receipt; it rejects, leaving no receipt and both records, once a backup put the rollback record of that setup back
  */
@@ -6906,11 +6906,12 @@ async function adoptPending(
     // The receipt rests on the entry's hash alone: a record of this setup that asks for its take-back still gets it ({@link isTakeBackCovered}).
     adopted: true,
   }
-  // The config must still be the very file this run read when it decided the adoption: a backup or sync tool that puts another config back meanwhile (the pre-update one, say) never gains this receipt, which would replace a record that file's entry still rests on; the look runs closest to the receipt's rename, after the publish record's and the other names'.
+  // The config must still be the very file this run read when it decided the adoption: a backup or sync tool that puts another config back meanwhile (the pre-update one, say) never gains this receipt, which would replace a record that file's entry still rests on; the look runs closest to the receipt's rename, after the publish record's and the other names', and again closest to the record's own end, where its failure takes the receipt that was published back out (the catch below).
   const configStill: StillLook = {
     names: [context.path],
     assert: (): void => {
-      if (!isConfigStill(context, identity)) throw changedWhileWorking(context)
+      if (!isConfigStill(context, identity))
+        throw adoptionConfigChangedError(context)
     },
   }
   await writeReceipt(
@@ -6927,18 +6928,20 @@ async function adoptPending(
       context,
       adoptedReceiptConflictError,
     )
+    // The record ends only while the config still is the file the adoption was decided on, too: a config a backup or sync tool put back after the receipt's rename (the pre-update one, whose entry the replaced receipt records, say) never stands beside a receipt that replaced that record.
     await retirePending(
       context,
       retained,
-      bothLooks(assertLeft, assertReceiptLeft),
+      bothLooks(bothLooks(assertLeft, assertReceiptLeft), configStill),
     )
     // The record's own name must still show what its retirement left there (nothing, or what stays of it): a record a backup put there while the adopted one stood at its dropping name, one that marks the same setup's take-back, say, never stays beside this receipt.
     const assertRecordLeft = await adoptedRecordCheck(context)
     assertRecordLeft.assert()
   } catch (error) {
-    // A record the adoption rests on changed after the receipt's rename (a rollback record back at its name, or another setup record at pending.json, which may mark that setup's take-back): that receipt goes back out while it still is the version this call wrote, and a receipt that may still stand is named.
+    // A record the adoption rests on changed after the receipt's rename (a rollback record back at its name, or another setup record at pending.json, which may mark that setup's take-back), or the config is no longer the file the adoption was decided on: that receipt goes back out while it still is the version this call wrote, and a receipt that may still stand is named.
     if (
-      hasRecordConflictCause(error) &&
+      (error instanceof AdoptionConfigChangedError ||
+        hasRecordConflictCause(error)) &&
       !(await withdrawAdoptedReceipt(context, replacedReceipt))
     )
       throw withKeptAdoptedReceipt(context, error)
@@ -6960,6 +6963,22 @@ function withKeptAdoptedReceipt(context: Context, error: unknown): unknown {
   if (!(error instanceof Error)) return error
   error.message = `${error.message} Codebook also could not delete its record of the "${SERVER_NAME}" entry at ${context.receiptPath}, which it had just written for that setup, so that file stays there; the next run still takes that setup back when a record of that setup asks for it.`
   return error
+}
+
+/** Thrown when the config an adoption rests on is no longer the very file the run read when it decided the adoption, once the adoption's receipt is published and before its record has ended ({@link adoptPending}): that receipt goes back out ({@link withdrawAdoptedReceipt}), because the config that stands may be one whose entry the replaced receipt still records (the pre-update one a backup put back, say), and no receipt of this adoption may replace that record. A plain {@link Error}, never a {@link JournalConflictError}: the conflict is the config's, not a record's, so it is worded as the changed-file refusal and never takes part in a record conflict's rewording ({@link asRecordConflict}). */
+class AdoptionConfigChangedError extends Error {}
+
+/**
+ * Words an {@link AdoptionConfigChangedError} as the changed-file refusal every config that changed under a run ends in ({@link changedWhileWorking}); thrown by the look at the config an adoption rests on, which {@link adoptPending} joins into the receipt write's guards and into the adopted record's end.
+ * @param context - The run; its config path and retry are named.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw adoptionConfigChangedError(context) // 'Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at … and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.'
+ */
+function adoptionConfigChangedError(
+  context: Context,
+): AdoptionConfigChangedError {
+  return new AdoptionConfigChangedError(changedWhileWorking(context).message)
 }
 
 /** What the read of `receipt.json` after a write of Codebook's record of the entry found ({@link publishedReceiptCheck}): the file there (none for an empty name), or the failure of that read. */
