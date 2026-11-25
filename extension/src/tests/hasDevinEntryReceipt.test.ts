@@ -64,18 +64,21 @@ test('the entry record answers left when a rewrite publishes it at its name betw
       }),
     )
   const present = () => Promise.resolve({ isFile: () => true })
-  const looksAt = new Map<string, number>()
+  const receiptPath = join('/storage', 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const looksAt: string[] = []
+  let isRewriteFinished = false
   const scripted = await loadModule<typeof HasDevinEntryReceiptModule>(
     resolve(__dirname, '../utils/hasDevinEntryReceipt.js'),
     {
       'node:fs/promises': {
         ...fileSystem,
         lstat: (path: string) => {
-          const count = looksAt.get(path) ?? 0
-          looksAt.set(path, count + 1)
-          // The rewrite holds the record at the dropping name during the first look at the record's name; before the look at that name it publishes the new record and drops the old one.
-          if (path === '/storage/devin-mcp/receipt.json')
-            return count === 0 ? missing() : present()
+          looksAt.push(path)
+          // The rewrite holds the record at the dropping name during the first look at the record's name, and finishes while that dropping name is inspected.
+          if (path === receiptPath)
+            return isRewriteFinished ? present() : missing()
+          if (path === droppingPath) isRewriteFinished = true
           return missing()
         },
       },
@@ -85,4 +88,5 @@ test('the entry record answers left when a rewrite publishes it at its name betw
   const left = await scripted.hasDevinEntryReceipt('/storage')
   // Assert
   assert.equal(left, true)
+  assert.deepEqual(looksAt, [receiptPath, droppingPath, receiptPath])
 })

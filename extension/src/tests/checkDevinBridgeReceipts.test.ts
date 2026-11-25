@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -102,8 +103,10 @@ const MARKED_DESCRIPTOR: PrivateJsonState = {
 test('the marked descriptor fixture carries the hash of the bytes its value writes', () => {
   // Arrange / Act / Assert: this fixture stands for bytes read from the descriptor, so its hash must be of those bytes.
   assert.equal(
+    createHash('sha256')
+      .update(JSON.stringify(MARKED_DESCRIPTOR.value), 'utf8')
+      .digest('hex'),
     MARKED_DESCRIPTOR.sha256,
-    'da98746dd0a46e27886a2e0a2736842f7886cfcb4d8508a3e6cb10a70eca19ce',
   )
 })
 const MCP_REMOVED: ReceiptState = {

@@ -15295,7 +15295,8 @@ test('Set Up AI Chat keeps the previous config copy tracked when another config 
     ? JSON.parse(readFileSync(pendingPath, 'utf8'))
     : 'absent'
   const isReceiptAfter = existsSync(receiptPath)
-  // The learner moves the other config away, as the refusal's advice allows.
+  // The learner moves the other config away, as the refusal's advice allows; it must still be the config written meanwhile.
+  assert.equal(readFileSync(configPath, 'utf8'), foreignText)
   renameSync(configPath, join(dirname(configPath), 'other-config.json'))
   const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
@@ -28296,6 +28297,12 @@ test("A setup that keeps another program's file at the old record's private name
     generation: 'c0ffee00-0000-4000-8000-000000148201',
   }
   writeFileSync(receiptPath, JSON.stringify(thisConfigReceipt))
+  // The same record in formatted JSON makes a semantic-only rewrite visible in the bytes the refusal must leave alone.
+  const pendingRecordBefore = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  writeFileSync(
+    pendingPath,
+    `${JSON.stringify(pendingRecordBefore, null, 2)}\n`,
+  )
   const pendingBefore = readFileSync(pendingPath, 'utf8')
 
   // Act
@@ -28303,14 +28310,15 @@ test("A setup that keeps another program's file at the old record's private name
     () => undefined,
     (error: unknown) => error,
   )
-  const recordAfterRefusal = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  const pendingAfterRefusal = readFileSync(pendingPath, 'utf8')
+  const recordAfterRefusal = JSON.parse(pendingAfterRefusal)
 
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
     `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because that file is no record of Devin Desktop's MCP config at ${configPath} (another program may have put it there), and its record of that config stands at ${receiptPath} again; it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again.`,
   )
-  assert.deepEqual(recordAfterRefusal, JSON.parse(pendingBefore))
+  assert.equal(pendingAfterRefusal, pendingBefore)
   assert.equal(
     RELEASED_PUT_BACK_FIELDS.safeParse(recordAfterRefusal).success,
     false,
