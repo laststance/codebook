@@ -32120,3 +32120,70 @@ test('A pre-update config a backup puts back right after a refresh published the
   assert.deepEqual(JSON.parse(receiptAfterFirst), receiptObject)
   assert.equal(next.status, 'refreshed')
 })
+
+test('A removal whose config and record a backup puts back in the gap of the record’s move aside refuses instead of reporting the entry removed', async (context) => {
+  // Value: protects=a removal never reports success when a backup restores the entry while its record moves aside and the move takes the restored file, so the conflict exit that puts that file back rechecks the caller's end state before answering kept, exactly as every other non-delete exit of the delete does, and the removal refuses as one that did not last instead of reporting the entry removed beside an entry that is back (Cycle 0149 round-5 MINOR-5103); fails_when=the removal resolves or refuses with another sentence, the receipt bytes or the restored config change, or the replacement receipt's inode does not survive; no_claim=a real backup tool (the loaded module swaps the config with its entry and a copy of the receipt in once, inside the move's link of receipt.json to its dropping name, right before that link runs, so the move takes the copy), and a swap in the syscall gap after the move's proof at the dropping name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const configWithEntry = readFileSync(configPath, 'utf8')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  const originalReceiptIno = statSync(receiptPath).ino
+  let hasRestored = false
+  const restoring = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (...args: Parameters<typeof link>) => {
+          if (
+            args[0] === receiptPath &&
+            args[1] === droppingPath &&
+            !hasRestored
+          ) {
+            hasRestored = true
+            // A backup puts back the config with the entry and a copy of the receipt in the gap between the delete's last synchronous looks and its move, so the move takes the copy.
+            swapFile(configPath, configWithEntry)
+            swapFile(receiptPath, receiptText)
+          }
+          return link(...args)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const removalOutcome = await restoring
+    .removeManagedDevinMcpEntry(storage, home)
+    .then(
+      (result) => `resolved: ${result.status}`,
+      (error: Error) => error.message,
+    )
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  // The put-back's file reads as another inode of the same bytes; a falsely deleted receipt reads as 'absent', so the assertions name them.
+  const receiptAfterRefusal = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const receiptInoAfterRefusal = existsSync(receiptPath)
+    ? statSync(receiptPath).ino
+    : 'absent'
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    removalOutcome,
+    `Codebook took the "codebook" entry out of Devin Desktop's MCP config at ${configPath}, but before it could delete its own record of that entry, that config changed again (a backup or sync tool may have put an earlier config, with the entry, back), so it could not confirm the entry stayed out, left that record and that config as they are and went no further; then run Codebook: Remove Devin Desktop Setup again.`,
+  )
+  assert.equal(configAfterRefusal, configWithEntry)
+  assert.equal(receiptAfterRefusal, receiptText)
+  assert.notEqual(receiptInoAfterRefusal, originalReceiptIno)
+})

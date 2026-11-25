@@ -5027,7 +5027,7 @@ function receiptConflictSentence(
 }
 
 /**
- * Runs a caller's continuity look for a path that returns before {@link deleteThroughDroppingName} would run it; called by {@link dropReceipt} when the receipt cannot be read again, when nothing stands there, and when its pre-move name check fails. The awaited look at the look's names comes first, as {@link StillLook} asks.
+ * Runs a caller's continuity look for a path that returns before {@link deleteThroughDroppingName} would run it, and for one whose conflict exit put what the move took back without ever running it there; called by {@link dropReceipt} when the receipt cannot be read again, when nothing stands there, when its pre-move name check fails, and when the move met another file at the receipt's name and went no further ({@link TrackedReceiptConflictError}). The awaited look at the look's names comes first, as {@link StillLook} asks.
  * @param assertStill - The caller's continuity look, if any.
  * @throws What `assertStill` throws; the non-delete answer is never returned then.
  * @example
@@ -5099,8 +5099,11 @@ async function dropReceipt(
           assertStill,
         )
       } catch (error) {
-        // What moved was not that version (it went back to receipt.json), or that name could not be read: what stands there stays.
-        if (error instanceof TrackedReceiptConflictError) return 'kept'
+        // What moved was not that version (it went back to receipt.json), or that name could not be read: what stands there stays, but the caller's end state must still hold before that answer, as before every other non-delete answer of this delete — the awaited looks inside the move are no look-ahead of this check.
+        if (error instanceof TrackedReceiptConflictError) {
+          await lookAndAssertStill(assertStill)
+          return 'kept'
+        }
         throw error
       }
       context.receiptVersion.current = undefined
