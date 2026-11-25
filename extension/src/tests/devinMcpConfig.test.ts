@@ -7712,7 +7712,7 @@ test("A first setup whose receipt cannot be written and whose take-back mark fin
   assert.notEqual(pendingAtMark, '')
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
   assert.equal(readFileSync(pendingPath, 'utf8'), pendingAtMark)
   assert.equal(readFileSync(droppingPath, 'utf8'), droppingText)
@@ -7798,7 +7798,7 @@ test("A file a backup puts at a setup record's dropping name at the very moment 
   assert.equal(pendingAfterSetup, pendingAtMove)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
   assert.deepEqual(
     Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
@@ -7885,7 +7885,7 @@ test("A record a backup renames over a setup record right after Codebook gave th
   assert.equal(droppingAfterSetup, pendingAtMove)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
   assert.deepEqual(
     readdirSync(recordsPath).filter(
@@ -7971,7 +7971,7 @@ test("A record a backup renames over a setup record in the instant Codebook move
   assert.equal(droppingAfterSetup, pendingAtMove)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a folder at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put it there), so it did not write over that folder, left it as it is and went no further; move that folder to another folder, never delete it, because it may hold files of yours; if it or a backup holds the record that stood at ${receiptPath}, put that record back there; then run Codebook: Set Up AI Chat again, and that run reads ${receiptPath} first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
   assert.deepEqual(
     readdirSync(recordsPath).filter(
@@ -9586,7 +9586,7 @@ async function leaveCutShortTakeBack(context: TestContext) {
 }
 
 /**
- * The refusal of a run that finds a tracked record's name and its dropping name both holding a file (Cycle 0149 task 13): both stay, and the way out moves the file at the record's name away.
+ * The refusal of a run that finds a tracked record's name and its dropping name both holding a file (Cycle 0149 task 13): both stay, and the way out moves the file at the dropping name away when the record at the record's name is the one to keep using, and the file at the record's name away otherwise.
  * @param recordPath - The record's name.
  * @returns The sentence, ending with the setup's way out.
  * @example
@@ -9594,7 +9594,7 @@ async function leaveCutShortTakeBack(context: TestContext) {
  */
 function bothRecordNamesRefusal(recordPath: string): string {
   const droppingPath = `${recordPath}.codebook-dropping`
-  return `Codebook found its record at ${recordPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${recordPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${recordPath} if it is the record Codebook moved there.`
+  return `Codebook found its record at ${recordPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${recordPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${recordPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${recordPath} only if it is the record Codebook moved there.`
 }
 
 /**
@@ -11868,7 +11868,7 @@ test("A rollback record and a marked setup record a backup restores while a refr
   )
   assert.equal(
     rerunOutcome,
-    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
   assert.equal(isReceiptLeftByFirst, false)
   assert.equal(recordAfterFirst, markedRecordText)
@@ -11972,6 +11972,148 @@ test('Set Up AI Chat follows its both-names way out: it refuses while both setup
   assert.equal(existsSync(droppingPath), false)
   assert.equal(existsSync(droppingNotePath), false)
   assert.equal(readFileSync(keptRecordPath, 'utf8'), markedRecordText)
+})
+
+test('Set Up AI Chat follows its both-names way out for the record at pending.json: it refuses while both setup-record names stand, then reads that record and answers current after the file at the dropping name is moved aside', async (context) => {
+  // Value: protects=the both-names refusal's first way out: when the file at pending.json is the record the learner keeps using, the file at the dropping name moves away instead and the retry reads the record at pending.json, so a valid setup record is never moved out of use over a foreign file at the dropping name (Cycle 0149 issue 372); fails_when=the refusal's sentence never says how the record at pending.json stays in use, either file changes or is gone before the way out, the guided retry answers anything but current, the learner's other server or either kept file is lost, or a record or receipt is left inconsistent; no_claim=a real backup or sync tool (the test writes the foreign file at the dropping name directly), what the learner does with the kept file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000003020',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  const olderRecordText = JSON.stringify(olderRecord)
+  await writeFile(pendingPath, olderRecordText)
+  const foreignText = '{"left":"by another program"}\n'
+  writeFileSync(droppingPath, foreignText)
+  const configBefore = readFileSync(configPath, 'utf8')
+  const keptDroppingPath = join(home, 'kept-dropping-file.json')
+
+  // Act
+  const refusal = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const isReceiptAfterRefusal = existsSync(receiptPath)
+  const pendingAfterRefusal = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const droppingAfterRefusal = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  // The learner follows the both-names way out for the record at pending.json: the file at the dropping name goes to another folder and is kept.
+  renameSync(droppingPath, keptDroppingPath)
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    refusal instanceof Error ? refusal.message : refusal,
+    bothRecordNamesRefusal(pendingPath),
+  )
+  assert.equal(isReceiptAfterRefusal, false)
+  assert.equal(pendingAfterRefusal, olderRecordText)
+  assert.equal(droppingAfterRefusal, foreignText)
+  assert.equal(configAfterRefusal, configBefore)
+  assert.equal(setup.status, 'current')
+  assert.equal(setup.path, configPath)
+  assert.equal(setup.cleanupFailure, undefined)
+  assert.match(setup.generation, /^[0-9a-f-]{36}$/)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  assert.equal(receipt.generation, setup.generation)
+  assert.equal(receipt.entrySha256, ENTRY_HASH)
+  assert.equal(receipt.installed, true)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(`${pendingPath}.codebook-dropping-note`), false)
+  assert.equal(readFileSync(keptDroppingPath, 'utf8'), foreignText)
+})
+
+test('Set Up AI Chat follows its both-names way out for a foreign file at pending.json: the proven record at the dropping name goes back and the retry answers current', async (context) => {
+  // Value: protects=the both-names refusal's second way out: when the file at pending.json is not the record to keep using, it moves away and the retry puts the file at the dropping name back at pending.json only while the dropping note proves it is the record Codebook moved there, so the moved record is never lost beside a foreign file at its name (Cycle 0149 issue 372); fails_when=the refusal's sentence never promises that put-back, either file changes or is gone before the way out, the dropping name or its note stays after the retry, the guided retry answers anything but current, or the foreign file is lost; no_claim=a real backup or sync tool (the test writes the foreign file at pending.json after writing the dropping note and renaming the record to its dropping name, as a stop right after that move leaves them; Cycle 0149 task 35), what the learner does with the kept foreign file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const droppingNotePath = `${pendingPath}.codebook-dropping-note`
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000003021',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  const olderRecordText = JSON.stringify(olderRecord)
+  await writeFile(pendingPath, olderRecordText)
+  leaveStoppedMove(pendingPath)
+  const foreignText = '{"restored":"by a sync tool"}\n'
+  writeFileSync(pendingPath, foreignText)
+  const configBefore = readFileSync(configPath, 'utf8')
+  const keptForeignPath = join(home, 'kept-foreign-file.json')
+
+  // Act
+  const refusal = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const isReceiptAfterRefusal = existsSync(receiptPath)
+  const pendingAfterRefusal = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const droppingAfterRefusal = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  // The learner follows the both-names way out for a foreign file at pending.json: that file goes to another folder and is kept.
+  renameSync(pendingPath, keptForeignPath)
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    refusal instanceof Error ? refusal.message : refusal,
+    bothRecordNamesRefusal(pendingPath),
+  )
+  assert.equal(isReceiptAfterRefusal, false)
+  assert.equal(pendingAfterRefusal, foreignText)
+  assert.equal(droppingAfterRefusal, olderRecordText)
+  assert.equal(configAfterRefusal, configBefore)
+  assert.equal(setup.status, 'current')
+  assert.equal(setup.path, configPath)
+  assert.equal(setup.cleanupFailure, undefined)
+  assert.match(setup.generation, /^[0-9a-f-]{36}$/)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  assert.equal(receipt.generation, setup.generation)
+  assert.equal(receipt.entrySha256, ENTRY_HASH)
+  assert.equal(receipt.installed, true)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(droppingNotePath), false)
+  assert.equal(readFileSync(keptForeignPath, 'utf8'), foreignText)
 })
 
 test("A setup record a backup restores with its take-back mark at pending.json while a refresh deletes the record of an older build's interrupted setup it adopted takes that adoption's receipt back out, so the next refresh takes the failed setup back", async (context) => {
@@ -12841,7 +12983,7 @@ test("A setup whose completed-record write finds a file at that record's droppin
   assert.equal(result.status, 'installed')
   assert.equal(
     result.cleanupFailure,
-    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it. Codebook wrote its record of the entry but could not finish rewriting its record of this setup. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it. Codebook wrote its record of the entry but could not finish rewriting its record of this setup. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
   assert.equal(readFileSync(pendingPath, 'utf8'), pendingAtPublish)
   assert.equal(readFileSync(droppingPath, 'utf8'), droppingText)
@@ -12929,7 +13071,7 @@ test("A first setup whose record's final delete meets another record a sync tool
   assert.equal(result.status, 'installed')
   assert.equal(
     result.cleanupFailure,
-    `Codebook wrote its record of the entry but could not finish deleting its record of this setup. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook wrote its record of the entry but could not finish deleting its record of this setup. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
   assert.deepEqual(
     Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
@@ -12950,7 +13092,7 @@ test("A first setup whose record's final delete meets another record a sync tool
   // The next run stops at the two names the notice names, as before the fix; the notice is what tells the learner so before that run.
   assert.equal(
     nextError instanceof Error ? nextError.message : nextError,
-    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again; otherwise move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
   )
 })
 
@@ -22398,7 +22540,7 @@ test("A removal that finds a file at its record of the entry's private name keep
   assert.deepEqual(result, {
     status: 'removed',
     path: configPath,
-    cleanupFailure: `Codebook found its record at ${receiptPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${receiptPath} to another folder and keep it, then run Codebook: Remove Devin Desktop Setup again, and that run puts the file at ${droppingPath} back at ${receiptPath} if it is the record Codebook moved there.`,
+    cleanupFailure: `Codebook found its record at ${receiptPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${receiptPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, then run Codebook: Remove Devin Desktop Setup again; otherwise move the file at ${receiptPath} to another folder and keep it, then run Codebook: Remove Devin Desktop Setup again, and that run puts the file at ${droppingPath} back at ${receiptPath} only if it is the record Codebook moved there.`,
   })
   assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
   assert.equal(

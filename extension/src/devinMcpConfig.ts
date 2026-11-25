@@ -4198,7 +4198,7 @@ function unprovenDroppingError(context: Context): JournalConflictError {
 }
 
 /**
- * The refusal of a tracked record whose name and dropping name both hold a file ({@link moveTrackedAside}, {@link settleDroppedRecord}): Codebook cannot tell which holds its record, so both stay and the run goes no further. Its way out moves the file at the record's name away, after which the next run puts the file at the dropping name back only while the dropping note proves it is the record Codebook moved there ({@link putNotedRecordBack}); a file another program put there stays, named ({@link unprovenDroppingError}).
+ * The refusal of a tracked record whose name and dropping name both hold a file ({@link moveTrackedAside}, {@link settleDroppedRecord}): Codebook cannot tell which holds its record, so both stay and the run goes no further. Its way out moves the file at the dropping name away when the file at the record's name is the record to keep using, and the file at the record's name away otherwise, after which the next run puts the file at the dropping name back only while the dropping note proves it is the record Codebook moved there ({@link putNotedRecordBack}); a file another program put there stays, named ({@link unprovenDroppingError}).
  * @param context - The run; its pending path is the record, its retry ends the sentence.
  * @returns The `changed` {@link JournalConflictError}, not thrown yet.
  * @example
@@ -4208,7 +4208,7 @@ function bothRecordNamesError(context: Context): JournalConflictError {
   const { pendingPath, retry } = context
   const droppingPath = droppingPathOf(context)
   return new DroppingNameConflictError(
-    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, ${retry}, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either; if the file at ${pendingPath} is Codebook's record you want to keep using, move the file at ${droppingPath} to another folder and keep it, ${retry}; otherwise move the file at ${pendingPath} to another folder and keep it, ${retry}, and that run puts the file at ${droppingPath} back at ${pendingPath} only if it is the record Codebook moved there.`,
     'changed',
   )
 }
