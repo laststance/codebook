@@ -21213,6 +21213,88 @@ test('A later setup whose put-back link fails leaves its publish record as it re
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+test('A later setup whose note before the put-back reads an older copy of its publish record, which a backup shows there for that read only, writes nothing over the record it tracks, so that record keeps its take-back mark byte for byte', async (context) => {
+  // Value: protects=a rewrite of the publish record that leads to the old record's private name (rewriteLeadingRecord; here the note that receipt.json is unverified, written right before the put-back's link, Cycle 0149 task 43) is built only from the version of that record the run tracks: when its read finds another version of the same setup's record (an older copy without the take-back mark) and the tracked record is back at that name before the write's looks, nothing is written, so the record keeps its take-back mark and every other byte, and the put-back goes on without the note as after a failed note (Cycle 0149 final-range review, CodeRabbit CLI major on devinMcpConfig.ts:8320); fails_when=pending.json holds other bytes than the record the run read first (the older copy with the note, or that copy once the note went again, say), another record or private name stays or appears, the old record's private file changes, receipt.json appears, or the refusal is another sentence than the one for a put-back whose link failed; no_claim=a real backup tool (the config module is loaded with an lstat that, at the note's look at receipt.json after the put-back read the old record, holds the tracked record aside and writes the older copy at pending.json, and seam.afterStat puts the tracked record back as the same file once the note's read opened that copy), how a record carrying both the mark that nothing was linked and the take-back mark came to stand (the test writes takeBack into the failed setup's record by hand), why the put-backs fail (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), and a swap between the write's last look and its rename (the stated residual of writeTrackedJournal)
+  // Arrange
+  const {
+    home,
+    storage,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  // The older copy: the failed setup's record as it wrote it, before the take-back mark.
+  const olderText = readFileSync(pendingPath, 'utf8')
+  const markedText = JSON.stringify({
+    ...JSON.parse(olderText),
+    takeBack: true,
+  })
+  writeFileSync(pendingPath, markedText)
+  const asidePath = join(home, 'pending-held-by-backup.json')
+  let isOldRecordRead = false
+  let hasShownOlder = false
+  let hasPutMarkedBack = false
+  const showingOlderCopy = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return link(from, to)
+        },
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          const [path] = args
+          // The note's look at receipt.json once the put-back read the old record: a backup holds the tracked record aside and shows the older copy at its name.
+          if (isOldRecordRead && !hasShownOlder && path === receiptPath) {
+            hasShownOlder = true
+            renameSync(pendingPath, asidePath)
+            writeFileSync(pendingPath, olderText)
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await showingOlderCopy
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterStat: (path) => {
+        if (path === retiredPath) isOldRecordRead = true
+        // The note's read opened the older copy: the backup puts the tracked record back as the same file before the write looks at that name.
+        if (path === pendingPath && hasShownOlder && !hasPutMarkedBack) {
+          hasPutMarkedBack = true
+          renameSync(asidePath, pendingPath)
+        }
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(hasShownOlder, true)
+  assert.equal(hasPutMarkedBack, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, so the next run puts it back; if that fails too, move that file back by hand, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(pendingPath, 'utf8'), markedText)
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A later setup never puts another installation's record that stands at the old record's private name back at receipt.json in place of the record a first setup moved there: it keeps that file and its publish record and names that file as one Codebook cannot tell is its old record", async (context) => {
   // Value: protects=a later run puts back at receipt.json only the file whose bytes the first setup's publish record names (Cycle 0149 task 1, criterion 2), so a valid record of this config of another installation that a sync tool left at the private name never becomes Codebook's receipt and the setup never answers current on it; fails_when=receipt.json appears, the setup answers current, the file at the private name changes or is gone, pending.json is gone or changes, or the refusal is another sentence; no_claim=a real sync tool (the test writes that record at the private name between the runs), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), and a swap between the last look and the link (criterion 17)
   // Arrange

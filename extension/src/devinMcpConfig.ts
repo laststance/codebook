@@ -8287,7 +8287,7 @@ async function markForeignKept(
   )
 }
 
-/** How {@link rewriteLeadingRecord} ended: `written` once the rewrite stands, `unchanged` when the rewrite asked for none, `unwritten` when the record could not be read, leads to another private name, or the write was refused or failed; with the record as it was read, when one was. */
+/** How {@link rewriteLeadingRecord} ended: `written` once the rewrite stands, `unchanged` when the rewrite asked for none, `unwritten` when the record could not be read, leads to another private name, is another version than the run tracks, or the write was refused or failed; with the record as it was read, when one was. */
 type LeadingRecordRewrite = {
   outcome: 'written' | 'unchanged' | 'unwritten'
   record?: Pending
@@ -8295,7 +8295,7 @@ type LeadingRecordRewrite = {
 
 /**
  * Rewrites the publish record that leads to an old record's private name as it stands now, so a put-back's notes and marks never write back a record recovery rewrote earlier in the run (a handover); called by {@link markForeignKept}, {@link noteBeforePutBack} and {@link withdrawPutBackNote}.
- * The rewrite replaces only the version of the record this call read ({@link readVersionedRecord}), through the tracked-record guard ({@link Context.journalVersion}; a held run's own tracking when it holds a legacy journal, any other run's tracking of this read): the bytes are staged first, and the synchronous last look right before the rename refuses when the name no longer shows that version, so a record a backup or sync tool put there meanwhile stays as that program left it; an emptied name is never claimed (`refusesEmptyName`). Limit: a record put there between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
+ * The rewrite replaces only the version of the record this call read ({@link readVersionedRecord}), through the tracked-record guard ({@link Context.journalVersion}; a held run's own tracking when it holds a legacy journal, any other run's tracking of this read). A run that tracks a version rewrites only when this read shows that version (inode and bytes' hash), so a rewrite built from another version (an older copy of the same setup's record a backup shows there for the read, without the take-back mark, say) never replaces the tracked one once it is back before the write's looks. The bytes are staged first, and the synchronous last look right before the rename refuses when the name no longer shows that version, so a record a backup or sync tool put there meanwhile stays as that program left it; an emptied name is never claimed (`refusesEmptyName`). Limit: a record put there between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
  * @param context - The run; its pending path is the record.
  * @param retiredPath - The old record's private name; only the record of this config whose generation names it is rewritten.
  * @param rewrite - Gives the record to write from the record as read; undefined when it stays as it is.
@@ -8318,6 +8318,13 @@ async function rewriteLeadingRecord(
   const { record, version } = read
   // Only the record that leads to that private name.
   if (!isRecordLeadingTo(context, record, retiredPath))
+    return { outcome: 'unwritten', record }
+  const tracked = context.journalVersion?.current
+  // Another version than the run tracks (an older copy a backup shows there) builds no rewrite, even once the tracked one is back before the write's looks.
+  if (
+    tracked !== undefined &&
+    (version.ino !== tracked.ino || version.sha256 !== tracked.sha256)
+  )
     return { outcome: 'unwritten', record }
   const rewritten = rewrite(record)
   if (rewritten === undefined) return { outcome: 'unchanged', record }
