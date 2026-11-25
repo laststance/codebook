@@ -2355,7 +2355,7 @@ test('A removal whose record another program replaced with a folder does not pro
 })
 
 test('A removal whose own record a backup replaces right after it took the entry out names that record instead of asking to make room, and keeps its receipt and that record', async (context) => {
-  // Value: protects=a removal whose completed record another program kept from being written says which record changed and how to go on, never that the disk needs room, which cannot help, and keeps its receipt and the record that stands (Cycle 0149 ship review, the removal's dropped recordConflict); fails_when=the refusal says anything but the changed-record cause with the copy's sentence and the read-first ending, asks to make room, or receipt.json, pending.json or the copy changes; no_claim=a real backup tool (seam.afterPublish renames another removal's record, with another generation, over pending.json once, right after the reduced config went in), what the next run does with that record and the copy
+  // Value: protects=a removal whose completed record another program kept from being written says which record changed and how to go on, never that the disk needs room, which cannot help, and keeps its receipt and the record that stands (Cycle 0149 ship review, the removal's dropped recordConflict), and never promises that a later run deletes the copy on a record that names the copy under another generation, which the next run refuses without touching the copy (Cycle 0149 final-range review); fails_when=the refusal says anything but the changed-record cause with the unconfirmed copy's sentence and the read-first ending, says that a later run deletes the copy, asks to make room, receipt.json, pending.json or the copy changes, or the next run does anything but refuse that record and keep receipt.json, pending.json and the copy; no_claim=a real backup tool (seam.afterPublish renames a record that names the removal's copy under another generation over pending.json once, right after the reduced config went in; no Codebook run writes such a record), a record of another removal that names its own files
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -2375,10 +2375,14 @@ test('A removal whose own record a backup replaces right after it took the entry
         ...JSON.parse(readFileSync(pendingPath, 'utf8')),
         generation: 'c0ffee00-0000-4000-8000-000000009951',
       })
-      // A backup renames another removal's record over the removal's own record right after its config went in.
+      // Another program renames a record over the removal's own one right after its config went in; it names the removal's copy under another generation, which recovery refuses.
       swapFile(pendingPath, restoredText)
     },
   }).then(
+    (result) => JSON.stringify(result),
+    (error: Error) => error.message,
+  )
+  const nextOutcome = await removeManagedDevinMcpEntry(storage, home).then(
     (result) => JSON.stringify(result),
     (error: Error) => error.message,
   )
@@ -2386,7 +2390,11 @@ test('A removal whose own record a backup replaces right after it took the entry
   // Assert
   assert.equal(
     removalOutcome,
-    `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because another program changed or replaced that record at ${pendingPath} (a backup or sync tool may have put an older one back), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
+    `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because another program changed or replaced that record at ${pendingPath} (a backup or sync tool may have put an older one back), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
+  )
+  assert.equal(
+    nextOutcome,
+    `Codebook's Devin Desktop MCP record at ${pendingPath} names a file that Codebook did not make beside the config at ${configPath}, so nothing was moved, linked or deleted; remove that record, then run Codebook: Remove Devin Desktop Setup again.`,
   )
   assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
   assert.equal(readFileSync(pendingPath, 'utf8'), restoredText)

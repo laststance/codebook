@@ -9574,8 +9574,8 @@ type RecordedCopyFate = 'tracked' | 'untracked' | 'unconfirmed'
  * @param context - The run; gives the pending record's path and the config path.
  * @param copyPath - The copy's private name.
  * @returns
- * - `tracked` when the record reads back as one of this config that names that copy and is not handed over as recovery reads it ({@link leftoverPhaseOf})
- * - `untracked` when it reads back as a record that does not lead a later run to the copy: one of another config, one that hands the copy over, or one that names another copy or none
+ * - `tracked` when the record reads back as one of this config that names that copy by the name of its own generation, as recovery accepts it ({@link acceptedLeftover}), and is not handed over as recovery reads it ({@link leftoverPhaseOf})
+ * - `untracked` when it reads back as a record that does not lead a later run to the copy: one of another config, one that hands the copy over, one that names another copy or none, or one that names the copy while it holds another generation or none, which recovery refuses without touching the copy
  * - `unconfirmed` when nothing stands there or it cannot be read as a record (a folder, a link, a read that failed), so the record may still come back and lead there
  * @example
  * await recordedCopyFateOf(context, copyPath) // => 'unconfirmed' once another program put a folder where pending.json was
@@ -9591,10 +9591,12 @@ async function recordedCopyFateOf(
     context.retry,
   ).catch(() => undefined)
   if (!pending) return 'unconfirmed'
-  // Recovery settles only a record of this config, and never deletes a copy its handed record holds.
+  // Recovery settles only a record of this config, never deletes a copy its handed record holds, and refuses a record whose copy's name is not the one of its own generation ({@link acceptedLeftover}).
   return pending.targetPath === context.path &&
     leftoverPhaseOf(pending) !== 'handed' &&
-    pending.keptName === basename(copyPath)
+    pending.keptName === basename(copyPath) &&
+    pending.generation !== undefined &&
+    pending.keptName === journalNameOf(context.path, pending.generation, 'kept')
     ? 'tracked'
     : 'untracked'
 }
