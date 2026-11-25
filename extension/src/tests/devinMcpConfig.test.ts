@@ -15162,6 +15162,123 @@ test('A backup that puts an older config back right after a setup linked its new
   assert.deepEqual(await leftoversBeside(configPath), [])
 })
 
+/**
+ * Loads the config module with a synchronous look that, once, right after the cleanup's look at the config name found the setup's new config and right before its look at the staged name, writes an edit into that config in place (when one is given) and then renames another config over the config path, the way an edit followed by a backup or sync tool that lands between those two looks would.
+ * @param configPath - The config file.
+ * @param swap - The bytes written into the new config in place first (undefined for no edit), and the bytes of the config put at the config path.
+ * @returns The config module and the staged name the swap came right before (empty until it ran).
+ * @example
+ * const { module, swapped } = await loadWithConfigSwapBeforeStagedLook(configPath, { editedText: undefined, restoredText: '{"mcpServers":{}}\n' })
+ */
+async function loadWithConfigSwapBeforeStagedLook(
+  configPath: string,
+  {
+    editedText,
+    restoredText,
+  }: { editedText: string | undefined; restoredText: string },
+): Promise<{
+  module: typeof DevinMcpConfigModule
+  swapped: { path: string }
+}> {
+  const swapped = { path: '' }
+  let lastLookedAt = ''
+  const module = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs': {
+        lstatSync: (path: string, options?: StatSyncOptions) => {
+          const followsConfigLook = lastLookedAt === configPath
+          lastLookedAt = path
+          const staged = lstatSync(path, {
+            bigint: true,
+            throwIfNoEntry: false,
+          })
+          const config = lstatSync(configPath, {
+            bigint: true,
+            throwIfNoEntry: false,
+          })
+          // Only the look at the staged name right after the look at the config name, while both names still show the new config, once.
+          if (
+            followsConfigLook &&
+            swapped.path === '' &&
+            path.endsWith('.tmp') &&
+            dirname(path) === dirname(configPath) &&
+            staged !== undefined &&
+            staged.ino === config?.ino
+          ) {
+            swapped.path = path
+            if (editedText !== undefined) writeFileSync(configPath, editedText)
+            swapFile(configPath, restoredText)
+          }
+          return lstatSync(path, options)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  return { module, swapped }
+}
+
+test('An edit written in place into a setup’s new config right before a backup puts an older config back, after the cleanup found the config still the new one, stays at the staged name instead of being deleted with it, and the notice names that file', async (context) => {
+  // Value: protects=the cleanup after a replacement's link deletes the staged name of its new config on its inode alone only while that name is not the file's last name, so an edit written into the new config in place right before a backup or sync tool put another config at the config path between the cleanup's look at the config name and its look at the staged name, which only the staged name still reaches, stays and is named (Cycle 0149 final-range review CRF4, task 52's route for the staged name's last look); fails_when=the staged name is gone or no longer holds the edit, the config is not the restored file, another file stays beside the config, or the setup is not installed or names anything but that file; no_claim=a real Devin Desktop write and a real backup tool (the config module is loaded with an lstatSync stand-in that writes the edit into the new config in place and renames an older config over the config path once, right before the cleanup's synchronous look at the staged name), a config put back between that last look and the unlink (no Node primitive unlinks by inode), the create route (createConfig's cleanup takes the same helper), what the next run does with that file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const editedText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY }, theme: 'edited in place' })}\n`
+  const restoredText = '{"mcpServers":{"alpha":{"command":"restored"}}}\n'
+  const { module: swappingLook, swapped } =
+    await loadWithConfigSwapBeforeStagedLook(configPath, {
+      editedText,
+      restoredText,
+    })
+
+  // Act
+  const result = await swappingLook.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+  // A name the setup left empty reads as 'absent', so the assertion below names it.
+  const stagedAfterSetup = existsSync(swapped.path)
+    ? readFileSync(swapped.path, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.notEqual(swapped.path, '')
+  assert.equal(result.status, 'installed')
+  assert.equal(stagedAfterSetup, editedText)
+  assert.equal(result.cleanupFailure, editedApartSentence(swapped.path))
+  assert.equal(readFileSync(configPath, 'utf8'), restoredText)
+  assert.deepEqual(await leftoversBeside(configPath), [basename(swapped.path)])
+})
+
+test('A backup that puts an older config back right after a setup’s cleanup found the config still its new one, with no edit in between, still lets the setup delete the staged name that holds only the bytes it wrote', async (context) => {
+  // Value: protects=a staged name that became the new config's last name between the cleanup's look at the config name and its look at the staged name is still deleted while it holds exactly the bytes the setup wrote, so no copy is kept or named for nothing (Cycle 0149 final-range review CRF4: only a changed last name stays); fails_when=the staged name stays, the config is not the restored file, or the setup is not installed or names a kept file; no_claim=a real backup tool (the config module is loaded with an lstatSync stand-in that renames an older config over the config path once, right before the cleanup's synchronous look at the staged name), a write into the staged file between the cleanup's read and its unlink (its last look sees its size and times; a same-size write within one timestamp tick passes it)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const restoredText = '{"mcpServers":{"alpha":{"command":"restored"}}}\n'
+  const { module: swappingLook, swapped } =
+    await loadWithConfigSwapBeforeStagedLook(configPath, {
+      editedText: undefined,
+      restoredText,
+    })
+
+  // Act
+  const result = await swappingLook.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.notEqual(swapped.path, '')
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, undefined)
+  assert.equal(readFileSync(configPath, 'utf8'), restoredText)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
 test("A file another program swaps in at the staged name of a take-back's first rollback record right as it is linked is never taken for that record, so the take-back moves nothing and keeps both names of that file", async (context) => {
   // Value: protects=a take-back's first rollback-record write goes on only once the journal name shows the inode and bytes it wrote after the link, and its cleanup deletes the staged name only while that name shows that file, so a file swapped in after the last look before the link is neither followed by a move of the config nor deleted (Cycle 0148 ship review); fails_when=the first refresh says anything but the journal-taken refusal, the config changes, the file swapped in is gone from the journal name or the staged name or changes, the setup's record loses its take-back mark, or the second refresh leaves the entry or the journal; no_claim=a real sync tool (the config module is loaded with a link that, for the journal name, renames another journal over the staged name once right before it links), a swap of the journal name after the check that follows the link, what a later run does with the file at the staged name
   // Arrange

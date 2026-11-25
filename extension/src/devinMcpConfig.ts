@@ -2472,7 +2472,7 @@ async function settlePublished(
 
 /**
  * Deletes the staged name of the config this run published while it is only a second name of the config, or holds nothing but the bytes this run wrote; called by {@link createConfig} and {@link settlePublished} once the config stands.
- * From the link on that name is a second name of the config, whose bytes Devin Desktop or the learner may already have changed in place. While one synchronous look at the config name, then one at the staged name, after an awaited look at both ({@link lookAheadAt}), show the published inode at both, the staged name goes whatever was written into that file, because the config name keeps it; the inode alone tells it from a file another program put there (a sync tool's), which stays untouched. Once the config name shows another file or nothing (a backup or sync tool put another config there, for example), the staged name may be the published file's last name ({@link dropLastPublishedName}): it goes only while it holds exactly the bytes this run wrote, and bytes written into it since stay with it and are named. Before the link the bytes are checked too ({@link dropStagedRecord}).
+ * From the link on that name is a second name of the config, whose bytes Devin Desktop or the learner may already have changed in place. While one synchronous look at the config name, then one at the staged name, after an awaited look at both ({@link lookAheadAt}), show the published inode at both, and the look at the staged name still counts another name of that file, the staged name goes whatever was written into that file, because the config name keeps it; the inode alone tells it from a file another program put there (a sync tool's), which stays untouched. Once the config name shows another file or nothing (a backup or sync tool put another config there, for example), or the look at the staged name counts no other name of the published file (another config was put at the config path between the two looks), the staged name may be the published file's last name ({@link dropLastPublishedName}): it goes only while it holds exactly the bytes this run wrote, and bytes written into it since stay with it and are named. Before the link the bytes are checked too ({@link dropStagedRecord}).
  * Limits: a file put at the staged name, or another config put at the config name, between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
  * @param context - The run; its config path is looked at.
  * @param temporary - The staged name.
@@ -2514,11 +2514,13 @@ async function dropPublishedStage(
   }
   // Nothing there, or another program's file: nothing of the published config is left at that name, and that file stays untouched.
   if (now?.ino !== published.ino) return undefined
+  // No other name reaches the published file any more (another config was put at the config path right after the look at it): the staged name may be its last name.
+  if (now.nlink < 2n) return dropLastPublishedName(temporary, published, kept)
   return (await didUnlink(temporary)) ? undefined : kept
 }
 
 /**
- * Deletes the staged name of a published config that the config name no longer reaches, only while a read through one open file finds exactly the bytes this run wrote there and one synchronous look still shows that read ({@link unlinkStagedWhileStill}); called only by {@link dropPublishedStage}, once its look at the config name showed another file or nothing.
+ * Deletes the staged name of a published config that the config name no longer reaches, only while a read through one open file finds exactly the bytes this run wrote there and one synchronous look still shows that read ({@link unlinkStagedWhileStill}); called only by {@link dropPublishedStage}, once its look at the config name showed another file or nothing, or its look at the staged name counted no other name of the published file.
  * That name may then be the published file's last name: bytes Devin Desktop or the learner wrote into the config in place after the link, before another config was put at the config path, live only there, so they stay and are named.
  * @param temporary - The staged name.
  * @param published - The inode and bytes this run wrote there.
