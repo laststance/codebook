@@ -25,6 +25,7 @@ const NOTHING_RUNS = {
   pregateTests: 0,
   tsc: 0,
   inProcessBuild: 0,
+  eslint: 0,
   fallow: 0,
   c8: 0,
   pnpmInstall: 0,
@@ -232,6 +233,16 @@ test('each build and test kind the repository starts is counted once per process
       command: 'node',
       args: ['scripts/build-fast.mjs', '--check'],
     },
+    {
+      pid: 5117,
+      command: node,
+      args: [
+        `${modules}/eslint/bin/eslint.js`,
+        '.',
+        '--concurrency=auto',
+        '--max-warnings=0',
+      ],
+    },
   ]
 
   // Act
@@ -244,6 +255,7 @@ test('each build and test kind the repository starts is counted once per process
     pregateTests: 1,
     tsc: 1,
     inProcessBuild: 2,
+    eslint: 1,
     fallow: 2,
     c8: 1,
     pnpmInstall: 1,
@@ -253,7 +265,7 @@ test('each build and test kind the repository starts is counted once per process
   })
 })
 
-// Value: protects=a clear verdict while only unrelated programs run (the editor's TypeScript server, an agent's node CLI, pnpm running a non-install command, a shell whose command line names a test, a commit message naming a script, another project's dev server keeping an `esbuild --service` process open); fails_when=one of them is counted, so the check says busy on a quiet machine; no_claim=every other program on a Mac
+// Value: protects=a clear verdict while only unrelated programs run (the editor's TypeScript server, an agent's node CLI, pnpm running a non-install command, a shell whose command line names a test, a commit message naming a script, another project's dev server keeping an `esbuild --service` process open, the editor's ESLint language server, which the ESLint extension forks as its `server/out/eslintServer.js` under the editor's own runtime or under node when `eslint.runtime` is set); fails_when=one of them is counted, so the check says busy on a quiet machine; no_claim=every other program on a Mac
 test('unrelated node programs, a pnpm command that installs nothing and a shell are not counted', () => {
   // Arrange
   const node = '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node'
@@ -292,6 +304,31 @@ test('unrelated node programs, a pnpm command that installs nothing and a shell 
       command:
         '/Users/example/other-app/node_modules/@esbuild/darwin-arm64/bin/esbuild',
       args: ['--service=0.25.0', '--ping'],
+    },
+    {
+      pid: 6107,
+      // The editor's helper path holds spaces, so ps's words split it as parseProcessRows reads it.
+      command: '/Applications/Visual',
+      args: [
+        'Studio',
+        'Code.app/Contents/Frameworks/Code',
+        'Helper',
+        '(Plugin).app/Contents/MacOS/Code',
+        'Helper',
+        '(Plugin)',
+        '/Users/example/.vscode/extensions/dbaeumer.vscode-eslint-3.0.34/server/out/eslintServer.js',
+        '--node-ipc',
+        '--clientProcessId=4100',
+      ],
+    },
+    {
+      pid: 6108,
+      command: node,
+      args: [
+        '/Users/example/.vscode/extensions/dbaeumer.vscode-eslint-3.0.34/server/out/eslintServer.js',
+        '--node-ipc',
+        '--clientProcessId=4100',
+      ],
     },
   ]
 
@@ -353,6 +390,28 @@ test("an editor's Fallow language server and an agent's Fallow MCP server are no
 
   // Assert
   assert.deepEqual(counts, { ...NOTHING_RUNS, fallow: 1 })
+})
+
+// Value: protects=a clear verdict while an editor or an agent keeps ESLint's MCP server open (`eslint --mcp`, ESLint's documented MCP setup, stays running as `eslint.js --mcp` while it waits on the `@eslint/mcp` server it starts), while a lint run beside it still counts; fails_when=the MCP server is counted as a lint run, so the check says busy for as long as the editor or agent is open, or the skip also drops `eslint .`; no_claim=the `@eslint/mcp` child, which runs under its own program name
+test('an ESLint MCP server started as eslint --mcp is not counted, while a lint run still is', () => {
+  // Arrange
+  const node = '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node'
+  const eslint =
+    '/Users/example/codebook/extension/node_modules/eslint/bin/eslint.js'
+  const rows = [
+    { pid: 6401, command: node, args: [eslint, '--mcp'] },
+    {
+      pid: 6402,
+      command: node,
+      args: [eslint, '.', '--concurrency=auto', '--max-warnings=0'],
+    },
+  ]
+
+  // Act
+  const counts = countProcessKinds(rows, 4242)
+
+  // Assert
+  assert.deepEqual(counts, { ...NOTHING_RUNS, eslint: 1 })
 })
 
 // Value: protects=the precheck never counting itself or the `ps` it starts, also when it reads the machine from inside a node --test run; fails_when=the own pid is counted as a node --test process, so the check says busy because it runs; no_claim=the parent test run, which is another process and counts
@@ -532,6 +591,7 @@ test('a busy machine prints load, swap, one line per kind and the busy verdict l
     'Running run-pregate-tests.mjs: 0',
     'Running tsc: 0',
     'Running qa-build.mjs or build-fast.mjs: 0',
+    'Running eslint: 0',
     'Running fallow: 0',
     'Running c8: 0',
     'Running pnpm install: 0',
@@ -641,6 +701,7 @@ test('--help prints the usage, the exit codes and the error codes and exits 0', 
     HELP_TEXT,
     /tsc \(not [^)]*\), qa-build\.mjs\s+or build-fast\.mjs/,
   )
+  assert.match(HELP_TEXT, /eslint \(not its MCP server,\s+eslint --mcp;/)
   assert.doesNotMatch(HELP_TEXT, /min-free-swap/)
 })
 

@@ -57,9 +57,9 @@ const NODE_OPTIONS_WITH_VALUE = new Set([
 const TEST_OPTION_PATTERN = /^--test(?:$|[-=])/
 
 /**
- * The build and test kinds this repository starts, in report order: each kind's label, the program names that run it, for pnpm the commands that install and, for tsc and fallow, the words that start a server.
+ * The build and test kinds this repository starts, in report order: each kind's label, the program names that run it, for pnpm the commands that install and, for tsc, eslint and fallow, the words that start a server.
  * A process counts under the first kind whose program it runs; `nodeTest` counts a node process with a test-runner option that runs none of the named programs.
- * A program started with one of its `serverOptions` is an editor's language server or an agent's MCP server (`tsc --lsp`, `fallow lsp-server`, `fallow mcp-server`), which stays open for hours and builds nothing, so it counts under no kind.
+ * A program started with one of its `serverOptions` is an editor's language server or an agent's MCP server (`tsc --lsp`, `eslint --mcp`, `fallow lsp-server`, `fallow mcp-server`), which stays open for hours and builds nothing, so it counts under no kind.
  */
 const PROCESS_KINDS = [
   { id: 'nodeTest', label: 'node --test', programs: [] },
@@ -83,6 +83,15 @@ const PROCESS_KINDS = [
     id: 'inProcessBuild',
     label: 'qa-build.mjs or build-fast.mjs',
     programs: ['qa-build.mjs', 'build-fast.mjs'],
+  },
+  // `pnpm lint` runs typed linting (projectService): each worker builds its own TypeScript program. pnpm's shim starts
+  // it as `node …/eslint/bin/eslint.js`. An editor's ESLint language server runs the ESLint extension's own
+  // `eslintServer.js`, under no name of this kind; `eslint --mcp` (ESLint's MCP setup) stays open while its server runs.
+  {
+    id: 'eslint',
+    label: 'eslint',
+    programs: ['eslint', 'eslint.js'],
+    serverOptions: ['--mcp'],
   },
   {
     id: 'fallow',
@@ -129,12 +138,14 @@ directory, and it signals no process.
 
 Kinds: node --test (a node process with a --test option), test-shard.mjs,
 run-pregate-tests.mjs, tsc (not an editor's language server, tsc --lsp), qa-build.mjs
-or build-fast.mjs (they build inside their own process), fallow (not its language or
-MCP server, fallow lsp-server or mcp-server), c8, pnpm install (install, i, add,
-update, up), package.mjs, check-package.mjs or vsce, checkHealth.mjs, gate.mjs. A
-process counts once, under the program it runs; a program whose path holds a space
-is read as two words and is not counted. esbuild is not counted by itself: other
-projects' dev servers keep its service process open for hours.
+or build-fast.mjs (they build inside their own process), eslint (not its MCP server,
+eslint --mcp; an editor's ESLint language server runs as eslintServer.js and is not
+counted), fallow (not its language or MCP server, fallow lsp-server or mcp-server),
+c8, pnpm install (install, i, add, update, up), package.mjs, check-package.mjs or
+vsce, checkHealth.mjs, gate.mjs. A process counts once, under the program it runs; a
+program whose path holds a space is read as two words and is not counted. esbuild is
+not counted by itself: other projects' dev servers keep its service process open for
+hours.
 
 Options:
   --max-used-swap-mb <n>  the most used swap that still counts as clear, in MB
