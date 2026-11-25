@@ -4096,7 +4096,7 @@ async function renameTrackedBack(
 }
 
 /**
- * Settles the dropping names of the tracked records at the start of every locked run, before anything reads any of them: the rollback record's, then the setup record's, then that of Codebook's record of the entry, which its rewrite and delete move aside too ({@link replaceReceipt}, {@link dropReceipt}) ({@link settleDroppedRecord}); called by {@link inLockedFolder}, so a rollback record's settlement never reads or marks a setup record that a stopped move left at its dropping name ({@link settleRollbackJournal}), the removal's first read finds its record where it stands ({@link hasUnrecordedRemoval}), and no read of `receipt.json` takes a record a stopped move left aside for a missing one.
+ * Settles the dropping names of the tracked records at the start of every locked run, before anything reads any of them: the rollback record's, then the setup record's, then that of Codebook's record of the entry, which its rewrite and delete move aside too ({@link replaceReceipt}, {@link dropReceipt}) ({@link settleDroppedRecord}); called by {@link inLockedFolder}, so a rollback record's settlement never reads or marks a setup record that a stopped move left at its dropping name ({@link settleRollbackJournal}), the inspection's read finds the record it decides on where it stands ({@link inspect}), and no read of `receipt.json` takes a record a stopped move left aside for a missing one.
  * @param context - The locked run; its pending path is the setup record.
  * @throws What {@link settleDroppedRecord} throws; the run goes no further then.
  * @example
@@ -6634,7 +6634,7 @@ async function assertLinkedBytes(
 }
 
 /**
- * Tells whether a pending record is that of a removal of this config that took the entry out and never recorded its completion; called by {@link settlePending} and {@link hasUnrecordedRemoval}.
+ * Tells whether a pending record is that of a removal of this config that took the entry out and never recorded its completion; called by {@link settlePending} and by {@link inspect}, whose judgment the removal retry ends and reports.
  * The phase is the one recovery reads ({@link leftoverPhaseOf}): a removal's record that a put-back by bytes marked handed and unverified ({@link Pending.bytesUnverified}) is still that removal in progress, so both readers answer for it as for the record without the mark.
  * @param context - The run.
  * @param pending - The pending record.
@@ -11541,6 +11541,8 @@ type Inspection = {
   tookBack?: 'file-removed' | 'removed'
   /** The version of `pending.json` this run read or last wrote and left standing ({@link Context.journalVersion}); undefined when the run found that name empty or emptied it itself. The rest of the run writes and deletes its own record only from that version on ({@link ownRecordContext}). */
   pendingVersion?: RecordVersion
+  /** Set when the record this run read and left standing is that of a removal of this config that took the entry out and never recorded its completion ({@link isUnrecordedRemoval}): the removal retry ends it and reports the entry removed. Judged on the record this inspection itself processed, never on an earlier separate read, so a record a backup or sync tool put at that name after the run started is the one the retry answers for. */
+  unrecordedRemoval?: boolean
 }
 
 /**
@@ -11608,7 +11610,15 @@ async function inspect(context: Context): Promise<Inspection> {
   })
   if (pending && reported) throw unsettledRefusal(run, phase, reported)
   // The rest of the run writes and deletes its own record only from the version this run left at that name ({@link ownRecordContext}).
-  return { ...inspection, pendingVersion: run.journalVersion?.current }
+  return {
+    ...inspection,
+    pendingVersion: run.journalVersion?.current,
+    // Judged on the record this inspection itself read, only while that record still stands (a record this run retired itself answers for nothing): the removal retry ends exactly the unrecorded removal this inspection left for it, never one an earlier separate read found where a backup or sync tool put another record meanwhile.
+    unrecordedRemoval:
+      pending !== undefined &&
+      run.journalVersion?.current !== undefined &&
+      isUnrecordedRemoval(run, pending),
+  }
 }
 
 /**
@@ -12186,7 +12196,7 @@ function removalEntryBackError({
 }
 
 /**
- * Confirms that the entry a removal just took out is still out of the config, and gives the synchronous look the record's delete passes right before its move and again before its unlink; called by {@link dropReceiptAfterRemoval} before the receipt is dropped.
+ * Confirms that the entry a removal just took out is still out of the config, and gives the synchronous look the record's delete passes right before its move and again before its unlink; called by {@link dropReceiptAfterRemoval} before the receipt is dropped, and by {@link answerRemovalWithoutTakeOut} for the entry the earlier removal a retry reports took out.
  * The config is read again through the thread pool: while it holds the entry the receipt owns, the removal's end state is already undone (a backup or sync tool put an earlier config back), so the record stays and the removal refuses instead of reporting a removal that did not last; the look at the config is then bound and rechecked synchronously, so a restore in the wide window between the take-out's publish and the record's unlink is never answered with a deleted record and an unmanaged entry.
  * @param context - The run.
  * @param receipt - The receipt that owns the entry the removal took out ({@link removalOwnership}).
@@ -12309,22 +12319,6 @@ export type DevinMcpRemovalOptions = {
 }
 
 /**
- * Tells whether the pending record is that of a removal that was started and never recorded as completed, which a retry finds after the entry was already taken out ({@link DevinMcpUnrecordedRemovalError}); called by {@link removeManagedDevinMcpEntry} before {@link inspect} retires the record.
- * @param context - The run.
- * @returns `true` for a record of this config that holds no entry hash (a removal) and no phase as recovery reads it (never completed; {@link isUnrecordedRemoval}).
- * @throws The refusal of {@link readRecord} for a record that cannot be read.
- */
-async function hasUnrecordedRemoval(context: Context): Promise<boolean> {
-  const pending = await readRecord(
-    context.pendingPath,
-    pendingSchema,
-    context.retry,
-    context.seam,
-  )
-  return pending !== undefined && isUnrecordedRemoval(context, pending)
-}
-
-/**
  * Removes the receipted `codebook` entry; called by Codebook: Remove Devin Desktop Setup and by a setup that rolls back its own write.
  * Deletes the file only when Codebook created it (the receipt says so and the inode is the one Codebook wrote) and nothing else is left in it. An entry that was edited since the receipt (any key but `disabled` and `disabledTools` added or changed) is left alone and the receipt is dropped, because Codebook no longer owns it; those two keys, which Devin sets, do not change ownership.
  * @param storageRoot - Codebook's global storage folder.
@@ -12348,14 +12342,13 @@ export async function removeManagedDevinMcpEntry(
     undefined,
     seam,
     async (context) => {
-      // Read before inspect retires it: an earlier removal that took the entry out and left its record unwritten.
-      const wasUnrecorded = await hasUnrecordedRemoval(context)
       const inspected = await inspect(context)
       // From here the removal writes and deletes its own record only from the version inspect left there.
       const run = ownRecordContext(context, inspected)
-      // The retry has read the record; it ends it now, only as the version inspect read ({@link inspect} leaves an unrecorded removal's record for this read).
+      // The retry ends the unrecorded removal's record now, only as the version inspect read ({@link inspect} leaves an unrecorded removal's record for this end, and judges it on the record it read itself, so a record a backup or sync tool put at that name after the run started is the one ended here).
       // A conflict can mean a backup restored the entry too, so this retry stops before touching the receipt.
-      if (wasUnrecorded) await dropPending(run, { onConflict: 'throw' })
+      if (inspected.unrecordedRemoval)
+        await dropPending(run, { onConflict: 'throw' })
       const ownership = removalOwnership(inspected, options.expectedGeneration)
       // Not Codebook's entry to take out (gone, changed, or a newer setup's): answer without touching the config.
       if ('status' in ownership)
@@ -12363,7 +12356,7 @@ export async function removeManagedDevinMcpEntry(
           context,
           ownership.status,
           inspected,
-          wasUnrecorded,
+          inspected.unrecordedRemoval === true,
         )
       const { status, keptLeft } = await takeEntryOut(run, ownership)
       return dropReceiptAfterRemoval(
@@ -12378,7 +12371,7 @@ export async function removeManagedDevinMcpEntry(
 
 /**
  * Answers a removal whose entry is not Codebook's to take out (gone, changed, or a newer setup's) without touching the config; called by {@link removeManagedDevinMcpEntry} under its lock.
- * The receipt of an entry that is gone or changed goes only while `receipt.json` still shows the record the run's own read found there ({@link dropReceipt}); a record a backup or sync tool put there after that read, also after a read that found the name empty, stays for the next run, and when the entry went (this run's take-back, or the earlier removal a retry reports) the notice says so ({@link keptReceiptSentence}). A record of the entry in another config that the run's read found there always stays: a removal that changed nothing refuses, naming it ({@link assertNoOtherConfigReceipt}), and one whose take-back took the entry out names it in its notice.
+ * The receipt of an entry that is gone or changed goes only while `receipt.json` still shows the record the run's own read found there ({@link dropReceipt}) and, when a receipt stands, only while that entry is still out of the config ({@link removalConfigStill}), as after a removal that took its entry out ({@link dropReceiptAfterRemoval}): a backup or sync tool that put an earlier config, with the entry, back meanwhile undoes the removal a retry reports, and the record is the only proof that entry is Codebook's. A record a backup or sync tool put at that name after that read, also after a read that found the name empty, stays for the next run, and when the entry went (this run's take-back, or the earlier removal a retry reports) the notice says so ({@link keptReceiptSentence}). A record of the entry in another config that the run's read found there always stays: a removal that changed nothing refuses, naming it ({@link assertNoOtherConfigReceipt}), and one whose take-back took the entry out names it in its notice.
  * @param context - The locked removal's paths and the version of the receipt it read.
  * @param status - What {@link removalOwnership} decided.
  * @param inspected - What {@link inspect} found under the lock.
@@ -12386,7 +12379,7 @@ export async function removeManagedDevinMcpEntry(
  * @returns
  * - `removed` when an earlier unrecorded removal already took the entry out (the retry reports it, so the window is still offered its reload), or this run's take-back's answer; either with the kept-record sentence as `cleanupFailure` when a record stays at `receipt.json`
  * - otherwise `status` itself, with `entryStays` when `not-managed` finds the entry still in the config without its receipt.
- * @throws The {@link otherConfigReceiptRefusal} when no take-back of this run took the entry out and `receipt.json` holds Codebook's record of the entry in another config. What {@link dropReceipt} throws is reported as `cleanupFailure` once the entry is out.
+ * @throws The {@link otherConfigReceiptRefusal} when no take-back of this run took the entry out and `receipt.json` holds Codebook's record of the entry in another config; the {@link RemovalEntryBackError} when the entry is back in the config, or the config changed again, before the record's delete: the record stays and nothing is reported. What {@link dropReceipt} throws otherwise is reported as `cleanupFailure` once the entry is out.
  * @example
  * await answerRemovalWithoutTakeOut(context, 'changed', inspected, false) // => { status: 'changed', path }
  * await answerRemovalWithoutTakeOut(context, 'not-managed', inspected, true) // => { status: 'removed', path, cleanupFailure: 'Codebook left the file at …/receipt.json as it is, …' } once a backup put a record back there
@@ -12402,11 +12395,20 @@ async function answerRemovalWithoutTakeOut(
   // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry, and only as the run read it.
   let cleanupFailure: string | undefined
   try {
+    // The receipt goes only while the entry that went out is still out of the config: a backup or sync tool that put an earlier config, with the entry, back meanwhile undoes the removal the retry reports, and the record is the only proof that entry is Codebook's, so the retry refuses instead of reporting a removal that did not last.
+    const configStill =
+      status !== 'superseded' && inspected.receipt
+        ? await removalConfigStill(context, inspected.receipt)
+        : undefined
     const receiptFate =
-      status === 'superseded' ? undefined : await dropReceipt(context)
+      status === 'superseded'
+        ? undefined
+        : await dropReceipt(context, configStill)
     // After the entry went, a record a backup or sync tool put at receipt.json meanwhile stays, and the notice says so.
     if (receiptFate === 'kept') cleanupFailure = keptReceiptSentence(context)
   } catch (error) {
+    // The entry is back or the config changed again: the removal did not last, so it refuses rather than reporting a removal beside a managed entry.
+    if (error instanceof RemovalEntryBackError) throw error
     // The entry is already out, so its result is still reported; the receipt that could not be dropped is named for manual cleanup.
     cleanupFailure =
       error instanceof JournalConflictError
