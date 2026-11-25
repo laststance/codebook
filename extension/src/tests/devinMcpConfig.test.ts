@@ -10016,6 +10016,95 @@ test("A file another program swaps in at a rollback record's dropping name while
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A foreign record a backup renames over a rollback record at the moment Codebook moves it aside goes back only as the file the move read: a file a sync tool swaps in at the dropping name before that put-back never reaches the record's name, stays there byte for byte, and the refusal names the dropping name", async (context) => {
+  // Value: protects=what a tracked record's move takes from the record's name goes back only as the very file the move read at the dropping name, so a file a sync tool swaps in there between that read and the put-back is never linked to the record's name, never becomes the record the next run reads, and stays at the dropping name byte for byte, named in the refusal (Cycle 0149 review round 4, MAJOR-A on moveTrackedAside); fails_when=either swap does not fire, the refresh resolves or says anything but the sentence naming the dropping name, anything stands at the rollback record's name, the swapped file at the dropping name changes or is gone, the dropping note is gone although the dropping name still stands, the setup record loses its take-back mark, or a receipt appears; no_claim=a real backup tool (the config module is loaded with a link and a rename that, once, rename another rollback record over pending.json.rollback right before Codebook's move of that name to its dropping name runs: its link since Cycle 0149 task 37, its rename before), a real sync tool (that module's lstat, once, swaps another file in at the dropping name right before the put-back's first look at it, after the move read the foreign record there; while the fresh private name the record's own name was renamed to still stands, the dropping name counts a second name of that file, and the move's own looks there never fire this), a swap between the put-back's first look and its link (a stated limit of the put-back), what the next refresh does with the swapped file (it stays there, named, Cycle 0149 task 35: its own test)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  const droppingNotePath = `${journalPath}.codebook-dropping-note`
+  // The foreign record a backup restores over the settled one right as the move runs: another rollback record of the same setup.
+  const foreignJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000241',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000242',
+  })}\n`
+  const swappedText = '{"swapped":"by a sync tool"}\n'
+  const backupPath = join(home, 'rollback-record-from-backup.json')
+  let isRestored = false
+  let isSwapped = false
+  /**
+   * Renames another rollback record over the settled one once, right as Codebook's move of that name to its dropping name runs (a link since Cycle 0149 task 37, a rename before).
+   * @param from - The name the move takes the record from.
+   * @param to - The name it gives the record.
+   * @example
+   * restoreAtMove(journalPath, droppingPath) // pending.json.rollback now holds the foreign record
+   */
+  const restoreAtMove = (from: string, to: string): void => {
+    // A backup restores another rollback record at that name right as Codebook moves the settled one aside to delete it.
+    if (from !== journalPath || to !== droppingPath || isRestored) return
+    isRestored = true
+    writeFileSync(backupPath, foreignJournalText)
+    renameSync(backupPath, journalPath)
+  }
+  const swappingBeforePutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          restoreAtMove(from, to)
+          return link(from, to)
+        },
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          // A sync tool swaps its own file in at the dropping name once the move read the foreign record there, right as the put-back's first look at that name waits. While the fresh private name the record's own name was renamed to still stands, the dropping name counts a second name of that file, and the move's own looks there never fire this.
+          if (
+            args[0] === droppingPath &&
+            !isSwapped &&
+            existsSync(droppingPath) &&
+            !existsSync(journalPath) &&
+            lstatSync(droppingPath).nlink === 1
+          ) {
+            isSwapped = true
+            swapFile(droppingPath, swappedText)
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          restoreAtMove(from, to)
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const firstError = await swappingBeforePutBack
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(isRestored, true)
+  assert.equal(isSwapped, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook moved its record at ${journalPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and then found another file there or none (a backup or sync tool may have replaced or moved it), so it did not move what stands there back and went no further; look at ${droppingPath} before you use it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${journalPath} only if it is still the record Codebook moved there and nothing stands there.`,
+  )
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(readFileSync(droppingPath, 'utf8'), swappedText)
+  assert.equal(existsSync(droppingNotePath), true)
+  assert.equal(JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack, true)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('An adoption whose setup record, moved aside to end it, cannot go back beside a rollback record a backup restored still takes its receipt back out, so the next refresh takes the failed setup back instead of keeping it', async (context) => {
   // Value: protects=when the look after a tracked record's move aside fails and the put-back fails too, the run throws the look's own refusal, so an adoption still tells a rollback record that came back from any other failure and takes the receipt it published back out (Cycle 0149 task 23, review round L1 P2: the renew error stays the thrown error, the put-back's failure its cause); fails_when=the restore does not fire, the first refresh says anything but the rollback record's changed sentence, the receipt stays, the restored rollback record or either setup record changes or is gone; no_claim=a real backup tool (the config module is loaded with a rename that, once, restores the rollback record at pending.json.rollback and another copy of the setup record at pending.json right after Codebook moved that record to its dropping name to end it, at the rename that emptied the record's name: since Cycle 0149 task 37 the one after the move's link), what the next refresh does beside both setup-record names (acceptance criterion 13's third state refuses, naming both), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
   // Arrange
@@ -22712,6 +22801,79 @@ test("A refresh after a run that stopped right after it moved Codebook's record 
     existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : 'absent',
     receiptText,
   )
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
+test("A run-start put-back whose unlink of the dropping name fails keeps the dropping note, so the copy the dropping name still holds is proven again and goes back at the next refresh after a sync tool removes the record's own name, instead of being refused as a file no note proves", async (context) => {
+  // Value: protects=the dropping note of a stopped move is dropped only once nothing stands at the dropping name any more, so when the put-back's unlink of that name fails the note stays and the copy the dropping name still holds, only another name of the record, is provable again: a sync tool that removes the record's own name then leaves the next run a record it proves and puts back instead of refusing it as a file it cannot prove (Cycle 0149 review round 4, MINOR on putNotedRecordBack); fails_when=the unlink failure does not fire, the first refresh answers anything but current, the dropping note is gone after it although the dropping name still stands, either name does not hold the record's bytes or the two are not one file, the second refresh answers anything but current, receipt.json does not hold the record's bytes after it, or a dropping name or its note stays; no_claim=a real I/O error (the config module is loaded with an unlink that fails once with EIO for receipt.json's dropping name, where the run start's put-back deletes that second name after its link back), a real sync tool (the test removes receipt.json itself between the two refreshes), what the first refresh does with the entry it finds current (nothing: its own tests)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  // A run stopped right after it moved the record to its dropping name, with the dropping note it writes first.
+  const droppingPath = leaveStoppedMove(receiptPath)
+  const droppingNotePath = `${receiptPath}.codebook-dropping-note`
+  let hasFailedUnlink = false
+  const failingUnlink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (...args: Parameters<typeof unlink>) => {
+          // The disk fails the put-back's unlink of the dropping name once, after the record was linked back to receipt.json.
+          if (args[0] === droppingPath && !hasFailedUnlink) {
+            hasFailedUnlink = true
+            throw Object.assign(
+              new Error(`EIO: i/o error, unlink '${droppingPath}'`),
+              { code: 'EIO' },
+            )
+          }
+          return unlink(...args)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const first = await failingUnlink
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      (result) => `resolved: ${result.status}`,
+      (error: Error) => error.message,
+    )
+  const isNoteAfterFirst = existsSync(droppingNotePath)
+  const isSharingAfterFirst =
+    existsSync(receiptPath) &&
+    existsSync(droppingPath) &&
+    statSync(receiptPath).ino === statSync(droppingPath).ino
+  const droppingAfterFirst = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  // A sync tool removes the record's own name; the dropping name holds the only copy.
+  rmSync(receiptPath)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => `resolved: ${result.status}`,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(hasFailedUnlink, true)
+  assert.equal(first, 'resolved: current')
+  assert.equal(isNoteAfterFirst, true)
+  assert.equal(isSharingAfterFirst, true)
+  assert.equal(droppingAfterFirst, receiptText)
+  assert.equal(second, 'resolved: current')
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(droppingNotePath), false)
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
