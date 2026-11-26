@@ -190,7 +190,7 @@ test('each build and test kind the repository starts is counted once per process
     },
     {
       pid: 5107,
-      command: `${modules}/.pnpm/@fallow-cli+darwin-arm64@3.47.0/node_modules/@fallow-cli/darwin-arm64/fallow`,
+      command: `${modules}/.pnpm/@fallow-cli+darwin-arm64@3.48.0/node_modules/@fallow-cli/darwin-arm64/fallow`,
       args: ['dupes', '--fail-on-issues'],
     },
     {
@@ -388,7 +388,7 @@ test("an editor's Fallow language server and an agent's Fallow MCP server are no
   // Arrange
   const node = '/Users/example/.vite-plus/js_runtime/node/24.22.1/bin/node'
   const modules = '/Users/example/codebook/extension/node_modules'
-  const nativeFallow = `${modules}/.pnpm/@fallow-cli+darwin-arm64@3.47.0/node_modules/@fallow-cli/darwin-arm64/fallow`
+  const nativeFallow = `${modules}/.pnpm/@fallow-cli+darwin-arm64@3.48.0/node_modules/@fallow-cli/darwin-arm64/fallow`
   const rows = [
     { pid: 6301, command: node, args: [`${modules}/fallow/bin/fallow-lsp`] },
     { pid: 6302, command: nativeFallow, args: ['lsp-server'] },
@@ -407,7 +407,7 @@ test("an editor's Fallow language server and an agent's Fallow MCP server are no
 test('a Fallow analysis is counted as a build', () => {
   // Arrange
   const nativeFallow =
-    '/Users/example/codebook/extension/node_modules/.pnpm/@fallow-cli+darwin-arm64@3.47.0/node_modules/@fallow-cli/darwin-arm64/fallow'
+    '/Users/example/codebook/extension/node_modules/.pnpm/@fallow-cli+darwin-arm64@3.48.0/node_modules/@fallow-cli/darwin-arm64/fallow'
   const rows = [
     {
       pid: 6305,
