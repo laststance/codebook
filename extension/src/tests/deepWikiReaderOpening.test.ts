@@ -186,6 +186,32 @@ test('a Devin Desktop window serves its Wiki and answers its questions with the 
   }
 })
 
+// Value: protects=VS Code and Cursor Wiki readers and source-cited answers, which must keep their own registered URI schemes when Devin Desktop is supported; fails_when=the activation scheme choice becomes hard-coded to Devin or keys on the wrong host fact; why_new=Cycle 0150 coverage audit: only the Devin branch of {@link wikiEditorSchemeOf} was activation-tested; seam=the real activation with a stand-in reader and model answer; no_claim=the OS protocol prompt (native QA covers it)
+test('VS Code and Cursor windows serve their Wikis and answer their questions with their own URI schemes', async () => {
+  for (const [appName, uriScheme] of [
+    ['Visual Studio Code', 'vscode'],
+    ['Cursor', 'cursor'],
+  ] as const) {
+    // Arrange
+    const window = await openWikiOpeningWindow({
+      environment: { appName, uriScheme },
+      models: [{ id: `${uriScheme}-auto`, name: 'Auto', vendor: uriScheme }],
+    })
+    try {
+      await window.open()
+
+      // Act
+      await window.readers[0]?.ask('Where is it?', new AbortController().signal)
+
+      // Assert
+      assert.deepEqual(window.readerSchemes, [uriScheme])
+      assert.deepEqual(window.answerSchemes, [uriScheme])
+    } finally {
+      await window.close()
+    }
+  }
+})
+
 /**
  * Puts a link to a named pipe that nobody writes to at a path of the window's Wiki, in place of the file there; a read that waits on the pipe is released when the test ends, also when its body was stopped at its time bound.
  * @param context - The test, at whose end a writer opens and closes the pipe.
