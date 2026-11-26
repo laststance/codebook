@@ -32,7 +32,7 @@ export type DevinBridgeRemovedReason =
 /**
  * The answer of {@link checkDevinBridgeReceipts}:
  * - `stands`: the descriptor's mark, the skill receipt and the MCP receipt agree and are installed (and match the binding, when one was given).
- * - `removed`: an observed absence or invalid state, with the `reason` and the `path` of the file it was observed on.
+ * - `removed`: an observed absence or invalid state, with the `reason` and the `path` of the file it was observed on (the publish record beside the MCP receipt, or that record's dropping name, when a mode problem of that record keeps the receipt from standing, {@link ReceiptState}).
  * - `replaced`: only with a binding; the descriptor now names another instance, endpoint or installation than the one the bridge connected for.
  * - `no-answer`: a read failed (descriptor exhaustion, `EIO` and the like), so nothing is known; the caller treats it like a timeout.
  */
@@ -176,7 +176,8 @@ function decideFromSettledReads(
       return {
         answer: 'removed',
         reason: receipt.reason,
-        path: receipt.receiptPath,
+        // The file the reason was seen on: the publish record beside the MCP receipt when it was seen there.
+        path: receipt.recordPath ?? receipt.receiptPath,
       }
   // Nothing definite is known: wait for the reads that are pending.
   if (!descriptor || !skill || !mcp) return undefined
@@ -198,7 +199,7 @@ function decideFromSettledReads(
 
 /**
  * Says whether the setup a descriptor was marked for still stands, as the Devin bridge's check before it opens an MCP session (the first connection, a reconnect after an expired session, and a refusal with 401 or 403); called by the Devin bridge, and by setup for the bridge's own rules.
- * The descriptor must name an installation (its mark), the skill receipt must say `installed: true` and the MCP receipt must be installed with the descriptor's installation id. All three are read together with the bounded read ({@link readPrivateJsonState}) from the parent of the agent folder, the folder the descriptor stands in. A read that only failed to look (descriptor exhaustion, `EIO`) is never read as a removal: it answers `no-answer`, and only when no read observed a removal.
+ * The descriptor must name an installation (its mark), the skill receipt must say `installed: true` and the MCP receipt must be installed with the descriptor's installation id, and not be a file the publish record beside it notes as left there unverified ({@link readReceiptState}). All three are read together with the bounded read ({@link readPrivateJsonState}) from the parent of the agent folder, the folder the descriptor stands in. A read that only failed to look (descriptor exhaustion, `EIO`) is never read as a removal: it answers `no-answer`, and only when no read observed a removal.
  * Order: the check answers as soon as the reads that settled give a definite answer, without waiting for a read still pending: a removed descriptor, a descriptor without a mark, a descriptor that differs from the binding (`replaced`), then a removed receipt. Once every read settled, a failed read answers `no-answer` and a receipt of another installation answers `removed` with `another-installation`.
  * The three reads go through the read gate: a read of the same file still in flight from an earlier check (one an early answer left behind) is never started again, and this check gets a read that began after it.
  * @param descriptorPath - The selected descriptor, in the agent folder.

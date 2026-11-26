@@ -80,16 +80,13 @@
     },
     "src/extension.ts": {
       "complexity_high": {
-        "count": 2
+        "count": 1
       },
       "complexity_moderate": {
         "count": 1
       },
-      "crap_high": {
-        "count": 1
-      },
       "crap_moderate": {
-        "count": 1
+        "count": 2
       }
     },
     "src/nativeRepositoryBootstrap.ts": {
@@ -520,8 +517,8 @@
     "src/ui/studyHtml.ts:complexity",
     "src/resources.ts:complexity",
     "src/utils/assertStudyCheckpoint.ts:high impact",
-    "src/studyWorkspace.ts:complexity",
     "src/utils/projectConfiguredStudy.ts:complexity",
+    "src/studyWorkspace.ts:complexity",
     "src/recordingStore.ts:complexity",
     "src/utils/decodeConfiguredStudy.ts:high impact",
     "src/learningLibrary.ts:hidden coupling",
@@ -532,8 +529,8 @@
     "src/utils/projectRecording.ts:high impact",
     "src/utils/configuredDomExpression.ts:complexity",
     "src/configuredBrowserRun.ts:complexity",
-    "src/server.ts:complexity",
     "src/extension.ts:complexity",
+    "src/server.ts:complexity",
     "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
     "src/repositoryReader.ts:complexity",
     "src/utils/readRecordingResource.ts:complexity",
@@ -541,8 +538,8 @@
     "skills/codebook/publish-wiki.mjs:high impact",
     "src/cursorSkillDeployment.ts:complexity",
     "skills/codebook/render-wiki-diagrams.mjs:complexity",
-    "src/utils/validateRepositoryBook.ts:complexity",
     "src/runtimeSupport/hostBrowser.ts:complexity",
+    "src/utils/validateRepositoryBook.ts:complexity",
     "src/studyWorkspace/presentationState.ts:complexity",
     "src/studyWorkspace/presentationGuards.ts:complexity",
     "src/ui/repositoryHtml.ts:complexity",

@@ -310,6 +310,7 @@ async function devinWindow(
     notices: Notice[] = [],
     modalQuestions: string[] = [],
     outputLines: string[] = [],
+    outputErrorLines: string[] = [],
     executedCommands: string[] = [],
     contextKeys = new Map<string, unknown>(),
     writtenEntries: DevinEntry[] = [],
@@ -485,7 +486,9 @@ async function devinWindow(
         info(line: string): void {
           outputLines.push(line)
         },
-        error(): void {},
+        error(line: string): void {
+          outputErrorLines.push(line)
+        },
         dispose(): void {},
       }),
       showInformationMessage(message: string, ...actions: string[]) {
@@ -1089,6 +1092,7 @@ async function devinWindow(
     notices,
     modalQuestions,
     outputLines,
+    outputErrorLines,
     executedCommands,
     writtenEntries,
     refreshedEntries,
@@ -1324,6 +1328,45 @@ test('a Devin Desktop window whose setup was removed elsewhere reconnects nothin
     )
     // Assert
     assert.deepEqual(window.steps, ['verify Devin skill'])
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop window that loads while Codebook's record of the entry stands only at its private dropping name (a run stopped while it moved receipt.json there to rewrite or delete it) still runs the locked entry refresh, whose run start puts that record back, instead of calling the setup removed when its skill check fails too (Cycle 0149 ship review pass 2, red team 1 on extension.ts:2588); fails_when=the window writes the removed-setup line or any Output line but the skill check's refusal, shows a notice, or never refreshes the entry, so the record a stopped run left there is never put back at window load, all read once the reconnect at activation settled (Cycle 0149 final-range review: a wait that ended at the server start missed what the rest of the reconnect writes or shows); no_claim=what the real refresh does with that record (the config module's own tests: the run start puts it back while its dropping note proves it), a real stop (the test writes the record at receipt.json.codebook-dropping and nothing at receipt.json, as such a stop leaves them); seam=module stand-ins of the skill (its check fails), config, Node and server, and the real records in a temporary storage
+test("a Devin Desktop window whose skill check fails while Codebook's record of the entry stands only at its dropping name refreshes the entry instead of calling the setup removed", async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await mkdir(join(storageDirectory, 'devin-mcp'), { recursive: true })
+  await writeFile(
+    join(storageDirectory, 'devin-mcp/receipt.json.codebook-dropping'),
+    MCP_RECEIPT_TEXT,
+    { mode: 0o600 },
+  )
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    skillManaged: false,
+    entryReceipt: false,
+    storageDirectory,
+  })
+  try {
+    // Act
+    // The reconnect at activation settles once it started the server or decided not to, so a line or notice it raises after the server start is in by then.
+    const reconnect = await within(window.whenReconnected(), 10_000)
+    // Assert
+    assert.equal(reconnect, undefined)
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'refresh MCP entry',
+      'start server',
+    ])
+    assert.deepEqual(window.outputLines, [
+      'Codebook did not refresh its Devin Desktop skill: Devin Desktop skill is missing or was changed: /home/user/.config/devin/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+    ])
+    assert.deepEqual(window.outputErrorLines, [])
     assert.deepEqual(window.notices, [])
   } finally {
     await window.loaded.deactivate()

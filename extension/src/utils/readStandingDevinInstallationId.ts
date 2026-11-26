@@ -17,7 +17,7 @@ async function whenRemoved(read: Promise<ReceiptState>): Promise<true> {
 }
 
 /**
- * Reads the installation id the window's descriptor mark would carry, but only while both receipts stand under the Devin bridge's own rules (each installed and private; the MCP one with its installation id), so a window is never marked for a setup the bridge would refuse; called by the extension's mark decision on every descriptor write and sync.
+ * Reads the installation id the window's descriptor mark would carry, but only while both receipts stand under the Devin bridge's own rules (each installed and private; the MCP one with its installation id, and not a file its publish record notes as left there unverified, {@link readReceiptState}), so a window is never marked for a setup the bridge would refuse; called by the extension's mark decision on every descriptor write and sync.
  * An observed removal answers at once, without waiting for the other receipt's read (which may never return); both receipts installed is the only answer that needs both reads.
  * A receipt that was observed removed, unreadable by its mode or without an id counts as not standing; a receipt whose read could not look at all (descriptor exhaustion, `EIO`) is neither: it answers `null`, so a transient failure is never taken for a removal and the caller can ask again or keep the mark it had.
  * Both reads go through the read gate: a receipt read still in flight from an earlier call (one an early removal answer left behind) is never started again, and this call gets a read that began after it.
