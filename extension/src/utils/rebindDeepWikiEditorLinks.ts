@@ -117,7 +117,7 @@ function freeOpenTargetIdIn(html: string): string {
 }
 
 /**
- * Binds Wiki actions to the host serving each reader response so one published site works in both editors, and names the file and line the rail's entry opens on every served page.
+ * Binds Wiki actions to the host serving each reader response so one published site works in each serving editor, and names the file and line the rail's entry opens on every served page.
  *
  * Called by {@link servedWikiPageHtml} for every HTML page the Wiki reader serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address ({@link openTargetHtml}): the shown file and line, and the same as written as the link's description; it names the target without being published again. A page published by a build of Cycle 0046 before finding 600, whose link is described by the shown target with its wrap points, is first put back into the shape of 0.2.29.0 and gets the same. The added description takes an id no element of that page carries ({@link freeOpenTargetIdIn}); the page's ids are read only for a page with such an entry.
  *
@@ -141,7 +141,12 @@ export function rebindDeepWikiEditorLinks(
   tagAtBodyEnd?: string,
 ): string {
   // The published page says VS Code, its fallback; the served one names the editor that opens the source.
-  const openLabel = `Open in ${editorScheme === 'cursor' ? 'Cursor' : editorScheme === 'devin' ? 'Devin Desktop' : 'VS Code'}`
+  const editorLabels = {
+    vscode: 'VS Code',
+    cursor: 'Cursor',
+    devin: 'Devin Desktop',
+  } as const
+  const openLabel = `Open in ${editorLabels[editorScheme]}`
   const relabeledPage = html
     .replace(
       OPEN_ENTRY_LABEL,
