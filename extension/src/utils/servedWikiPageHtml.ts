@@ -22,7 +22,7 @@ import { rebindDeepWikiEditorLinks } from './rebindDeepWikiEditorLinks'
 export function servedWikiPageHtml(
   html: string,
   options: {
-    editorScheme: 'vscode' | 'cursor'
+    editorScheme: 'vscode' | 'cursor' | 'devin'
     clientAddress: string
     publication: string | undefined
   },

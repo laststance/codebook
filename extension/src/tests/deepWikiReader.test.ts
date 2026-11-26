@@ -236,7 +236,7 @@ test('generated Wiki reader refuses malformed source identities rather than show
   }
 })
 
-test('the same published Wiki opens source and update links in the active editor without rewriting static files', async () => {
+test('the same published Wiki opens source and update links in VS Code, Cursor or Devin Desktop without rewriting static files', async () => {
   // Arrange
   const projectDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-reader-links-'),
@@ -272,10 +272,17 @@ test('the same published Wiki opens source and update links in the active editor
     answer,
     'vscode',
   )
+  const devinReader = await startDeepWikiReader(
+    output,
+    projectRoot,
+    answer,
+    'devin',
+  )
   try {
     // Act
     const cursorHtml = await (await fetch(cursorReader.url)).text()
     const codeHtml = await (await fetch(codeReader.url)).text()
+    const devinHtml = await (await fetch(devinReader.url)).text()
 
     // Assert
     assert.match(
@@ -308,13 +315,35 @@ test('the same published Wiki opens source and update links in the active editor
       /href="vscode:\/\/laststance\.codebook\/source\?path=src%2Fb\.ts"/,
     )
     assert.doesNotMatch(codeHtml, /href="cursor:\/\/laststance\.codebook/)
+    assert.match(
+      devinHtml,
+      /href="devin:\/\/laststance\.codebook\/source\?path=src%2Fa\.ts"/,
+    )
+    assert.match(
+      devinHtml,
+      /href="devin:\/\/laststance\.codebook\/update\?root=%2Frepo"/,
+    )
+    assert.match(
+      devinHtml,
+      /href="devin:\/\/laststance\.codebook\/settings\?root=%2Frepo"/,
+    )
+    assert.match(
+      devinHtml,
+      /href="devin:\/\/laststance\.codebook\/source\?path=src%2Fb\.ts"/,
+    )
+    assert.doesNotMatch(devinHtml, /href="vscode:\/\/laststance\.codebook/)
+    assert.doesNotMatch(devinHtml, /href="cursor:\/\/laststance\.codebook/)
     assert.match(cursorHtml, /href="https:\/\/example\.com\/wiki"/)
     assert.equal(
       await readFile(join(output, 'index.html'), 'utf8'),
       publishedHtml,
     )
   } finally {
-    await Promise.all([cursorReader.close(), codeReader.close()])
+    await Promise.all([
+      cursorReader.close(),
+      codeReader.close(),
+      devinReader.close(),
+    ])
     await removeTestFolder(projectDirectory)
   }
 })

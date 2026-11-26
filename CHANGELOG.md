@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.146.0] - 2026-11-27 (development candidate)
+
+Cycle 0150 ([Issue #374](https://github.com/laststance/codebook/issues/374)), a feature cycle. **A generated LLM Wiki served in Devin Desktop now opens its source, update and settings links in Devin Desktop, while the published Wiki files keep VS Code as their durable fallback.** The page's rail says **Open in Devin Desktop** when Devin Desktop serves it, source citations written by the question answerer use Devin Desktop's URI scheme, and the reader rebinds existing VS Code or Cursor links in memory instead of rewriting the published files.
+
+### Added
+- **Devin Desktop is now a Wiki source-link host.** In a served Wiki, source citations, the first-source rail entry, **Update LLM Wiki** and **Open Codebook settings** use `devin://laststance.codebook/…`; VS Code and Cursor continue to use their own schemes, and a Wiki published before this version is rebound the same way when it is served.
+- **Wiki answers in Devin Desktop cite sources with Devin Desktop links.** A citation in an answer therefore opens the cited line in the same editor in which the Wiki is being read.
+
+### Fixed
+- **Published Wiki files now keep one fallback editor.** Even when an authored page spells a Codebook editor link as Cursor or Devin Desktop, publication writes it as `vscode://laststance.codebook/…`; the serving reader remains the only place that binds the link to the active editor.
+
 ## [0.2.145.0] - 2026-11-25 (development candidate)
 
 Cycle 0149 ([Issue #372](https://github.com/laststance/codebook/issues/372)), a bug-fix cycle. **Codebook's Devin Desktop setup never destroys a record or a private copy of your MCP config that another program puts back in the middle of a run, never takes a file it did not verify for its own record, and never answers success for a failed setup.** It fixes the sixteen defects that Cycle 0148's review limit carried and the defects that this cycle's reviews found in the same code.

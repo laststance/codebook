@@ -294,6 +294,7 @@ import { thrownMessage } from './utils/thrownMessage'
 import { unreadWikiUpdateEnd } from './utils/unreadWikiUpdateEnd'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { watchWikiUpdateSigns } from './utils/watchWikiUpdateSigns'
+import { wikiEditorSchemeOf } from './utils/wikiEditorSchemeOf'
 import { wikiGenerateNotice } from './utils/wikiGenerateNotice'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
@@ -519,6 +520,8 @@ export function activate(
   setDevinDesktopContext()
   /** The editor host as the LLM Wiki code names it ({@link WikiUpdateHost}). */
   const wikiHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
+  /** The URI scheme of the editor serving this window's Wiki reader. */
+  const wikiEditorScheme = wikiEditorSchemeOf(isDevinHost, wikiHost)
   /** Whether a Devin setup run of this window is between its provisional save and its commit or rollback: only then does the provisional workspace count as the setup ({@link effectiveDevinSetupOf}), so a sync during the run does not unmark the run's own mark. */
   let isDevinRunProvisional = false
   /**
@@ -4842,7 +4845,7 @@ export function activate(
                   projectRoot,
                   sources,
                   question,
-                  wikiHost,
+                  wikiEditorScheme,
                   cancellation.token,
                   pageGuide,
                 )
@@ -4850,7 +4853,7 @@ export function activate(
                 cancellation.dispose()
               }
             },
-            wikiHost,
+            wikiEditorScheme,
             () => wikiUpdateRun.status(),
           )
           // A source also changes without a save in this editor (an agent's CLI and Git write files directly), so the project's files are watched for as long as the reader serves.

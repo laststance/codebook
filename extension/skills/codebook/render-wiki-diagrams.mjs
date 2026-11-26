@@ -392,8 +392,8 @@ export const unbalancedClauseOf = html => {
 };
 /** The schemes an address in a page's content may name for any place: the web's and mail's. Any other (`javascript:`, `data:`, `file:` …) is refused by {@link scriptingClauseOf}, except Codebook's own editor addresses ({@link CODEBOOK_ADDRESS_STARTS}). */
 const ADDRESS_SCHEMES = new Set(['http', 'https', 'mailto']);
-/** How Codebook's own addresses start in both editors, which the reader binds to the editor that serves the page: an address of the editors' schemes is accepted only under Codebook's authority, never another extension's URI handler or the editor's file handler (`vscode://file/…`). */
-const CODEBOOK_ADDRESS_STARTS = ['vscode://laststance.codebook/', 'cursor://laststance.codebook/'];
+/** How Codebook's own addresses start in the three editors, which the reader binds to the editor that serves the page: an address of the editors' schemes is accepted only under Codebook's authority, never another extension's URI handler or the editor's file handler (`vscode://file/…`). */
+const CODEBOOK_ADDRESS_STARTS = ['vscode://laststance.codebook/', 'cursor://laststance.codebook/', 'devin://laststance.codebook/'];
 /** Whether an address, as {@link isAcceptedAddress} reads it, is one of Codebook's own ({@link CODEBOOK_ADDRESS_STARTS}); the scheme and the authority compare without case, as a browser compares them. Called by {@link isAcceptedAddress}. @example isCodebookAddress('cursor://laststance.codebook/source?path=a.ts') // => true; isCodebookAddress('vscode://file/etc/hosts') // => false */
 const isCodebookAddress = read => CODEBOOK_ADDRESS_STARTS.some(start => read.toLowerCase().startsWith(start));
 /** The attributes whose value a browser follows, loads or submits to as an address, SVG's `xlink:href` among them; `srcset` holds a list of them, and `cite` names the source of a quote. */
@@ -463,12 +463,12 @@ const legacyCharacters = (run, next) => {
 };
 /** The characters of a named reference as a browser reads it in an attribute value: one of {@link ASCII_NAMED_REFERENCES}, or a name a browser reads without its semicolon ({@link legacyCharacters}); `undefined` to leave it as written. Called by {@link browserText}. @example browserName('sol;', 'h') // => '/' */
 const browserName = (run, next) => Object.hasOwn(ASCII_NAMED_REFERENCES, run) ? ASCII_NAMED_REFERENCES[run] : legacyCharacters(run, next);
-/** Reads an attribute value as a browser's tokenizer reads it ({@link browserNumber}, {@link browserName}), where {@link attributeText} reads only the references the publisher writes: `/&sol;host/x` is `//host/x` for a browser. Called by {@link addressClauseOf}. @example browserText('/&sol;host/x') // => '//host/x' */
-const browserText = written => written.replace(BROWSER_REFERENCE, (reference, digits, run, offset) => digits === undefined ? browserName(run, written[offset + reference.length]) ?? reference : browserNumber(digits));
+/** Reads an attribute value as a browser's tokenizer reads it ({@link browserNumber}, {@link browserName}), a raw NUL as the replacement character, where {@link attributeText} reads only the references the publisher writes: `/&sol;host/x` is `//host/x` for a browser. Called by {@link addressClauseOf}. @example browserText('/&sol;host/x') // => '//host/x' */
+export const browserText = written => written.replace(/\0/g, '\uFFFD').replace(BROWSER_REFERENCE, (reference, digits, run, offset) => digits === undefined ? browserName(run, written[offset + reference.length]) ?? reference : browserNumber(digits));
 
 /** The clause a refusal of an address attribute ends with when one of its addresses names another scheme than {@link ADDRESS_SCHEMES}, is no Codebook address ({@link CODEBOOK_ADDRESS_STARTS}) or is a network path, read as the publisher reads it ({@link attributeText}) or as a browser does ({@link browserText}); called by {@link attributeScriptingClauseOf}. @returns The clause, or undefined for an attribute that is no address or leads nowhere else. @example addressClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
 const addressClauseOf = (tag, name, written) => ADDRESS_ATTRIBUTES.has(name) && [attributeText(written), browserText(written)].some(text => !addressesOf(name, text).every(isAcceptedAddress))
-  ? `must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`
+  ? `must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/, cursor://laststance.codebook/ or devin://laststance.codebook/ address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`
   : undefined;
 /** The clause a refusal of one attribute of a start tag ends with: an event attribute, or an address of another scheme ({@link addressClauseOf}); called by {@link tagScriptingClauseOf}. @returns The clause, or undefined for an attribute that runs no script and leads nowhere else. @example attributeScriptingClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
 const attributeScriptingClauseOf = (tag, name, written) => {
@@ -492,7 +492,7 @@ export const scriptingClauseOf = html => {
 };
 /** The quote a changed attribute value is printed in: the author's single quotes, and double quotes otherwise, also where the author wrote the value bare, because the changed text may hold a space, which would end a bare value. Called by {@link withAttributeValues}. @example quoteOf('a') // => "'"; quoteOf(undefined) // => '"' */
 const quoteOf = single => single === undefined ? '"' : "'";
-/** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link slotAttributeCountOf} here and by the page renderer when it renames a content id. `rewrite` gets the attribute's name in lower case and its value as text (its character references read) and returns the text to print; a changed value is printed escaped and in quotes: the author's, or double quotes where the author used none. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
+/** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link slotAttributeCountOf} here and by the page renderer when it renames a content id. `rewrite` gets the attribute's name in lower case, its value as text (the publisher's character references read) and the value as written; it returns the text to print; a changed value is printed escaped and in quotes: the author's, or double quotes where the author used none. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
 export const withAttributeValues = (html, rewrite) => html.replace(COMMENT_OR_START_TAG, markup => {
   if (markup.startsWith('<!--')) return markup;
   // The tag's name ends at the first space, slash or closing bracket; what follows are its attributes.
@@ -500,7 +500,7 @@ export const withAttributeValues = (html, rewrite) => html.replace(COMMENT_OR_ST
   return markup.slice(0, nameEnd) + markup.slice(nameEnd).replace(ATTRIBUTE, (attribute, lead, name, equals, double, single, bare) => {
     // An attribute without a value refers to nothing.
     if (equals === undefined) return attribute;
-    const text = attributeText(writtenValue(double, single, bare)), rewritten = rewrite(name.toLowerCase(), text);
+    const written = writtenValue(double, single, bare), text = attributeText(written), rewritten = rewrite(name.toLowerCase(), text, written);
     // An unchanged attribute keeps its exact text.
     return rewritten === text ? attribute : `${lead}${name}${equals}${quoteOf(single)}${escapeHtml(rewritten)}${quoteOf(single)}`;
   });

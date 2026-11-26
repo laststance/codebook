@@ -27,6 +27,7 @@ const ADDRESS_SCHEMES = new Set(['http', 'https', 'mailto'])
 const CODEBOOK_ADDRESS_STARTS = [
   'vscode://laststance.codebook/',
   'cursor://laststance.codebook/',
+  'devin://laststance.codebook/',
 ]
 /** The character references the publisher reads in an attribute value (`CHARACTER_REFERENCE` of `render-wiki-diagrams.mjs`): a decimal or hexadecimal number and the five names it writes, each with its semicolon. */
 const CHARACTER_REFERENCE =
@@ -58,7 +59,7 @@ const REBOUND_ATTRIBUTES = new Set([
 ])
 /** The start of a value that writes Codebook's address plainly, in any case: the scheme the rebinding replaces in place. */
 const CODEBOOK_ADDRESS_AS_WRITTEN =
-  /^(?:vscode|cursor)(?=:\/\/laststance\.codebook\/)/i
+  /^(?:vscode|cursor|devin)(?=:\/\/laststance\.codebook\/)/i
 /** The rename of an attribute that loses its effect: a data attribute, which no browser follows or acts on. */
 const UNLINKED_NAME = 'data-codebook-unlinked'
 /** A select start tag in any case: only a select element takes the select rules, so a page without one reads alike under those of 2025 and those before. */
@@ -210,25 +211,31 @@ type Edit = { start: number; end: number; text: string }
  */
 function reboundAddressOf(
   attribute: HtmlAttribute,
-  editorScheme: 'vscode' | 'cursor',
+  editorScheme: 'vscode' | 'cursor' | 'devin',
 ): Edit | undefined {
   const { written } = attribute
   if (written === undefined || !REBOUND_ATTRIBUTES.has(attribute.name))
     return undefined
   const address = addressAsBrowserReads(written)
   const lowered = address.toLowerCase()
-  if (!CODEBOOK_ADDRESS_STARTS.some((start) => lowered.startsWith(start)))
-    return undefined
+  const sourceScheme = ['vscode', 'cursor', 'devin'].find((scheme) =>
+    lowered.startsWith(`${scheme}://laststance.codebook/`),
+  )
+  if (sourceScheme === undefined) return undefined
   // A value with its quotes is two characters longer than the value as written.
   const valueAt =
     attribute.valueStart +
     (attribute.valueEnd - attribute.valueStart > written.length ? 1 : 0)
   return CODEBOOK_ADDRESS_AS_WRITTEN.test(written)
-    ? { start: valueAt, end: valueAt + editorScheme.length, text: editorScheme }
+    ? {
+        start: valueAt,
+        end: valueAt + sourceScheme.length,
+        text: editorScheme,
+      }
     : {
         start: attribute.valueStart,
         end: attribute.valueEnd,
-        text: `"${escapeHtml(editorScheme + address.slice(editorScheme.length))}"`,
+        text: `"${escapeHtml(editorScheme + address.slice(sourceScheme.length))}"`,
       }
 }
 
@@ -244,7 +251,7 @@ function reboundAddressOf(
 function editOf(
   attribute: HtmlAttribute,
   tagName: string,
-  editorScheme: 'vscode' | 'cursor',
+  editorScheme: 'vscode' | 'cursor' | 'devin',
 ): Edit[] {
   if (isRefusedAttribute(attribute, tagName))
     return [
@@ -381,7 +388,7 @@ function withNoLinkAnyReadingRefuses(servedByChrome: string): string {
  *
  * Refused are an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …), a refresh (`<meta http-equiv="refresh">`), a frame's own page (`srcdoc`), an svg animation of an address, and a `referrerpolicy` or a meta `name="referrer"` (which would let a page send its own address, with the reader's private path token, to another site), each read as a browser reads its value ({@link isRefusedAttribute}). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing. A Codebook address in a link, a form's action or a button's form action gets the serving editor's scheme, in whatever form a browser reads it ({@link reboundAddressOf}).
  *
- * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is a copy in this file of the one the publisher's renderer applies (`isAcceptedAddress`, private to `render-wiki-diagrams.mjs` and reached through its exported `scriptingClauseOf`, which `render-wiki.mjs` calls for every page), not code the two share; the test 'the reader keeps exactly the addresses the shipped publisher accepts in a page’s content' holds the two alike, so a page reads alike published today and served. One published site works in both editors, as each binds Codebook's addresses to itself.
+ * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is a copy in this file of the one the publisher's renderer applies (`isAcceptedAddress`, private to `render-wiki-diagrams.mjs` and reached through its exported `scriptingClauseOf`, which `render-wiki.mjs` calls for every page), not code the two share; the test 'the reader keeps exactly the addresses the shipped publisher accepts in a page’s content' holds the two alike, so a page reads alike published today and served. One published site works in every supported editor, as each binds Codebook's addresses to itself.
  * How: the page is read as Chrome 151 reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. The reader opens in the system's default browser, which may read a select by the rules before 2025 or run without scripting; so a page with a select or a noscript is then read under each of those readings too, and an attribute any of them refuses loses its effect as well, also where Chrome reads it as text ({@link withNoLinkAnyReadingRefuses}); Codebook's addresses are rebound by Chrome's reading alone. On an ordinary page the time grows with the page's size. A page with a select and a noscript is read under all four readings: Chrome's, then the three others, and again under all four after each round that renamed an attribute, until a round renames nothing ({@link withNoLinkAnyReadingRefuses}); where an svg or a math start tag comes before the reader's script tag and Chrome's reading leaves no such content open there, up to three more readings of the page up to the tag ({@link isForeignContentOpenInAnyReading}); and where the tag goes at the page's end, or after a meta that leaves such content, Chrome's reading of the whole page once more, with them in it, before the rounds. A page built for it can make the HTML parser's own rules take time that grows with the square of its nesting (13 s to minutes for 1 MB), which no reading of the tags avoids; so the Wiki reader runs this function only on a worker thread, which it stops after {@link WIKI_PAGE_SERVE_DEADLINE_MS} ({@link servedWikiPageOffThread}).
  * The reader's own script tag, when the caller hands one, goes in by the same pass, at the start of the `</body>` Chrome's reading took as the body's end ({@link readHtmlPage}): there Chrome reads between two tags, so the tag starts and ends a script element of its own and changes no other tag; a `</body>` in a comment, a value or a script's text, or written in capitals, is read as a browser reads it. A page without such an end, or whose body no `<body>` tag opened (the parser records no end for a body it adds by itself), gets the tag at its end, and the filter reads the page with the tag in it, as the tag may close a tag the page leaves open; a page that ends inside a comment, an open tag or a raw-text element then takes the tag into that text, where it loads nothing (a hand-edited page only: the publisher opens every page's body with a tag). So does a page with a `<template>` left open: the parser ignores every `</body>` inside the template, so the page has no body end it takes, and the tag at the page's end becomes part of the template's content, which a browser keeps inert, so the page runs without the reader's script (a hand-edited page only: the renderer refuses a `template` tag in a page's content). Where svg or MathML content is open at the tag's place in Chrome's reading or in another reading the filter judges the page under, by the select rules before 2025 or without scripting (an element of it other than an integration point is the current node there), a script tag would be an svg or MathML element in that reading, which loads nothing; so a meta that leaves that content goes in before the tag ({@link FOREIGN_CONTENT_EXIT}, {@link isForeignContentOpenInAnyReading}), and the filter reads the page with both in it, as that reading then reads what follows outside that content.
  * Called by {@link rebindDeepWikiEditorLinks} last, for every page the reader serves, so the page served is this function's output.
@@ -398,7 +405,7 @@ function withNoLinkAnyReadingRefuses(servedByChrome: string): string {
  */
 export function withServedAddresses(
   html: string,
-  editorScheme: 'vscode' | 'cursor',
+  editorScheme: 'vscode' | 'cursor' | 'devin',
   tagAtBodyEnd?: string,
 ): string {
   const {

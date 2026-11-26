@@ -74,3 +74,19 @@ test('a page of 0.2.29.0 with an ordinary rail entry still gets the file and lin
     '<body><p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" aria-hidden="true">src/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/a.ts:12</span></p></body>',
   )
 })
+
+// Value: protects=Devin Desktop's independent Wiki reader: the same static page must open its first citation in Devin Desktop rather than misnaming VS Code or Cursor; fails_when=a Devin-served page keeps another editor's scheme or rail label, or loses the cited target; why_new=PRODUCT_GOAL.md deep-links contract names this as required and not yet delivered; seam=none, the served page is compared as text; no_claim=Devin Desktop's OS protocol registration (native QA covers activation)
+test('a Devin Desktop reader binds source links and names the rail entry Open in Devin Desktop', () => {
+  // Arrange
+  const page =
+    '<body><p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12">Open in VS Code</a></p><a href="cursor://laststance.codebook/update?root=%2Frepo">Update</a></body>'
+
+  // Act
+  const served = rebindDeepWikiEditorLinks(page, 'devin')
+
+  // Assert
+  assert.equal(
+    served,
+    '<body><p class="open-in-editor"><a href="devin://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12" aria-describedby="codebook-open-target">Open in Devin Desktop</a> <span class="open-target" aria-hidden="true">src/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/a.ts:12</span></p><a href="devin://laststance.codebook/update?root=%2Frepo">Update</a></body>',
+  )
+})

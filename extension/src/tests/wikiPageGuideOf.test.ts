@@ -144,7 +144,7 @@ test('a page guide offers the files its article cites by inline source links, al
   const pages = [
     {
       title: 'Auth',
-      contentHtml: `<p>Signs a user in.</p><p>See <a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fauth.ts&amp;line=3&amp;sha256=${'a'.repeat(64)}">auth.ts</a>, <a href="CURSOR://laststance.codebook/source?path=src/token.ts&amp;line=1">token.ts</a>, <a href="https://example.com/laststance.codebook/source?path=src/site.ts">a site</a> and <a href="vscode://other.extension/source?path=src/other.ts">another extension</a>.</p>`,
+      contentHtml: `<p>Signs a user in.</p><p>See <a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fauth.ts&amp;line=3&amp;sha256=${'a'.repeat(64)}">auth.ts</a>, <a href="CURSOR://laststance.codebook/source?path=src/token.ts&amp;line=1">token.ts</a>, <a href="DEVIN://laststance.codebook/source?path=src/devin.ts&amp;line=2">devin.ts</a>, <a href="https://example.com/laststance.codebook/source?path=src/site.ts">a site</a> and <a href="vscode://other.extension/source?path=src/other.ts">another extension</a>.</p>`,
       sources: [{ path: 'src/index.ts', line: 1 }],
     },
     {
@@ -162,7 +162,7 @@ test('a page guide offers the files its article cites by inline source links, al
     {
       title: 'Auth',
       summary: 'Signs a user in.',
-      sources: ['src/index.ts', 'src/auth.ts', 'src/token.ts'],
+      sources: ['src/index.ts', 'src/auth.ts', 'src/token.ts', 'src/devin.ts'],
     },
     {
       title: 'Session',

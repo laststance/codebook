@@ -286,7 +286,7 @@ export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
   answerQuestion: AnswerQuestion,
-  editorScheme: 'vscode' | 'cursor' = 'vscode',
+  editorScheme: 'vscode' | 'cursor' | 'devin' = 'vscode',
   readUpdateStatus: () => WikiUpdateStatus = () => ({ state: 'idle' }),
 ): Promise<DeepWikiReader> {
   /** What the manifest last read says the Wiki covers: its indexed paths and its exclusions. A reported file change is weighed against them. */
