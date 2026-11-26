@@ -48,6 +48,19 @@ const withRenamedContentIds = (page, renamesByPage) => {
   const renamedIds = ids => ids.split(/([\t\n\f\r ]+)/).map(part => ownRenames.get(part) ?? part).join('');
   return withAttributeValues(page.contentHtml, (name, value) => name === 'href' ? renamedLink(value) : ID_ATTRIBUTES.has(name) ? renamedIds(value) : value);
 };
+/** One of Codebook's editor addresses at the start of an address, however its scheme and authority are capitalized. The published static page binds every one to VS Code, its durable fallback editor; the serving reader rebinds it to the editor that serves it. */
+const CODEBOOK_EDITOR_ADDRESS = /^(?:vscode|cursor|devin):\/\/laststance\.codebook\//i;
+/** The start every Codebook editor address has in the published static page. */
+const STATIC_EDITOR_ADDRESS_START = 'vscode://laststance.codebook/';
+/** An address as a browser reads its spaces and control characters for the scheme decision: tab, line feed and carriage return nowhere, spaces and control characters nowhere at its ends. This matches the reader's own accepted-address reading, so a spelling the reader would rebind is also normalized here. */
+const browserAddressText = value => value.replace(/[\t\n\r]/g, '').replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+/** Gives an address attribute the static page's VS Code fallback when a browser reads it as one of Codebook's editor addresses; every other address keeps its text. Called by {@link withStaticEditorAddresses}. @example staticEditorAddress('CURSOR://LastStance.Codebook/source?path=a.ts') // => 'vscode://laststance.codebook/source?path=a.ts' */
+const staticEditorAddress = value => {
+  const read = browserAddressText(value), match = CODEBOOK_EDITOR_ADDRESS.exec(read);
+  return match ? `${STATIC_EDITOR_ADDRESS_START}${read.slice(match[0].length)}` : value;
+};
+/** Publishes every Codebook editor address of article markup under the static page's VS Code fallback, leaving relative, web and mail addresses and the text around tags alone. Character references are read before this rewrite by {@link withAttributeValues}; a changed value is printed escaped. Called by {@link renderWikiPages} before diagrams replace their slots. @example withStaticEditorAddresses('<a href="devin://laststance.codebook/source?path=a.ts">a</a>') // => '<a href="vscode://laststance.codebook/source?path=a.ts">a</a>' */
+const withStaticEditorAddresses = contentHtml => withAttributeValues(contentHtml, (name, value) => ['href', 'src', 'cite'].includes(name) ? staticEditorAddress(value) : value);
 /** Keeps generated files and source references within relative repository paths. @example safePath('../outside') // false */
 const safePath = value => typeof value === 'string' && value !== '' && !isAbsolute(value) && !/[\\\x00-\x1f?#:]/.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..');
 
@@ -976,7 +989,7 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   for (const page of manifest.pages) {
     const sourceLinks = [];
     for (const reference of page.sources) sourceLinks.push(`<li>${await sourceLink(reference)}</li>`);
-    const article = await renderWikiDiagrams({ ...page, contentHtml: withRenamedContentIds(page, renamesByPage) }, sourceLink);
+    const article = await renderWikiDiagrams({ ...page, contentHtml: withStaticEditorAddresses(withRenamedContentIds(page, renamesByPage)) }, sourceLink);
     // The rail opens the page's first cited source through that citation's own address; every page has one, and the links above have checked it.
     const firstSource = page.sources[0];
     const pageHref = target => escapeHtml(posix.relative(posix.dirname(page.path), target));

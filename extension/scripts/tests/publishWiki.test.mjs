@@ -6786,7 +6786,7 @@ test('a page rendered from a reader shell with CRLF line endings is written with
 })
 
 // Value: protects=the links and images an article is written with, which the refusal of script must not take; fails_when=the check refuses a relative path, a fragment, a web, mail or editor address, a Codebook address whose scheme and authority are written in another case (a browser compares them without case), a path with an ampersand that begins no reference, or reads an escaped code example or a comment as markup; why_new=Cycle 0046 /ship finding F2: the new refusal reads start tags and addresses; repeat testing review TC7: no test held the comparison without case; seam=none
-test('a page that links to a relative path, a fragment, a web, mail or editor address, and shows an event attribute and a javascript: link only as escaped text or in a comment, is published as authored', async () => {
+test('a page keeps its readable addresses while every Codebook editor link is published under the static VS Code fallback', async () => {
   // Arrange
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-reader-addresses-')),
@@ -6798,6 +6798,20 @@ test('a page that links to a relative path, a fragment, a web, mail or editor ad
     '<a href="vscode://laststance.codebook/source?root=%2Frepo">VS Code</a> <a href="cursor://laststance.codebook/source?root=%2Frepo">Cursor</a> ' +
     '<a href="devin://laststance.codebook/source?root=%2Frepo">Devin Desktop</a> ' +
     '<a href="VSCode://LastStance.Codebook/source?path=a.ts">VS Code in another case</a> ' +
+    '<a href="&#99;ursor&#58;//laststance.codebook/source?path=b.ts">Cursor in references</a> ' +
+    '<a href="devin&#9;://laststance.codebook/source?path=c.ts">Devin with a tab reference</a> ' +
+    '<img src="flow.png" alt="Flow"></p>' +
+    '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
+    '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'
+  const publishedContent =
+    '<h2 id="flow">Source flow</h2>' +
+    '<p><a href="pages/a&amp;b.html#start">A page</a> <a href="#flow">Up</a> <a href="../outside.html">Out</a> ' +
+    '<a href="https://example.com/?a=1&amp;b=2#c">Web</a> <a href="mailto:team@example.com">Mail</a> ' +
+    '<a href="vscode://laststance.codebook/source?root=%2Frepo">VS Code</a> <a href="vscode://laststance.codebook/source?root=%2Frepo">Cursor</a> ' +
+    '<a href="vscode://laststance.codebook/source?root=%2Frepo">Devin Desktop</a> ' +
+    '<a href="vscode://laststance.codebook/source?path=a.ts">VS Code in another case</a> ' +
+    '<a href="vscode://laststance.codebook/source?path=b.ts">Cursor in references</a> ' +
+    '<a href="vscode://laststance.codebook/source?path=c.ts">Devin with a tab reference</a> ' +
     '<img src="flow.png" alt="Flow"></p>' +
     '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
     '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'
@@ -6816,7 +6830,7 @@ test('a page that links to a relative path, a fragment, a web, mail or editor ad
     )
 
     // Assert
-    assert.equal(published, content)
+    assert.equal(published, publishedContent)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
