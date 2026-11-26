@@ -1695,6 +1695,58 @@ async function assertLinkedConfigCompared(
   throw unverifiedRestoreRefusal(context, displacedPath)
 }
 
+/**
+ * The refusal for a restored config whose private name no longer proves the same file before that name is deleted; called by {@link dropRestoredPrivateName}, which leaves whatever stands there and keeps the publish record.
+ * @param context - The run; gives the config path, the record's path and the command to run again.
+ * @param copyPath - The private name that could not be proven.
+ * @returns The error, not thrown yet.
+ * @example
+ * unprovenRestoredNameRefusal(context, displacedPath) // => 'Codebook put your previous config back at …, but could not prove that the private name at … still reached that file …'
+ */
+function unprovenRestoredNameRefusal(
+  { path, pendingPath, retry }: Context,
+  copyPath: string,
+): Error {
+  return new Error(
+    `Codebook put your previous config back at ${path}, but could not prove that the private name at ${copyPath} still reached that file before deleting it (another program may have replaced it or the config changed), so Codebook left whatever stands there untouched and did not record that change as finished; its record of that change at ${pendingPath} stays, and the next run reads it first; look at that file before you use or delete it, ${retry}.`,
+  )
+}
+
+/**
+ * Deletes the private name of a file after it was linked back as the config, only while both names still reach that same file; called by {@link restoreDisplaced}.
+ * The linked-config check proves the config, not what later stands at the private name: a sync tool can replace only that name after the check. One look at the config gives the inode the private name must still show, with another name reaching it, right before the unlink. A name already gone is as deleted; anything unproven stays untouched and the record remains.
+ * Limit: a swap between the last synchronous look and the unlink is not seen; no Node primitive unlinks by inode.
+ * @param context - The run; its seam is called around the private name's last look ({@link nameStateNow}).
+ * @param displacedPath - The private name to delete.
+ * @returns `true` when the name is gone or was deleted; `false` when its unlink failed.
+ * @throws The {@link unprovenRestoredNameRefusal} when the config or the private name no longer proves the restored file.
+ * @example
+ * await dropRestoredPrivateName(context, displacedPath) // => true once that second name is gone
+ */
+async function dropRestoredPrivateName(
+  context: Context,
+  displacedPath: string,
+): Promise<boolean> {
+  let config: BigIntStats | undefined
+  try {
+    config = lstatSync(context.path, {
+      bigint: true,
+      throwIfNoEntry: false,
+    })
+  } catch {
+    config = undefined
+  }
+  if (!config) throw unprovenRestoredNameRefusal(context, displacedPath)
+  const state = nameStateNow(context, displacedPath, {
+    ino: config.ino,
+    isShared: true,
+  })
+  if (state === 'gone') return true
+  if (state !== 'still')
+    throw unprovenRestoredNameRefusal(context, displacedPath)
+  return didUnlink(displacedPath)
+}
+
 async function restoreDisplaced(
   context: Context,
   displacedPath: string,
@@ -1715,7 +1767,7 @@ async function restoreDisplaced(
   if (opened && !opened.isShared)
     await opened.handle.chmod(opened.originalMode).catch(() => undefined)
   // Two names reach the file now: one that cannot be deleted stays in the record, so the next run drops it ({@link tidyLeftover}) and the config never keeps an unexplained second link.
-  if (!(await didUnlink(displacedPath)))
+  if (!(await dropRestoredPrivateName(context, displacedPath)))
     throw extraNameRefusal(context, displacedPath)
   if (dropsRecord) await dropPending(context)
 }
@@ -6219,7 +6271,6 @@ async function tidyLeftover(
   const recordedPublishedIno =
     role === 'kept' &&
     phase === 'completed' &&
-    pending.entrySha256 !== undefined &&
     pending.stagedIno !== undefined &&
     pending.stagedSha256 !== undefined
       ? BigInt(String(pending.stagedIno))
@@ -6280,12 +6331,31 @@ async function assertCompletedPublishStill(
       publishedIno,
       leftoverPath,
     )
-  } catch (error) {
-    // The copy is redundant only while the published file itself still stands verified; without that proof it may be the last copy of the learner's other servers, so the record keeps tracking it. A removal that deleted its config never reaches this branch: its record names no staged inode and bytes.
-    if (error instanceof ConfigChangedError)
-      throw publishedConfigUnprovenError(context, leftoverPath)
-    throw error
+  } catch {
+    // A backup may instead have put the previous config itself back: those very bytes standing at the config name make the copy redundant as well. Any other or unreadable config leaves the copy possibly the last one, so the record keeps tracking it.
+    const restored = await readConfigHoldingBytes(context, pending.keptSha256)
+    if (restored) return restored
+    throw publishedConfigUnprovenError(context, leftoverPath)
   }
+}
+
+/**
+ * Reads the config as proof that the displaced copy's exact bytes still stand at the config name; called by {@link assertCompletedPublishStill} when the published replacement no longer stands because a backup may have put the previous config back.
+ * @param context - The run; its seam is called inside the read.
+ * @param keptSha256 - The displaced copy's recorded bytes.
+ * @returns The config as it was read when it holds exactly those bytes; undefined when it holds anything else or cannot be read.
+ * @example
+ * await readConfigHoldingBytes(context, pending.keptSha256) // => the config's read once a backup restored the previous config byte for byte
+ */
+async function readConfigHoldingBytes(
+  context: Context,
+  keptSha256: string | undefined,
+): Promise<InspectedCopy | undefined> {
+  if (keptSha256 === undefined) return undefined
+  const config = await inspectCopy(context.path, context.seam).catch(
+    () => undefined,
+  )
+  return config?.sha256 === keptSha256 ? config : undefined
 }
 
 /**
@@ -7632,6 +7702,12 @@ function staleReceiptRefusal(
   { receiptPath, retry }: Context,
   cause: unknown,
 ): Error {
+  // A folder where the record stood is never Codebook's: it is moved aside intact, never deleted.
+  if (isFolderAt(receiptPath))
+    return new Error(
+      `Codebook could not delete its own old record of a setup whose entry is gone, because a folder stands at ${receiptPath} where that record stood, so it changed nothing; move that folder to another folder, never delete it, because it may hold files of yours, ${retry}.`,
+      { cause },
+    )
   return new Error(
     `Codebook could not delete its own old record of a setup whose entry is gone, at ${receiptPath}, so it changed nothing; delete that record by hand, ${retry}.`,
     { cause },
