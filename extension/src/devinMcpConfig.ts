@@ -1612,6 +1612,45 @@ async function assertComparedRestoreStill(
 }
 
 /**
+ * Reads both names of a put-back link without letting a failed look prove anything about either one.
+ * @param configPath - The config name.
+ * @param displacedPath - The private name the link came from.
+ * @returns Both stats, or two undefined entries when either look throws.
+ */
+function linkedNamesStats(
+  configPath: string,
+  displacedPath: string,
+): [BigIntStats | undefined, BigIntStats | undefined] {
+  try {
+    return [
+      lstatSync(configPath, { bigint: true, throwIfNoEntry: false }),
+      lstatSync(displacedPath, { bigint: true, throwIfNoEntry: false }),
+    ]
+  } catch {
+    return [undefined, undefined]
+  }
+}
+
+/**
+ * Tells whether both names still show the one wrong file whose link this run made.
+ * @param context - The run.
+ * @param shownConfig - The config stat from the last successful look.
+ * @param shownDisplaced - The displaced-name stat from the same look.
+ * @returns True only while both names share one inode that is still the file this run tracks.
+ */
+function isWrongLinkedFile(
+  context: Context,
+  shownConfig: BigIntStats | undefined,
+  shownDisplaced: BigIntStats | undefined,
+): boolean {
+  if (shownConfig === undefined || shownDisplaced === undefined) return false
+  return (
+    shownConfig.ino === shownDisplaced.ino &&
+    isLeftoverStill(context, context.path, { ino: shownConfig.ino })
+  )
+}
+
+/**
  * Removes the config name of a link this run made when both names still show the same unverified file; anything unproven stays.
  * @param context - The run.
  * @param displacedPath - The private name the link came from.
@@ -1620,27 +1659,12 @@ async function unlinkUnverifiedLinkedConfig(
   context: Context,
   displacedPath: string,
 ): Promise<void> {
-  let shownConfig: BigIntStats | undefined
-  let shownDisplaced: BigIntStats | undefined
-  try {
-    shownConfig = lstatSync(context.path, {
-      bigint: true,
-      throwIfNoEntry: false,
-    })
-    shownDisplaced = lstatSync(displacedPath, {
-      bigint: true,
-      throwIfNoEntry: false,
-    })
-  } catch {
-    // A look that fails proves nothing: nothing is unlinked.
-  }
-  // Both names showing one wrong file prove the link this run made: take the config name away again, best effort, so the substituted file does not stand there; anything else stays for the learner and the record.
-  if (
-    shownConfig !== undefined &&
-    shownDisplaced !== undefined &&
-    shownConfig.ino === shownDisplaced.ino &&
-    isLeftoverStill(context, context.path, { ino: shownConfig.ino })
+  const [shownConfig, shownDisplaced] = linkedNamesStats(
+    context.path,
+    displacedPath,
   )
+  // Both names showing one wrong file prove the link this run made: take the config name away again, best effort, so the substituted file does not stand there; anything else stays for the learner and the record.
+  if (isWrongLinkedFile(context, shownConfig, shownDisplaced))
     await unlink(context.path).catch(() => undefined)
 }
 
