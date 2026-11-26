@@ -40,11 +40,6 @@
         "count": 1
       }
     },
-    "src/devinMcpConfig.ts": {
-      "complexity_moderate": {
-        "count": 3
-      }
-    },
     "src/extension.ts": {
       "complexity_high": {
         "count": 1
@@ -369,21 +364,6 @@
       }
     },
     "src/deepWikiReader.ts\u0000readDeepWikiManifest": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
-    "src/devinMcpConfig.ts\u0000answerRemovalWithoutTakeOut": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
-    "src/devinMcpConfig.ts\u0000deleteRecordedLeftover": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
-    "src/devinMcpConfig.ts\u0000restoreDisplaced": {
       "complexity_moderate": {
         "count": 1
       }

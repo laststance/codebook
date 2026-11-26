@@ -1586,6 +1586,91 @@ function lookAtComparedName(
  * @param compared - The displaced file as the replacement compared it, passed by the empty-config put-back after a successful comparison; undefined for a put-back of a file whose own change or sharing already ended the publish, which is restored as it stands.
  * @throws A {@link leftCopyRefusal} naming the displaced file when it cannot go back (a new config stands there, or the link failed); an {@link extraNameRefusal} when the file is back but its displaced name could not be deleted (the record stays, so the next run deletes that name); the {@link unverifiedRestoreRefusal} when the displaced name or the linked config no longer proves the compared file, in which case the recovery record stays.
  */
+/**
+ * Requires the displaced name to still show the compared file with the compared bytes immediately before its put-back link.
+ * @param context - The run; its seam is called inside the read and look.
+ * @param displacedPath - The private name of the displaced file.
+ * @param compared - The displaced file as the replacement compared it.
+ * @throws The {@link unverifiedRestoreRefusal} when the name no longer proves that compared file.
+ */
+async function assertComparedRestoreStill(
+  context: Context,
+  displacedPath: string,
+  compared: HeldCopy,
+): Promise<void> {
+  const comparedRead = await readComparedDisplaced(
+    context,
+    displacedPath,
+    compared,
+  )
+  // Nothing is linked unless the displaced name still is the compared file with the compared bytes right before the link.
+  if (
+    comparedRead === undefined ||
+    !isInspectedReadStill(context, displacedPath, comparedRead)
+  )
+    throw unverifiedRestoreRefusal(context, displacedPath)
+}
+
+/**
+ * Removes the config name of a link this run made when both names still show the same unverified file; anything unproven stays.
+ * @param context - The run.
+ * @param displacedPath - The private name the link came from.
+ */
+async function unlinkUnverifiedLinkedConfig(
+  context: Context,
+  displacedPath: string,
+): Promise<void> {
+  let shownConfig: BigIntStats | undefined
+  let shownDisplaced: BigIntStats | undefined
+  try {
+    shownConfig = lstatSync(context.path, {
+      bigint: true,
+      throwIfNoEntry: false,
+    })
+    shownDisplaced = lstatSync(displacedPath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    })
+  } catch {
+    // A look that fails proves nothing: nothing is unlinked.
+  }
+  // Both names showing one wrong file prove the link this run made: take the config name away again, best effort, so the substituted file does not stand there; anything else stays for the learner and the record.
+  if (
+    shownConfig !== undefined &&
+    shownDisplaced !== undefined &&
+    shownConfig.ino === shownDisplaced.ino &&
+    isLeftoverStill(context, context.path, { ino: shownConfig.ino })
+  )
+    await unlink(context.path).catch(() => undefined)
+}
+
+/**
+ * Requires the config made by a compared put-back link to still be the compared file before permissions or the displaced name are touched.
+ * @param context - The run.
+ * @param displacedPath - The private name the link came from.
+ * @param compared - The displaced file as the replacement compared it.
+ * @throws The {@link unverifiedRestoreRefusal} when the linked config no longer proves the compared file.
+ */
+async function assertLinkedConfigCompared(
+  context: Context,
+  displacedPath: string,
+  compared: HeldCopy,
+): Promise<void> {
+  // The link reaches whatever stood at the displaced name in the syscall gap: the config must still be the compared file with its bytes before anything else happens.
+  const linkedRead = await readComparedDisplaced(
+    context,
+    context.path,
+    compared,
+  )
+  if (
+    linkedRead !== undefined &&
+    isInspectedReadStill(context, context.path, linkedRead)
+  )
+    return
+  await unlinkUnverifiedLinkedConfig(context, displacedPath)
+  throw unverifiedRestoreRefusal(context, displacedPath)
+}
+
 async function restoreDisplaced(
   context: Context,
   displacedPath: string,
@@ -1593,60 +1678,15 @@ async function restoreDisplaced(
   dropsRecord = true,
   compared?: HeldCopy,
 ): Promise<void> {
-  if (compared !== undefined) {
-    const comparedRead = await readComparedDisplaced(
-      context,
-      displacedPath,
-      compared,
-    )
-    // Nothing is linked unless the displaced name still is the compared file with the compared bytes right before the link.
-    if (
-      comparedRead === undefined ||
-      !isInspectedReadStill(context, displacedPath, comparedRead)
-    )
-      throw unverifiedRestoreRefusal(context, displacedPath)
-  }
+  if (compared !== undefined)
+    await assertComparedRestoreStill(context, displacedPath, compared)
   try {
     await link(displacedPath, context.path)
   } catch (error) {
     throw leftCopyRefusal(context, displacedPath, error)
   }
-  if (compared !== undefined) {
-    // The link reaches whatever stood at the displaced name in the syscall gap: the config must still be the compared file with its bytes before anything else happens.
-    const linkedRead = await readComparedDisplaced(
-      context,
-      context.path,
-      compared,
-    )
-    if (
-      linkedRead === undefined ||
-      !isInspectedReadStill(context, context.path, linkedRead)
-    ) {
-      // Both names showing one wrong file prove the link this run made: take the config name away again, best effort, so the substituted file does not stand there; anything else stays for the learner and the record.
-      let shownConfig: BigIntStats | undefined
-      let shownDisplaced: BigIntStats | undefined
-      try {
-        shownConfig = lstatSync(context.path, {
-          bigint: true,
-          throwIfNoEntry: false,
-        })
-        shownDisplaced = lstatSync(displacedPath, {
-          bigint: true,
-          throwIfNoEntry: false,
-        })
-      } catch {
-        // A look that fails proves nothing: nothing is unlinked.
-      }
-      if (
-        shownConfig !== undefined &&
-        shownDisplaced !== undefined &&
-        shownConfig.ino === shownDisplaced.ino &&
-        isLeftoverStill(context, context.path, { ino: shownConfig.ino })
-      )
-        await unlink(context.path).catch(() => undefined)
-      throw unverifiedRestoreRefusal(context, displacedPath)
-    }
-  }
+  if (compared !== undefined)
+    await assertLinkedConfigCompared(context, displacedPath, compared)
   // The name is back: the same inode gets the mode it had, never another file; a shared file never had its mode changed.
   if (opened && !opened.isShared)
     await opened.handle.chmod(opened.originalMode).catch(() => undefined)
@@ -6194,6 +6234,116 @@ async function tidyLeftover(
  * @example
  * await deleteRecordedLeftover(context, stagedLeftover, copy, pending, undefined) // the staged name is gone
  */
+/**
+ * Verifies the published config of a completed replacement before its displaced copy is deleted.
+ * @param context - The run.
+ * @param pending - The pending record of the interrupted run.
+ * @param publishedIno - The published config's inode.
+ * @param leftoverPath - The displaced copy that stays tracked when proof fails.
+ * @returns The config as it was read.
+ * @throws The {@link publishedConfigUnprovenError} when the published config cannot be verified.
+ */
+async function assertCompletedPublishStill(
+  context: Context,
+  pending: Pending,
+  publishedIno: bigint,
+  leftoverPath: string,
+): Promise<InspectedCopy> {
+  try {
+    return await assertConfigStillPublished(
+      context,
+      pending,
+      publishedIno,
+      leftoverPath,
+    )
+  } catch (error) {
+    // The copy is redundant only while the published file itself still stands verified; without that proof it may be the last copy of the learner's other servers, so the record keeps tracking it. A removal that deleted its config never reaches this branch: its record names no staged inode and bytes.
+    if (error instanceof ConfigChangedError)
+      throw publishedConfigUnprovenError(context, leftoverPath)
+    throw error
+  }
+}
+
+/**
+ * Reads a leftover again and requires the read to hold the inode and bytes recovery checked.
+ * @param context - The run; its seam is called inside the read.
+ * @param path - The leftover's private name.
+ * @param ino - The inode recovery checked.
+ * @param expectedSha256 - The bytes its record names.
+ * @returns The last read, or undefined when the file went away while it was read.
+ * @throws When the leftover shows another inode or other bytes.
+ */
+async function inspectCheckedLeftover(
+  context: Context,
+  path: string,
+  ino: bigint,
+  expectedSha256: string,
+): Promise<InspectedCopy | undefined> {
+  const lastLook = await inspectCopy(path, context.seam)
+  if (!lastLook) return undefined
+  assertLeftoverHoldsChecked(path, lastLook, ino, expectedSha256)
+  return lastLook
+}
+
+/**
+ * Proves the published-config conditions of recovery's copy delete and leaves the copy's last read after the last asynchronous config read.
+ * @param context - The run.
+ * @param leftover - The accepted leftover.
+ * @param copy - What recovery first found at the leftover's name.
+ * @param pending - The pending record of the interrupted run.
+ * @param publishedIno - The published config's inode; undefined when no published config decides the delete.
+ * @returns The published-config look when one was needed, with the copy's last read; undefined when the copy went away while it was read.
+ * @throws When the published config or the copy no longer proves what recovery checked.
+ */
+async function verifyPublishedCopyDeletion(
+  context: Context,
+  leftover: Leftover,
+  copy: InspectedCopy,
+  pending: Pending,
+  publishedIno: bigint | undefined,
+): Promise<
+  | {
+      publishedLook: InspectedCopy | undefined
+      lastLook: InspectedCopy
+    }
+  | undefined
+> {
+  const { role, path } = leftover
+  // The caller proved the first read holds the record's bytes, so its hash is the checked expectation here.
+  const expectedSha256 = copy.sha256
+  const isCompletedPublish =
+    publishedIno !== undefined &&
+    leftoverPhaseOf(pending) === 'completed' &&
+    role === 'kept'
+  let publishedLook = isCompletedPublish
+    ? await assertCompletedPublishStill(context, pending, publishedIno, path)
+    : undefined
+  let lastLook = await inspectCheckedLeftover(
+    context,
+    path,
+    copy.ino,
+    expectedSha256,
+  )
+  if (!lastLook) return undefined
+  if (publishedIno !== undefined && !isCompletedPublish) {
+    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it.
+    publishedLook = await assertConfigStillPublished(
+      context,
+      pending,
+      publishedIno,
+      path,
+    )
+    lastLook = await inspectCheckedLeftover(
+      context,
+      path,
+      copy.ino,
+      expectedSha256,
+    )
+    if (!lastLook) return undefined
+  }
+  return { publishedLook, lastLook }
+}
+
 async function deleteRecordedLeftover(
   context: Context,
   leftover: Leftover,
@@ -6207,43 +6357,15 @@ async function deleteRecordedLeftover(
   // A storage that already stalls holds this step here, not at the synchronous look below.
   await lookAheadAt([path])
   assertLeftoverStill(context, path, { ino: copy.ino, size: copy.size })
-  const isCompletedPublish =
-    publishedIno !== undefined &&
-    leftoverPhaseOf(pending) === 'completed' &&
-    role === 'kept'
-  let publishedLook: InspectedCopy | undefined
-  // A completed replacement verifies its published config before the copy's last read, so that read is already the one after the config's async read and no extra read of the copy is needed.
-  if (isCompletedPublish) {
-    try {
-      publishedLook = await assertConfigStillPublished(
-        context,
-        pending,
-        publishedIno,
-        path,
-      )
-    } catch (error) {
-      // The copy is redundant only while the published file itself still stands verified; without that proof it may be the last copy of the learner's other servers, so the record keeps tracking it. A removal that deleted its config never reaches this branch: its record names no staged inode and bytes.
-      if (error instanceof ConfigChangedError)
-        throw publishedConfigUnprovenError(context, path)
-      throw error
-    }
-  }
-  let lastLook = await inspectCopy(path, context.seam)
-  // The file went away while it was read: whatever stands at the name now was never hashed, so nothing is deleted.
-  if (!lastLook) return
-  assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
-  if (publishedIno !== undefined && !isCompletedPublish) {
-    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it.
-    publishedLook = await assertConfigStillPublished(
-      context,
-      pending,
-      publishedIno,
-      path,
-    )
-    lastLook = await inspectCopy(path, context.seam)
-    if (!lastLook) return
-    assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
-  }
+  const verified = await verifyPublishedCopyDeletion(
+    context,
+    leftover,
+    copy,
+    pending,
+    publishedIno,
+  )
+  if (!verified) return
+  const { publishedLook, lastLook } = verified
   // A copy of the previous config goes only on the word of the record as recovery read it: a record a sync tool put back meanwhile may hand that copy to the learner.
   const recordStill =
     role === 'kept' ? await recordStillCheck(context) : undefined
@@ -12748,16 +12870,19 @@ export async function removeManagedDevinMcpEntry(
  * await answerRemovalWithoutTakeOut(context, 'changed', inspected, false) // => { status: 'changed', path }
  * await answerRemovalWithoutTakeOut(context, 'not-managed', inspected, true) // => { status: 'removed', path, cleanupFailure: 'Codebook left the file at …/receipt.json as it is, …' } once a backup put a record back there
  */
-async function answerRemovalWithoutTakeOut(
+/**
+ * Drops the receipt of a removal whose entry needed no take-out and converts a failed drop into the cleanup sentence the removal result carries.
+ * @param context - The locked removal's paths and the version of the receipt it read.
+ * @param status - What {@link removalOwnership} decided.
+ * @param inspected - What {@link inspect} found under the lock.
+ * @returns The kept-record or cleanup-failure sentence; undefined when the receipt went or never had to go.
+ * @throws The {@link RemovalEntryBackError} when the entry is back in the config, or the config changed again, before the record's delete.
+ */
+async function dropReceiptWithoutTakeOut(
   context: Context,
   status: Extract<RemovalOwnership, { status: string }>['status'],
   inspected: Awaited<ReturnType<typeof inspect>>,
-  wasUnrecorded: boolean,
-): Promise<DevinMcpRemovalResult> {
-  // A record of another config's entry stays, and a removal that changed nothing says so and goes no further.
-  if (!inspected.tookBack) assertNoOtherConfigReceipt(context)
-  // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry, and only as the run read it.
-  let cleanupFailure: string | undefined
+): Promise<string | undefined> {
   try {
     // The receipt goes only while the entry that went out is still out of the config: a backup or sync tool that put an earlier config, with the entry, back meanwhile undoes the removal the retry reports, and the record is the only proof that entry is Codebook's, so the retry refuses instead of reporting a removal that did not last.
     const configStill =
@@ -12769,16 +12894,32 @@ async function answerRemovalWithoutTakeOut(
         ? undefined
         : await dropReceipt(context, configStill)
     // After the entry went, a record a backup or sync tool put at receipt.json meanwhile stays, and the notice says so.
-    if (receiptFate === 'kept') cleanupFailure = keptReceiptSentence(context)
+    if (receiptFate === 'kept') return keptReceiptSentence(context)
+    return undefined
   } catch (error) {
     // The entry is back or the config changed again: the removal did not last, so it refuses rather than reporting a removal beside a managed entry.
     if (error instanceof RemovalEntryBackError) throw error
     // The entry is already out, so its result is still reported; the receipt that could not be dropped is named for manual cleanup.
-    cleanupFailure =
-      error instanceof JournalConflictError
-        ? error.message
-        : `Codebook could not delete its own record of that entry at ${context.receiptPath}; delete that record by hand.`
+    return error instanceof JournalConflictError
+      ? error.message
+      : `Codebook could not delete its own record of that entry at ${context.receiptPath}; delete that record by hand.`
   }
+}
+
+async function answerRemovalWithoutTakeOut(
+  context: Context,
+  status: Extract<RemovalOwnership, { status: string }>['status'],
+  inspected: Awaited<ReturnType<typeof inspect>>,
+  wasUnrecorded: boolean,
+): Promise<DevinMcpRemovalResult> {
+  // A record of another config's entry stays, and a removal that changed nothing says so and goes no further.
+  if (!inspected.tookBack) assertNoOtherConfigReceipt(context)
+  // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry, and only as the run read it.
+  const cleanupFailure = await dropReceiptWithoutTakeOut(
+    context,
+    status,
+    inspected,
+  )
   const keptReceipt = cleanupFailure ? { cleanupFailure } : {}
   // The entry is gone because this run's take-back of an interrupted first setup took it out: the removal reports that, so the window is offered its reload.
   if (status === 'not-managed' && inspected.tookBack)
