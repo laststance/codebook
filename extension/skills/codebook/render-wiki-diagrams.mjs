@@ -392,8 +392,8 @@ export const unbalancedClauseOf = html => {
 };
 /** The schemes an address in a page's content may name for any place: the web's and mail's. Any other (`javascript:`, `data:`, `file:` …) is refused by {@link scriptingClauseOf}, except Codebook's own editor addresses ({@link CODEBOOK_ADDRESS_STARTS}). */
 const ADDRESS_SCHEMES = new Set(['http', 'https', 'mailto']);
-/** How Codebook's own addresses start in both editors, which the reader binds to the editor that serves the page: an address of the editors' schemes is accepted only under Codebook's authority, never another extension's URI handler or the editor's file handler (`vscode://file/…`). */
-const CODEBOOK_ADDRESS_STARTS = ['vscode://laststance.codebook/', 'cursor://laststance.codebook/'];
+/** How Codebook's own addresses start in the three editors, which the reader binds to the editor that serves the page: an address of the editors' schemes is accepted only under Codebook's authority, never another extension's URI handler or the editor's file handler (`vscode://file/…`). */
+const CODEBOOK_ADDRESS_STARTS = ['vscode://laststance.codebook/', 'cursor://laststance.codebook/', 'devin://laststance.codebook/'];
 /** Whether an address, as {@link isAcceptedAddress} reads it, is one of Codebook's own ({@link CODEBOOK_ADDRESS_STARTS}); the scheme and the authority compare without case, as a browser compares them. Called by {@link isAcceptedAddress}. @example isCodebookAddress('cursor://laststance.codebook/source?path=a.ts') // => true; isCodebookAddress('vscode://file/etc/hosts') // => false */
 const isCodebookAddress = read => CODEBOOK_ADDRESS_STARTS.some(start => read.toLowerCase().startsWith(start));
 /** The attributes whose value a browser follows, loads or submits to as an address, SVG's `xlink:href` among them; `srcset` holds a list of them, and `cite` names the source of a quote. */
@@ -468,7 +468,7 @@ const browserText = written => written.replace(BROWSER_REFERENCE, (reference, di
 
 /** The clause a refusal of an address attribute ends with when one of its addresses names another scheme than {@link ADDRESS_SCHEMES}, is no Codebook address ({@link CODEBOOK_ADDRESS_STARTS}) or is a network path, read as the publisher reads it ({@link attributeText}) or as a browser does ({@link browserText}); called by {@link attributeScriptingClauseOf}. @returns The clause, or undefined for an attribute that is no address or leads nowhere else. @example addressClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
 const addressClauseOf = (tag, name, written) => ADDRESS_ATTRIBUTES.has(name) && [attributeText(written), browserText(written)].some(text => !addressesOf(name, text).every(isAcceptedAddress))
-  ? `must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`
+  ? `must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/, cursor://laststance.codebook/ or devin://laststance.codebook/ address: its <${tag}> holds ${name}="${written.slice(0, LIMITS.markupExcerpt).replace(/[\t\n\f\r ]+/g, ' ')}".`
   : undefined;
 /** The clause a refusal of one attribute of a start tag ends with: an event attribute, or an address of another scheme ({@link addressClauseOf}); called by {@link tagScriptingClauseOf}. @returns The clause, or undefined for an attribute that runs no script and leads nowhere else. @example attributeScriptingClauseOf('a', 'href', 'javascript:run()') // => 'must link only to … its <a> holds href="javascript:run()".' */
 const attributeScriptingClauseOf = (tag, name, written) => {

@@ -244,10 +244,10 @@ const DEPTH_LIST_NAME_SHARE = 0.6;
 const DEPTH_MIN_COPIED_TEXT = 40;
 /** How many of the thinnest pages the depth refusal names. */
 const DEPTH_MAX_NAMED_PAGES = 10;
-/** The query of a Codebook editor source address as the editor's URI handler reads it: `vscode://` or `cursor://laststance.codebook` (scheme and authority without case) with the route `/source` exactly, and the query without its `#fragment`; `undefined` for any other address. Called by {@link inlineSourceLinksOf}. @example sourceQueryOf('VSCODE://laststance.codebook/source?path=a.ts#L1') // => 'path=a.ts' */
+/** The query of a Codebook editor source address as the editor's URI handler reads it: `vscode://`, `cursor://` or `devin://laststance.codebook` (scheme and authority without case) with the route `/source` exactly, and the query without its `#fragment`; `undefined` for any other address. Called by {@link inlineSourceLinksOf}. @example sourceQueryOf('VSCODE://laststance.codebook/source?path=a.ts#L1') // => 'path=a.ts' */
 function sourceQueryOf(address) {
   const match = /^([A-Za-z]+):\/\/([^/?#]+)\/source\?([^#]*)/s.exec(address.trim());
-  if (!match || !['vscode', 'cursor'].includes(match[1].toLowerCase()) || match[2].toLowerCase() !== 'laststance.codebook') return undefined;
+  if (!match || !['vscode', 'cursor', 'devin'].includes(match[1].toLowerCase()) || match[2].toLowerCase() !== 'laststance.codebook') return undefined;
   return match[3];
 }
 /** Reads the parameters (`root`, `path`, `line`, `sha256`) of every editor source address ({@link sourceQueryOf}) in an `href` attribute of authored HTML; a comment, escaped text and any other attribute name no link, and character references in the value are read as a browser reads them ({@link withAttributeValues}). Called by {@link verifiedInlinePathsOf}. @example inlineSourceLinksOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => [{ root: undefined, path: 'a.ts', line: '1', sha256: undefined }] */

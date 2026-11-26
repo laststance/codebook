@@ -355,7 +355,7 @@ test('an inline source link without the indexed hash, with a wrong hash, a line 
 })
 
 // Value: protects=an agent that writes the editor scheme in another letter case or uses the cursor scheme; fails_when=VSCODE://Laststance.Codebook, or a cursor:// link with plain & separators, does not count as a citation; why_new=C113 review round; seam=none (the real renderer); no_claim=that the link opens the right line
-test('an inline source link with an upper-case scheme and authority, and a cursor link with plain ampersands, cover the file', async () => {
+test('an inline source link with an upper-case scheme and authority, and cursor and devin links with plain ampersands, cover the file', async () => {
   await inProject(async (root) => {
     // Arrange
     const parameters = { root, path: 'lib/b.ts', line: '1', sha256: B_HASH }
@@ -377,15 +377,25 @@ test('an inline source link with an upper-case scheme and authority, and a curso
         ),
       },
     )
+    const devin = await manifestOf(
+      root,
+      { 'a.ts': A, 'lib/b.ts': B },
+      {
+        contentHtml: articleWith(
+          inlineLinkOf('devin://laststance.codebook', parameters, '&'),
+        ),
+      },
+    )
 
     // Act
     const upperCaseOutcome = await outcomeOf(upperCase, root)
     const cursorOutcome = await outcomeOf(cursor, root)
+    const devinOutcome = await outcomeOf(devin, root)
 
     // Assert
     assert.deepEqual(
-      [upperCaseOutcome, cursorOutcome],
-      ['rendered', 'rendered'],
+      [upperCaseOutcome, cursorOutcome, devinOutcome],
+      ['rendered', 'rendered', 'rendered'],
     )
   })
 })

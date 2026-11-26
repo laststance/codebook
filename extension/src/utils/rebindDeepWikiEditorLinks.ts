@@ -11,7 +11,7 @@ import { withServedAddresses } from './withServedAddresses'
 
 /** The label of the rail's entry inside its link, the pattern of 0.2.29.0: every page since carries "Open in VS Code" as the link's whole text, so each reader can name its own editor there. */
 const OPEN_ENTRY_LABEL =
-  /(<p class="open-in-editor"><a [^>]*>)Open in (?:VS Code|Cursor)(<\/a>)/g
+  /(<p class="open-in-editor"><a [^>]*>)Open in (?:VS Code|Cursor|Devin Desktop)(<\/a>)/g
 /** A rail entry that ends with its link, as a site published by 0.2.29.0 carries it: no element beside the link names the target. The second group is the link's attributes. */
 const OPEN_ENTRY_WITHOUT_TARGET =
   /(<p class="open-in-editor"><a )([^>]*)(>[^<]*<\/a>)(<\/p>)/g
@@ -35,7 +35,7 @@ type OpenTarget = { path: string; line: string }
  */
 function publishedQueryOf(
   linkAttributes: string,
-  editorScheme: 'vscode' | 'cursor',
+  editorScheme: 'vscode' | 'cursor' | 'devin',
 ): URLSearchParams {
   const href = readHtmlStartTags(
     withServedAddresses(`<a ${linkAttributes}>`, editorScheme),
@@ -61,7 +61,7 @@ function publishedQueryOf(
  */
 function openTargetOf(
   linkAttributes: string,
-  editorScheme: 'vscode' | 'cursor',
+  editorScheme: 'vscode' | 'cursor' | 'devin',
 ): OpenTarget | undefined {
   const query = publishedQueryOf(linkAttributes, editorScheme)
   const path = query.get('path')
@@ -137,11 +137,11 @@ function freeOpenTargetIdIn(html: string): string {
  */
 export function rebindDeepWikiEditorLinks(
   html: string,
-  editorScheme: 'vscode' | 'cursor',
+  editorScheme: 'vscode' | 'cursor' | 'devin',
   tagAtBodyEnd?: string,
 ): string {
   // The published page says VS Code, its fallback; the served one names the editor that opens the source.
-  const openLabel = `Open in ${editorScheme === 'cursor' ? 'Cursor' : 'VS Code'}`
+  const openLabel = `Open in ${editorScheme === 'cursor' ? 'Cursor' : editorScheme === 'devin' ? 'Devin Desktop' : 'VS Code'}`
   const relabeledPage = html
     .replace(
       OPEN_ENTRY_LABEL,

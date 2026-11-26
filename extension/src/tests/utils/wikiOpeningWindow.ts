@@ -33,12 +33,18 @@ export type StartedWikiReader = {
 type WikiOpeningWindowOptions = {
   forwardTo?: (url: string) => string
   models?: Array<{ id: string; name: string; vendor: string }>
+  /** The editor identity `vscode.env` exposes; `uriScheme: 'devin'` makes the window Devin Desktop. */
+  environment?: { appName?: string; uriScheme?: string }
 }
 
 /** An opened window of {@link openWikiOpeningWindow}: what it did so far, and the test's hands on it. */
 type WikiOpeningWindow = {
   projectRoot: string
   readers: StartedWikiReader[]
+  /** The URI schemes the window passed to each reader it started. */
+  readerSchemes: string[]
+  /** The URI schemes the window passed to each model answer. */
+  answerSchemes: string[]
   openedUrls: string[]
   errors: string[]
   modelQuestions: string[]
@@ -101,6 +107,8 @@ async function activateWindowOn(
   options: WikiOpeningWindowOptions,
 ): Promise<WikiOpeningWindow> {
   const readers: StartedWikiReader[] = []
+  const readerSchemes: string[] = []
+  const answerSchemes: string[] = []
   const openedUrls: string[] = []
   const errors: string[] = []
   const modelQuestions: string[] = []
@@ -158,6 +166,8 @@ async function activateWindowOn(
           },
         },
         env: {
+          appName: options.environment?.appName,
+          uriScheme: options.environment?.uriScheme,
           asExternalUri: async (uri: { toString(): string }) =>
             options.forwardTo
               ? parseFakeUri(options.forwardTo(uri.toString()))
@@ -190,7 +200,9 @@ async function activateWindowOn(
             sources: WikiIncludedSource[],
             signal: AbortSignal,
           ) => Promise<unknown>,
+          editorScheme?: string,
         ) => {
+          readerSchemes.push(editorScheme ?? 'vscode')
           await passHold('reader-start')
           const reader: StartedWikiReader = {
             url: `http://127.0.0.1:${4100 + readers.length}/w/reader-token/index.html`,
@@ -220,7 +232,9 @@ async function activateWindowOn(
           _root: string,
           _sources: WikiIncludedSource[],
           question: string,
+          editorScheme?: string,
         ): Promise<WikiAnswer> => {
+          answerSchemes.push(editorScheme ?? 'vscode')
           modelQuestions.push(question)
           return { answer: 'Answered.', citations: [], sourceChanged: false }
         },
@@ -246,6 +260,8 @@ async function activateWindowOn(
   return {
     projectRoot,
     readers,
+    readerSchemes,
+    answerSchemes,
     openedUrls,
     errors,
     modelQuestions,

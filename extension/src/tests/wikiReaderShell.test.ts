@@ -722,6 +722,7 @@ test('a Codebook address a browser reads through references, a leading space or 
 
   // Act
   const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+  const servedByDevin = rebindDeepWikiEditorLinks(page, 'devin')
 
   // Assert
   assert.equal(
@@ -732,6 +733,15 @@ test('a Codebook address a browser reads through references, a leading space or 
       '<a href="cursor://laststance.codebook/settings?root=%2Frepo">d</a>' +
       '<a href="cursor://laststance.codebook/source?path=e.ts">e</a>' +
       '<a title="t"href="cursor://laststance.codebook/source?path=f.ts">f</a>',
+  )
+  assert.equal(
+    servedByDevin,
+    '<a href="devin://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1">a</a>' +
+      '<a href="devin://laststance.codebook/update?root=%2Frepo">b</a>' +
+      '<a href="devin://laststance.codebook/settings?root=%2Frepo">c</a>' +
+      '<a href="devin://laststance.codebook/settings?root=%2Frepo">d</a>' +
+      '<a href="devin://laststance.codebook/source?path=e.ts">e</a>' +
+      '<a title="t"href="devin://laststance.codebook/source?path=f.ts">f</a>',
   )
 })
 
@@ -759,7 +769,8 @@ test('a Codebook address written in another case, with a bare value, an HREF in 
     "<a href='CURSOR://laststance.codebook/update?root=%2Frepo'>b</a>" +
     '<a href=Vscode://laststance.codebook/settings?root=%2Frepo>c</a>' +
     '<a HREF = "vscode://LASTSTANCE.CODEBOOK/source?path=d.ts">d</a>' +
-    '<a href="vscode://laststance.codebook/Source?path=e.ts">e</a>'
+    '<a href="vscode://laststance.codebook/Source?path=e.ts">e</a>' +
+    '<a href="DEVIN://LastStance.Codebook/source?path=g.ts">g</a>'
 
   // Act
   const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
@@ -771,7 +782,8 @@ test('a Codebook address written in another case, with a bare value, an HREF in 
       "<a href='cursor://laststance.codebook/update?root=%2Frepo'>b</a>" +
       '<a href=cursor://laststance.codebook/settings?root=%2Frepo>c</a>' +
       '<a HREF = "cursor://LASTSTANCE.CODEBOOK/source?path=d.ts">d</a>' +
-      '<a href="cursor://laststance.codebook/Source?path=e.ts">e</a>',
+      '<a href="cursor://laststance.codebook/Source?path=e.ts">e</a>' +
+      '<a href="cursor://LastStance.Codebook/source?path=g.ts">g</a>',
   )
 })
 
