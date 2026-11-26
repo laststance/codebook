@@ -383,6 +383,46 @@ test('a page link to an unindexed path that is a link to an environment file is 
   })
 })
 
+// Value: protects=the owner's secrets against a URL-encoded ASCII tab in the path of an editor source link: a browser's URL parser drops that tab, so `.&#9;env` opens `.env`; fails_when=the credential check reads the written path with its tab and lets the published link open the environment file; why_new=Cycle 0150 /ship OCR Major (canonical browser URL reading); seam=none (the real renderer); no_claim=that a tab is valid in a repository path
+test('a page link whose environment path hides an ASCII tab in a character reference is refused', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    await writeFile(join(root, '.env'), ENVIRONMENT)
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.pages[0].contentHtml +=
+      '<p>Settings come from <a href="devin://laststance.codebook/source?path=.&#9;env&amp;line=1">the environment</a>.</p>'
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'A page links to 1 file that can hold credentials: index.html → .env. Remove each link; a Wiki never cites environment files, private keys or password files.',
+    )
+  })
+})
+
+// Value: protects=the owner's secrets against activation of an address a browser does not read as a Codebook deep link: a raw NUL in an attribute becomes U+FFFD, not nothing, so the address is no devin: scheme; fails_when=the publisher strips the NUL as an edge control, misses the environment file in citation extraction and publishes an active deep link to it; why_new=Cycle 0150 /ship OCR Major (raw NUL activation); seam=none (the real renderer); no_claim=how the malformed text is shown in the refusal
+test('a page link whose devin scheme starts after a raw NUL is refused rather than published as an editor link', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    await writeFile(join(root, '.env'), ENVIRONMENT)
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.pages[0].contentHtml +=
+      '<p>Settings come from <a href="\u0000devin://laststance.codebook/source?path=.env&amp;line=1">the environment</a>.</p>'
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.match(
+      outcome,
+      /^Wiki page index\.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own /,
+    )
+  })
+})
+
 // Value: protects=a Wiki whose page holds a malformed editor link whose path decodes to a NUL byte: the editor's handler refuses such a path, so the credential check skips it as the renderer did before it resolved links, instead of failing the render with Node's ERR_INVALID_ARG_VALUE; fails_when=a page link with path=a%00b makes the renderer throw; why_new=Cycle 0116 /ship fix-check (a regression of the link resolution in 60cd55cb); seam=none (the real renderer); no_claim=how the reader shows the malformed link
 test('a page link whose path holds a NUL byte does not stop the render', async () => {
   await inProject(async (root) => {

@@ -6800,6 +6800,7 @@ test('a page keeps its readable addresses while every Codebook editor link is pu
     '<a href="VSCode://LastStance.Codebook/source?path=a.ts">VS Code in another case</a> ' +
     '<a href="&#99;ursor&#58;//laststance.codebook/source?path=b.ts">Cursor in references</a> ' +
     '<a href="devin&#9;://laststance.codebook/source?path=c.ts">Devin with a tab reference</a> ' +
+    '<a href="cursor://laststance.codebook/update?root=&sol;repo">Cursor root reference</a> ' +
     '<img src="flow.png" alt="Flow"></p>' +
     '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
     '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'
@@ -6812,6 +6813,7 @@ test('a page keeps its readable addresses while every Codebook editor link is pu
     '<a href="vscode://laststance.codebook/source?path=a.ts">VS Code in another case</a> ' +
     '<a href="vscode://laststance.codebook/source?path=b.ts">Cursor in references</a> ' +
     '<a href="vscode://laststance.codebook/source?path=c.ts">Devin with a tab reference</a> ' +
+    '<a href="vscode://laststance.codebook/update?root=/repo">Cursor root reference</a> ' +
     '<img src="flow.png" alt="Flow"></p>' +
     '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
     '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'

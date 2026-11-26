@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
+import { browserText, contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
@@ -52,15 +52,15 @@ const withRenamedContentIds = (page, renamesByPage) => {
 const CODEBOOK_EDITOR_ADDRESS = /^(?:vscode|cursor|devin):\/\/laststance\.codebook\//i;
 /** The start every Codebook editor address has in the published static page. */
 const STATIC_EDITOR_ADDRESS_START = 'vscode://laststance.codebook/';
-/** An address as a browser reads its spaces and control characters for the scheme decision: tab, line feed and carriage return nowhere, spaces and control characters nowhere at its ends. This matches the reader's own accepted-address reading, so a spelling the reader would rebind is also normalized here. */
-const browserAddressText = value => value.replace(/[\t\n\r]/g, '').replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+/** An address as a browser reads it for the scheme decision: its references and raw NUL as the tokenizer reads them, tab, line feed and carriage return nowhere, spaces and control characters nowhere at its ends. This matches the reader's own accepted-address reading, so a spelling the reader would rebind is also normalized here. */
+const browserAddressText = value => browserText(value).replace(/[\t\n\r]/g, '').replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
 /** Gives an address attribute the static page's VS Code fallback when a browser reads it as one of Codebook's editor addresses; every other address keeps its text. Called by {@link withStaticEditorAddresses}. @example staticEditorAddress('CURSOR://LastStance.Codebook/source?path=a.ts') // => 'vscode://laststance.codebook/source?path=a.ts' */
-const staticEditorAddress = value => {
-  const read = browserAddressText(value), match = CODEBOOK_EDITOR_ADDRESS.exec(read);
-  return match ? `${STATIC_EDITOR_ADDRESS_START}${read.slice(match[0].length)}` : value;
+const staticEditorAddress = (written, unchanged) => {
+  const read = browserAddressText(written), match = CODEBOOK_EDITOR_ADDRESS.exec(read);
+  return match ? `${STATIC_EDITOR_ADDRESS_START}${read.slice(match[0].length)}` : unchanged;
 };
-/** Publishes every Codebook editor address of article markup under the static page's VS Code fallback, leaving relative, web and mail addresses and the text around tags alone. Character references are read before this rewrite by {@link withAttributeValues}; a changed value is printed escaped. Called by {@link renderWikiPages} before diagrams replace their slots. @example withStaticEditorAddresses('<a href="devin://laststance.codebook/source?path=a.ts">a</a>') // => '<a href="vscode://laststance.codebook/source?path=a.ts">a</a>' */
-const withStaticEditorAddresses = contentHtml => withAttributeValues(contentHtml, (name, value) => ['href', 'src', 'cite'].includes(name) ? staticEditorAddress(value) : value);
+/** Publishes every Codebook editor address of article markup under the static page's VS Code fallback, leaving relative, web and mail addresses and the text around tags alone. The written value is read once as a browser reads it before this rewrite; a changed value is printed escaped. Called by {@link renderWikiPages} before diagrams replace their slots. @example withStaticEditorAddresses('<a href="devin://laststance.codebook/source?path=a.ts">a</a>') // => '<a href="vscode://laststance.codebook/source?path=a.ts">a</a>' */
+const withStaticEditorAddresses = contentHtml => withAttributeValues(contentHtml, (name, value, written) => ['href', 'src', 'cite'].includes(name) ? staticEditorAddress(written, value) : value);
 /** Keeps generated files and source references within relative repository paths. @example safePath('../outside') // false */
 const safePath = value => typeof value === 'string' && value !== '' && !isAbsolute(value) && !/[\\\x00-\x1f?#:]/.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..');
 
@@ -257,17 +257,17 @@ const DEPTH_LIST_NAME_SHARE = 0.6;
 const DEPTH_MIN_COPIED_TEXT = 40;
 /** How many of the thinnest pages the depth refusal names. */
 const DEPTH_MAX_NAMED_PAGES = 10;
-/** The query of a Codebook editor source address as the editor's URI handler reads it: `vscode://`, `cursor://` or `devin://laststance.codebook` (scheme and authority without case) with the route `/source` exactly, and the query without its `#fragment`; `undefined` for any other address. Called by {@link inlineSourceLinksOf}. @example sourceQueryOf('VSCODE://laststance.codebook/source?path=a.ts#L1') // => 'path=a.ts' */
+/** The query of a Codebook editor source address as a browser and then the editor's URI handler read it: `vscode://`, `cursor://` or `devin://laststance.codebook` (scheme and authority without case) with the route `/source` exactly, and the query without its `#fragment`; `undefined` for any other address. Called by {@link inlineSourceLinksOf}. @example sourceQueryOf('VSCODE://laststance.codebook/source?path=a.ts#L1') // => 'path=a.ts' */
 function sourceQueryOf(address) {
-  const match = /^([A-Za-z]+):\/\/([^/?#]+)\/source\?([^#]*)/s.exec(address.trim());
+  const match = /^([A-Za-z]+):\/\/([^/?#]+)\/source\?([^#]*)/s.exec(browserAddressText(address));
   if (!match || !['vscode', 'cursor', 'devin'].includes(match[1].toLowerCase()) || match[2].toLowerCase() !== 'laststance.codebook') return undefined;
   return match[3];
 }
 /** Reads the parameters (`root`, `path`, `line`, `sha256`) of every editor source address ({@link sourceQueryOf}) in an `href` attribute of authored HTML; a comment, escaped text and any other attribute name no link, and character references in the value are read as a browser reads them ({@link withAttributeValues}). Called by {@link verifiedInlinePathsOf}. @example inlineSourceLinksOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => [{ root: undefined, path: 'a.ts', line: '1', sha256: undefined }] */
 function inlineSourceLinksOf(contentHtml) {
   const links = [];
-  withAttributeValues(contentHtml, (name, value) => {
-    const query = name === 'href' ? sourceQueryOf(value) : undefined;
+  withAttributeValues(contentHtml, (name, value, written) => {
+    const query = name === 'href' ? sourceQueryOf(written) : undefined;
     if (query !== undefined) {
       const parameters = new URLSearchParams(query);
       links.push({ root: parameters.get('root') ?? undefined, path: parameters.get('path') ?? undefined, line: parameters.get('line') ?? undefined, sha256: parameters.get('sha256') ?? undefined });

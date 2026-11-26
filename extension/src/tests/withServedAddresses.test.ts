@@ -609,10 +609,11 @@ test('a refused link past the first 64 KiB of a page with CRLF line ends loses i
 test('browser addresses trim every C0 control and ASCII space only at their ends and keep other spaces', () => {
   // Arrange
   const controls = String.fromCharCode(
-    ...Array.from({ length: 33 }, (_unused, index) => index),
+    ...Array.from({ length: 32 }, (_unused, index) => index + 1),
   )
   const addresses = [
     controls + 'vs\tcode://laststance.codebook/source?x=a b' + controls,
+    '\u0000devin://laststance.codebook/source?path=.env',
     '\u0085\u00a0\u1680\u2000\u2028\u3000\ufeffx\ufeff\u3000\u2028\u2000\u1680\u00a0\u0085',
     ' x\v\fy ',
     controls,
@@ -625,6 +626,7 @@ test('browser addresses trim every C0 control and ASCII space only at their ends
   // Assert
   assert.deepEqual(read, [
     'vscode://laststance.codebook/source?x=a b',
+    '\uFFFDdevin://laststance.codebook/source?path=.env',
     '\u0085\u00a0\u1680\u2000\u2028\u3000\ufeffx\ufeff\u3000\u2028\u2000\u1680\u00a0\u0085',
     'x\v\fy',
     '',
