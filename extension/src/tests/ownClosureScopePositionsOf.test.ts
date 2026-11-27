@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { moduleBindingNamesOf } from '../utils/moduleBindingNamesOf'
 import { ownClosureScopePositionsOf } from '../utils/ownClosureScopePositionsOf'
+
+/** The most names one scope may hold in these tests. */
+const MAX_NAMES = 100
 
 /** One closure scope as js-debug answers it for a Bun frame. */
 function closure(name: string, variablesReference: number) {
@@ -15,8 +17,8 @@ function variablesOf(contents: Record<number, string[]>) {
     contents[reference] ?? []
 }
 
-// Value: protects=the Elysia route handler stop of the Cycle 0152 trial: the anonymous handler's own closures (name, query) are copied and the module's scope (app, greet) is not, though all arrive as Closure; fails_when=the module scope is copied (credentials could reach history) or the handler's own values are dropped; seam=scopes shaped as js-debug answered them in probe E1-M2; no_claim=other engines' scope shapes
-test('a Bun handler stop copies its own closures and stops at the module scope that holds an import', async () => {
+// Value: protects=the Elysia route handler stop of the Cycle 0152 trial: the anonymous handler's own closures (name, query) are copied, the empty closure between them is passed over, and the module's scope is never copied; fails_when=the module scope is copied (credentials could reach history), the handler's own values are dropped, or the empty closure ends the copy; seam=scopes shaped as the Cycle 0152 trace answered them; no_claim=other engines' scope shapes
+test('a Bun handler stop copies its own closures, passes over an empty one and stops at the module scope', async () => {
   // Arrange
   const scopes = [
     closure('Closure', 1),
@@ -27,7 +29,7 @@ test('a Bun handler stop copies its own closures and stops at the module scope t
     { name: 'Global', presentationHint: undefined, variablesReference: 6 },
   ]
   const contents = {
-    1: ['name'],
+    1: ['arguments', 'name'],
     2: [],
     3: ['query'],
     4: ['app', 'greet', 'Elysia'],
@@ -36,15 +38,16 @@ test('a Bun handler stop copies its own closures and stops at the module scope t
   const own = await ownClosureScopePositionsOf(
     scopes,
     variablesOf(contents),
-    new Set(['Elysia', 'greet', 'app']),
+    new Set(['name', 'query']),
     '<anonymous>',
+    MAX_NAMES,
   )
   // Assert
-  assert.deepEqual([...own], [0, 1, 2])
+  assert.deepEqual([...own], [0, 2])
 })
 
-// Value: protects=the outermost closure (the module's scope, or Bun's CommonJS wrapper) is never copied even when the source scan names none of its bindings; fails_when=a module whose declarations the scan misses (destructured exports) has its scope copied; seam=scopes with no module names found in them; no_claim=the source scan's coverage
-test('the outermost closure is never copied even when none of its names are known module names', async () => {
+// Value: protects=a named function's own closures are copied, the module's scope is not; fails_when=the labelled own scopes are dropped or the outermost closure is copied; seam=scopes labelled as JavaScriptCore labels them (Cycle 0152 trace of `greet`); no_claim=the source scan (covered by stoppedFunctionDeclaredNamesOf tests)
+test('a named function stop copies both of its labelled closures and never the outermost one', async () => {
   // Arrange
   const scopes = [
     closure('Closure (greet)', 1),
@@ -61,56 +64,65 @@ test('the outermost closure is never copied even when none of its names are know
   const own = await ownClosureScopePositionsOf(
     scopes,
     variablesOf(contents),
-    new Set(['unrelated']),
+    new Set(['greeting', 'name']),
     'greet',
+    MAX_NAMES,
   )
   // Assert
   assert.deepEqual([...own], [0, 1])
 })
 
-// Value: protects=a module with no top-level names keeps only the closures named after the stopped function; fails_when=an unnamed closure is copied without evidence it is the function's own; seam=no module names; no_claim=translated scope labels other than the parenthesized function name
-test('without module names only the closures named after the stopped function are copied', async () => {
+// Value: protects=an anonymous handler inside an anonymous factory never copies the factory's closure (a tenant name, a client); fails_when=an unlabelled closure with no module name is judged the handler's own (Cycle 0152 review finding); seam=the QA reproduction: two unlabelled closures, then the module's; no_claim=source scanning
+test('an anonymous handler inside an anonymous factory does not copy the factory closure', async () => {
   // Arrange
   const scopes = [
-    closure('Closure (greet)', 1),
+    closure('Closure', 1),
     closure('Closure', 2),
     closure('Closure', 3),
     { name: 'Script', variablesReference: 4 },
+    { name: 'Global', variablesReference: 5 },
   ]
+  const contents = {
+    1: ['this', 'name'],
+    2: ['tenantName'],
+    3: ['Elysia', 'greet', 'app'],
+  }
   // Act
   const own = await ownClosureScopePositionsOf(
     scopes,
-    variablesOf({}),
-    new Set(),
-    'greet',
+    variablesOf(contents),
+    new Set(['name']),
+    '<anonymous>',
+    MAX_NAMES,
   )
   // Assert
   assert.deepEqual([...own], [0])
 })
 
-// Value: protects=a node stop's Local and Block scopes are not reread or doubled by the Bun rule, and a block before the closures is passed over; fails_when=the rule copies a `locals` scope twice or stops at it; seam=a block then closures of an anonymous function; no_claim=V8 behaviour
-test('a leading block scope is passed over and the closures after it are judged', async () => {
+// Value: protects=a closure labelled with the stopped function's own name still needs its names declared in the function: an enclosing function with the same name does not leak its closure; fails_when=the label alone makes the outer `greet` closure the inner function's own; seam=two nested functions named greet; no_claim=source scanning
+test('a same-named enclosing function closure is not copied', async () => {
   // Arrange
   const scopes = [
-    { name: 'Block', presentationHint: 'locals', variablesReference: 1 },
-    closure('Closure', 2),
+    closure('Closure (greet)', 1),
+    closure('Closure (greet)', 2),
     closure('Closure', 3),
-    { name: 'Global', variablesReference: 4 },
+    { name: 'Script', variablesReference: 4 },
   ]
-  const contents = { 2: ['item'], 3: ['db'] }
+  const contents = { 1: ['name'], 2: ['outerClient'], 3: ['greet'] }
   // Act
   const own = await ownClosureScopePositionsOf(
     scopes,
     variablesOf(contents),
-    new Set(['db']),
-    '<anonymous>',
+    new Set(['name']),
+    'greet',
+    MAX_NAMES,
   )
   // Assert
-  assert.deepEqual([...own], [1])
+  assert.deepEqual([...own], [0])
 })
 
-// Value: protects=a handler made by a named factory (`makeRoutes(db, apiClient)` returning `{ GET(request) {…} }`) copies only its own closure: the factory's closure, which holds the database and API clients, never reaches replay history although it holds no module name; fails_when=every closure before the module scope is copied as the stopped function's own (Cycle 0152 review finding); seam=scopes labelled as JavaScriptCore labels them, the method frame named as js-debug names it (`Object.GET`); no_claim=the redaction of values inside a copied scope
-test('a method made by a named factory copies its own closure and never the factory closure that holds its clients', async () => {
+// Value: protects=a method made by a named factory copies only its own closure: the factory's closure with the database and API clients never reaches replay history; fails_when=a closure labelled with another function's name is copied; seam=the method frame named as js-debug names it (`Object.GET`); no_claim=redaction of values inside a copied scope
+test('a method made by a named factory never copies the factory closure that holds its clients', async () => {
   // Arrange
   const scopes = [
     closure('Closure (GET)', 1),
@@ -127,103 +139,101 @@ test('a method made by a named factory copies its own closure and never the fact
   const own = await ownClosureScopePositionsOf(
     scopes,
     variablesOf(contents),
-    new Set(['makeRoutes', 'Elysia']),
+    new Set(['request', 'user', 'db', 'apiClient']),
     'Object.GET',
+    MAX_NAMES,
   )
   // Assert
   assert.deepEqual([...own], [0])
 })
 
-// Value: protects=an anonymous route handler registered inside a named setup function copies its own unlabelled closures and stops at the setup function's labelled closure; fails_when=the setup function's closure (its database argument) is copied because it holds no module name; seam=unlabelled closures, then a labelled one, then the module scope; no_claim=an anonymous handler inside an anonymous function (documented as open)
-test('an anonymous handler inside a named setup function stops copying at the setup function closure', async () => {
+// Value: protects=a block scope before the closures is passed over and the closures after it are judged; fails_when=the rule copies a `locals` scope twice or stops at it; seam=a block then closures of an anonymous function; no_claim=V8 behaviour
+test('a leading block scope is passed over and the closures after it are judged', async () => {
+  // Arrange
+  const scopes = [
+    { name: 'Block', presentationHint: 'locals', variablesReference: 1 },
+    closure('Closure', 2),
+    closure('Closure', 3),
+    { name: 'Global', variablesReference: 4 },
+  ]
+  const contents = { 2: ['item'], 3: ['db'] }
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    variablesOf(contents),
+    new Set(['item']),
+    '<anonymous>',
+    MAX_NAMES,
+  )
+  // Assert
+  assert.deepEqual([...own], [1])
+})
+
+// Value: protects=without a stop file text or position nothing is copied (fail-closed); fails_when=closures are copied with no evidence of what the function declares; seam=undefined declared names; no_claim=why the names are unknown
+test('without declared names no closure is copied', async () => {
+  // Arrange
+  const scopes = [
+    closure('Closure (greet)', 1),
+    closure('Closure', 2),
+    { name: 'Script', variablesReference: 3 },
+  ]
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    variablesOf({ 1: ['name'] }),
+    undefined,
+    'greet',
+    MAX_NAMES,
+  )
+  // Assert
+  assert.deepEqual([...own], [])
+})
+
+// Value: protects=classification reads only scopes that can still be copied: it stops at the first scope holding an undeclared name and never reads the outermost closure; fails_when=every one of 20 later closures is read after a non-own one (a slow adapter eats the capture deadline); seam=a read counter over 22 closures; no_claim=the adapter's real latency
+test('classification stops reading at the first closure holding an undeclared name', async () => {
+  // Arrange
+  const reads: number[] = []
+  const scopes = [
+    closure('Closure', 1),
+    closure('Closure', 2),
+    ...Array.from({ length: 20 }, (_, offset) =>
+      closure('Closure', 3 + offset),
+    ),
+    { name: 'Script', variablesReference: 99 },
+  ]
+  const readVariableNames = async (reference: number): Promise<string[]> => {
+    reads.push(reference)
+    return reference === 1 ? ['name'] : ['foreignClient']
+  }
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    readVariableNames,
+    new Set(['name']),
+    '<anonymous>',
+    MAX_NAMES,
+  )
+  // Assert
+  assert.deepEqual([...own], [0])
+  assert.deepEqual(reads, [1, 2])
+})
+
+// Value: protects=a scope holding more names than the capture's variable limit is not the function's own and its names are not trusted; fails_when=a huge scope is copied because the first names read are declared; seam=a limit of 2 and three names; no_claim=paging
+test('a closure with more names than the variable limit is not copied', async () => {
   // Arrange
   const scopes = [
     closure('Closure', 1),
     closure('Closure', 2),
-    closure('Closure (registerRoutes)', 3),
-    closure('Closure', 4),
-    { name: 'Script', variablesReference: 5 },
+    { name: 'Script', variablesReference: 3 },
   ]
-  const contents = {
-    1: ['name'],
-    2: ['query'],
-    3: ['db'],
-    4: ['registerRoutes', 'Elysia'],
-  }
   // Act
   const own = await ownClosureScopePositionsOf(
     scopes,
-    variablesOf(contents),
-    new Set(['registerRoutes', 'Elysia']),
+    variablesOf({ 1: ['a', 'b', 'c'] }),
+    new Set(['a', 'b', 'c']),
     '<anonymous>',
+    2,
   )
   // Assert
-  assert.deepEqual([...own], [0, 1])
-})
-
-// Value: protects=a named function whose local shadows a module name (`const user` inside `greet` while the module declares `user`) still copies its own closures; fails_when=a name shared with the module makes the function's own closure read as the module scope, so the stop saves none of its values (Cycle 0152 review finding); seam=closures labelled with the stopped function's name; no_claim=an anonymous function's shadowing, still judged by module names
-test('a named function whose local shadows a module name still copies its own closures', async () => {
-  // Arrange
-  const scopes = [
-    closure('Closure (greet)', 1),
-    closure('Closure (greet)', 2),
-    closure('Closure', 3),
-    { name: 'Script', variablesReference: 4 },
-  ]
-  const contents = {
-    1: ['user'],
-    2: ['arguments', 'name'],
-    3: ['user', 'greet', 'Elysia'],
-  }
-  // Act
-  const own = await ownClosureScopePositionsOf(
-    scopes,
-    variablesOf(contents),
-    new Set(['user', 'greet', 'Elysia']),
-    'greet',
-  )
-  // Assert
-  assert.deepEqual([...own], [0, 1])
-})
-
-// Value: protects=a declaration written at the start of a line inside a function body (JavaScript needs no indentation) is not a module name, so an anonymous handler's own closure holding that name is still copied; a brace inside a string does not hide a later top-level declaration; fails_when=the line-start scan counts `const value` inside `handler` as the module's (Cycle 0152 review finding) or a quoted brace shifts the depth; seam=source text; no_claim=braces inside regular expression literals
-test('a line-start declaration inside a function body is not a module name, and a quoted brace changes nothing', () => {
-  // Arrange
-  const source = [
-    'export function handler() {',
-    'const value = 1',
-    'return value',
-    '}',
-    "const opening = '{'",
-    'const app = 1',
-  ].join('\n')
-  // Act
-  const names = moduleBindingNamesOf(source)
-  // Assert
-  assert.deepEqual([...names].sort(), ['app', 'handler', 'opening'])
-})
-
-// Value: protects=the module names include imports and top-level declarations, never a declaration inside a comment or template, so the module scope is recognised; fails_when=an import or a top-level function is missed, or commented code counts; seam=source text; no_claim=every declaration form (destructuring is caught by the outermost-closure rule)
-test('module binding names are the imports and top-level declarations, not commented ones', () => {
-  // Arrange
-  const source = [
-    "import { Elysia } from 'elysia'",
-    "import { greet as hello } from './greeting'",
-    'const app = new Elysia()',
-    'export async function start() {}',
-    'export default class Server {}',
-    '// const commented = 1',
-    'function inner() { const nested = 2 }',
-  ].join('\n')
-  // Act
-  const names = moduleBindingNamesOf(source)
-  // Assert
-  assert.deepEqual([...names].sort(), [
-    'Elysia',
-    'Server',
-    'app',
-    'hello',
-    'inner',
-    'start',
-  ])
+  assert.deepEqual([...own], [])
 })

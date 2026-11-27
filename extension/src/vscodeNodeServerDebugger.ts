@@ -37,7 +37,6 @@ import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
-import { moduleBindingNamesOf } from './utils/moduleBindingNamesOf'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
@@ -666,16 +665,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       workspaceRoot: this.input.workspace,
       // Masked before the snapshot's cut, so a secret straddling it leaves no fragment; read at call time.
       maskKnownText: (text) => this.input.maskKnownText?.(text) ?? text,
-      // Bun reports the stopped function's own scopes as closures; its module's top-level names mark where the module's scope begins.
-      ...(this.runtime === 'bun'
-        ? {
-            bunClosures: {
-              moduleBindingNames: moduleBindingNamesOf(
-                sourceBytes.toString('utf8'),
-              ),
-            },
-          }
-        : {}),
+      // Bun reports the stopped function's own scopes as closures; the capture copies one only when the stopped function's own source declares every name in it.
+      ...(this.runtime === 'bun' ? { bunClosures: true as const } : {}),
       limits: {
         timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
         maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,

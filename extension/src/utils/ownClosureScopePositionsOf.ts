@@ -8,6 +8,12 @@ type AnsweredClosureScope = {
 /** A closure scope's function label as js-debug writes it, `Closure (greet)` (localized names keep the parentheses): the name in the trailing parentheses. */
 const CLOSURE_FUNCTION_LABEL = /\(([^()]+)\)$/
 
+/** Variable names every function's own scope may hold without holding another function's value. */
+const NAMES_OF_NO_OTHER_FUNCTION: ReadonlySet<string> = new Set([
+  'this',
+  'arguments',
+])
+
 /**
  * Finds the outermost closure of the stopped frame's leading run of block and closure scopes; called by {@link ownClosureScopePositionsOf}, which never copies it.
  * @param scopes - The stopped frame's scopes, innermost first.
@@ -58,78 +64,76 @@ function frameFunctionLabelsOf(frameName: string): ReadonlySet<string> {
  * When it runs: once per Bun stop capture, for the stopped frame (frame 0) only.
  * Called by {@link captureReplayDebugSnapshot} when its input carries Bun closure facts.
  *
- * Reading order: scopes are innermost first. A block scope (`locals`) is copied by the default policy and passed over. JavaScriptCore labels each closure with the function it belongs to (`Closure (greet)`; an anonymous function's closures carry no label):
- * - a closure labelled with the stopped function's name is its own;
- * - a closure labelled with another name is an enclosing function's, and copying stops there;
- * - an unlabelled closure is an anonymous function's: never a named stopped function's own, and for an anonymous stopped function its own until one holds a module binding name, where the module scope begins (without module names nothing proves it its own).
- * The outermost closure of the run (the one just before Script or Global) is the module's scope, or the wrapper Bun gives a CommonJS module, and is never copied. One case stays open: an anonymous stopped function directly inside another anonymous function (an immediately invoked arrow) has that function's closure copied, as no label tells them apart.
+ * Reading order: scopes are innermost first. A block scope (`locals`) is copied by the default policy and passed over. The policy is positive evidence and fails closed:
+ * - a closure labelled with another function's name ends the copy (labels are only a first filter);
+ * - a closure is copied only when every name it holds, except `this` and `arguments`, is declared in the stopped function's own source (`declaredNames`); this holds for a closure labelled with the frame's own name too, so a same-named enclosing function's closure stays out;
+ * - a closure that holds no other name (empty, or only `this`/`arguments`) carries no other function's value: it is passed over (not copied) and the copy goes on;
+ * - the first closure holding an undeclared name ends the copy: it and everything after it stay out, and nothing after it is read.
+ * The outermost closure of the run (the one just before Script or Global) is the module's scope, or the wrapper Bun gives a CommonJS module, and is never copied or read. Without declared names (no source, no stop position, no function found) nothing is copied.
  *
  * @param scopes - The stopped frame's scopes, innermost first.
- * @param readVariableNames - Reads a scope's variable names (one `variables` request).
- * @param moduleBindingNames - The stopped module's top-level names (`moduleBindingNamesOf`).
+ * @param readVariableNames - Reads a scope's variable names (one bounded `variables` request); rejects when the read fails.
+ * @param declaredNames - The names the stopped function declares ({@link stoppedFunctionDeclaredNamesOf}); `undefined` when unknown.
  * @param frameName - The stopped frame's function name as js-debug shows it.
+ * @param maxNamesPerScope - The most names one scope may hold to be classified; a scope with more is not the function's own.
  * @returns The positions of the scopes to copy; an empty set when none is the function's own.
  * @example
  * await ownClosureScopePositionsOf(
  *   [{ name: 'Closure', presentationHint: 'arguments', variablesReference: 7 }, { name: 'Closure', presentationHint: 'arguments', variablesReference: 8 }, { name: 'Script', variablesReference: 9 }],
  *   async (reference) => (reference === 7 ? ['name'] : ['app', 'greet']),
- *   new Set(['app', 'greet']),
+ *   new Set(['name']),
  *   '<anonymous>',
+ *   100,
  * ) // => Set { 0 }
  */
 export async function ownClosureScopePositionsOf(
   scopes: readonly AnsweredClosureScope[],
   readVariableNames: (variablesReference: number) => Promise<string[]>,
-  moduleBindingNames: ReadonlySet<string>,
+  declaredNames: ReadonlySet<string> | undefined,
   frameName: string,
+  maxNamesPerScope: number,
 ): Promise<Set<number>> {
   const own = new Set<number>()
+  if (!declaredNames) return own
   const outermostClosure = outermostClosurePositionOf(scopes)
   const frameLabels = frameFunctionLabelsOf(frameName)
   for (const [position, scope] of scopes.entries()) {
-    // The outermost closure is the module's own scope: it and everything after it stay out.
+    // The outermost closure is the module's own scope: it and everything after it stay out, unread.
     if (position >= outermostClosure) break
     // A block of the function's own code is copied by the default policy; keep looking past it.
     if (scope.presentationHint === 'locals') continue
     // Anything other than a closure (Script, Global) is never the function's own, and nothing after it is either.
     if (scope.presentationHint !== 'arguments') break
-    // The first closure that is not the function's own ends the copy: it and every scope after it stay out.
-    const isOwn = await isStoppedFunctionClosure(
-      scope,
-      frameLabels,
-      moduleBindingNames,
-      readVariableNames,
+    if (!isLabelOfStoppedFunction(scope.name, frameLabels)) break
+    const names = (await readVariableNames(scope.variablesReference)).filter(
+      (name) => !NAMES_OF_NO_OTHER_FUNCTION.has(name),
     )
-    if (!isOwn) break
-    own.add(position)
+    // The first closure too large to read whole, or with a name the function does not declare, ends the copy.
+    if (
+      names.length > maxNamesPerScope ||
+      names.some((name) => !declaredNames.has(name))
+    )
+      break
+    // A closure holding no other name has no value to copy; pass over it.
+    if (names.length > 0) own.add(position)
   }
   return own
 }
 
 /**
- * Judges one closure scope of the stopped frame by its label and, for an anonymous function, by the module's names; called by {@link ownClosureScopePositionsOf} for each closure before the outermost one.
- * @param scope - The closure scope as js-debug answered it.
- * @param frameLabels - The labels that name the stopped function ({@link frameFunctionLabelsOf}); empty for an anonymous function.
- * @param moduleBindingNames - The stopped module's top-level names.
- * @param readVariableNames - Reads the scope's variable names; asked only for an unlabelled closure of an anonymous function.
+ * Applies the label filter to a closure scope's name: the first, cheap test before any variable is read.
+ * Called by {@link ownClosureScopePositionsOf}.
+ * @param scopeName - The closure scope's name, such as `Closure (greet)`.
+ * @param frameLabels - The labels naming the stopped function ({@link frameFunctionLabelsOf}); empty for an anonymous one.
  * @returns
- * - `true` when the closure is the stopped function's own
- * - `false` when it belongs to an enclosing function or is the module's scope
- * @example
- * await isStoppedFunctionClosure({ name: 'Closure (makeRoutes)', presentationHint: 'arguments', variablesReference: 2 }, new Set(['GET']), new Set(), read) // => false
+ * - `true` when the closure may be the stopped function's own: it carries the function's label, or it is unlabelled and the function is anonymous
+ * - `false` for another function's label, or an unlabelled closure of a named function (an enclosing anonymous function's)
+ * @example isLabelOfStoppedFunction('Closure (makeRoutes)', new Set(['GET'])) // => false
  */
-async function isStoppedFunctionClosure(
-  scope: AnsweredClosureScope,
+function isLabelOfStoppedFunction(
+  scopeName: string,
   frameLabels: ReadonlySet<string>,
-  moduleBindingNames: ReadonlySet<string>,
-  readVariableNames: (variablesReference: number) => Promise<string[]>,
-): Promise<boolean> {
-  const label = CLOSURE_FUNCTION_LABEL.exec(scope.name)?.[1]
-  // A labelled closure belongs to the function it names: the stopped function's own only when that is its name.
-  if (label !== undefined) return frameLabels.has(label)
-  // A named stopped function's own closures all carry its name, so an unlabelled closure is an enclosing anonymous function's; without module names nothing proves it the anonymous function's own.
-  if (frameLabels.size > 0 || moduleBindingNames.size === 0) return false
-  const names = await readVariableNames(scope.variablesReference)
-  // A closure that holds a module binding is the module scope.
-  return !names.some((name) => moduleBindingNames.has(name))
+): boolean {
+  const label = CLOSURE_FUNCTION_LABEL.exec(scopeName)?.[1]
+  return label === undefined ? frameLabels.size === 0 : frameLabels.has(label)
 }

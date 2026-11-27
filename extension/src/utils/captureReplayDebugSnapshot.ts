@@ -11,6 +11,7 @@ import {
   REPLAY_DEBUG_MAX_FRAMES,
   REPLAY_DEBUG_MAX_SCOPES,
   REPLAY_DEBUG_MAX_VARIABLES,
+  REPLAY_DEBUG_TEXT_LIMIT_CHARS,
   REPLAY_SCOPE_NOT_CAPTURED_TEXT,
   SECRET_SHAPE_SCAN_LIMIT_CHARS,
 } from '../constants'
@@ -34,6 +35,7 @@ import {
 } from './redactValuePreview'
 import { findSecretSiblingIndexes } from './secretShapes'
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
+import { stoppedFunctionDeclaredNamesOf } from './stoppedFunctionDeclaredNamesOf'
 import { stripTerminalControls } from './stripTerminalControls'
 import {
   isEnvironmentAliasName,
@@ -81,8 +83,8 @@ interface CaptureInput {
   maskKnownText?(text: string): string
   /** The stop paused in its module's own top-level code (a module evaluation): the stopped frame's module scope ({@link moduleScopePositionOf}, js-debug's Eval scope of Next's eval-wrapped module) holds the stop's own values, so it is copied like local values, every top-level binding before any is expanded (one imported module object cannot use the whole budget). */
   moduleEvaluation?: boolean
-  /** A Bun stop: the stopped function's own scopes arrive as closures, so the stopped frame's closures before the module's scope are copied like local values ({@link ownClosureScopePositionsOf}); `moduleBindingNames` are the stopped module's top-level names (`moduleBindingNamesOf`). */
-  bunClosures?: { moduleBindingNames: ReadonlySet<string> }
+  /** A Bun stop: the stopped function's own scopes arrive as closures, so the stopped frame's closures are copied like local values only when every name in one is declared in the stopped function's own source (`verifiedSource.text` at the top frame's line and column; {@link ownClosureScopePositionsOf}, {@link stoppedFunctionDeclaredNamesOf}). */
+  bunClosures?: true
   limits?: {
     timeoutMs: number
     maxFrames: number
@@ -299,6 +301,27 @@ function ownModuleScopePositionOf(
   return frameIndex === 0 && isModuleEvaluation
     ? moduleScopePositionOf(scopes)
     : undefined
+}
+
+/** What a failed Bun closure classification records before its cause. */
+const CLASSIFICATION_FAILURE_PREFIX =
+  "The stopped frame's closure scopes could not be classified ("
+/** What a failed Bun closure classification records after its cause. */
+const CLASSIFICATION_FAILURE_SUFFIX = '), so none of them was saved.'
+
+/**
+ * Builds the limitation that says a Bun stop's closure classification failed, cutting the cause so the whole sentence fits the saved text limit.
+ * Called by {@link captureReplayDebugSnapshot} when reading a closure's names fails.
+ * @param cause - The failure's already masked message.
+ * @returns The sentence, at most {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS} characters, its ending kept.
+ * @example classificationLimitationOf('adapter refused variables') // => "The stopped frame's closure scopes could not be classified (adapter refused variables), so none of them was saved."
+ */
+function classificationLimitationOf(cause: string): string {
+  const room =
+    REPLAY_DEBUG_TEXT_LIMIT_CHARS -
+    CLASSIFICATION_FAILURE_PREFIX.length -
+    CLASSIFICATION_FAILURE_SUFFIX.length
+  return `${CLASSIFICATION_FAILURE_PREFIX}${cutToSavedTextLimit(cause, room)}${CLASSIFICATION_FAILURE_SUFFIX}`
 }
 
 /** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}), and a module evaluation's own module scope ({@link moduleScopePositionOf}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
@@ -553,20 +576,33 @@ export async function captureReplayDebugSnapshot(
   ): Promise<ReadonlySet<number>> => {
     if (!input.bunClosures || frameIndex !== 0) return new Set<number>()
     try {
+      const topFrame = input.stack.stackFrames[0]
       return await ownClosureScopePositionsOf(
         scopes,
         async (variablesReference) =>
           variableResponse
-            .parse(await read('variables', { variablesReference }))
+            .parse(
+              // Bounded like every other read: one name more than the variable limit tells the scope is too large.
+              await read('variables', {
+                variablesReference,
+                start: 0,
+                count: maxVariables + 1,
+              }),
+            )
             .variables.map((variable) => variable.name),
-        input.bunClosures.moduleBindingNames,
+        topFrame
+          ? stoppedFunctionDeclaredNamesOf(
+              input.verifiedSource.text,
+              topFrame.line,
+              topFrame.column,
+            )
+          : undefined,
         frameName,
+        maxVariables,
       )
     } catch (error) {
       // A failed classification read copies no closure, and the frame's other scopes are still saved by the default policy; a resume or a cancellation still ends the capture, as `unavailable` rethrows them.
-      snapshot.limitations.push(
-        `The stopped frame's closure scopes could not be classified (${unavailable(error)}), so none of them was saved.`,
-      )
+      snapshot.limitations.push(classificationLimitationOf(unavailable(error)))
       return new Set<number>()
     }
   }

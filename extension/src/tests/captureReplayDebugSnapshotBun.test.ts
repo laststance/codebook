@@ -119,7 +119,7 @@ test('a Bun stop saves the handler own closures and never the module scope or a 
     verifiedSource: SOURCE,
     request: bunStopAnswer,
     assertCurrent: () => undefined,
-    bunClosures: { moduleBindingNames: new Set(['Elysia', 'greet', 'app']) },
+    bunClosures: true as const,
   }
   // Act
   const snapshot = await captureReplayDebugSnapshot(input)
@@ -169,7 +169,7 @@ test('a failed closure classification keeps the block scope, saves no closure an
     verifiedSource: SOURCE,
     request: refusingClassification,
     assertCurrent: () => undefined,
-    bunClosures: { moduleBindingNames: new Set(['Elysia', 'greet', 'app']) },
+    bunClosures: true as const,
   }
   // Act
   const snapshot = await captureReplayDebugSnapshot(input)
@@ -195,4 +195,118 @@ test('without the Bun input the same closures are not saved', async () => {
   const snapshot = await captureReplayDebugSnapshot(input)
   // Assert
   assert.deepEqual(savedNames(snapshot, 0), [])
+})
+
+// Value: protects=a Bun stop whose closure classification fails with a 5,000-character adapter error still yields a valid snapshot that keeps the block scope, with a limitation that is a whole sentence within the saved text limit; fails_when=the sentence's cause alone is cut so prefix plus cause plus suffix exceeds the limit and the snapshot schema rejects the stop (Cycle 0152 review finding); seam=a refused variables request with a long message; no_claim=what real adapters write
+test('a 5,000-character classification error keeps the block scope and a bounded limitation', async () => {
+  // Arrange
+  const refusingClassification = (
+    command: 'scopes' | 'variables',
+    arguments_: Record<string, number>,
+  ): Promise<unknown> => {
+    if (command === 'scopes' && arguments_.frameId === 1)
+      return Promise.resolve({
+        scopes: [
+          { name: 'Block', presentationHint: 'locals', variablesReference: 10 },
+          {
+            name: 'Closure',
+            presentationHint: 'arguments',
+            variablesReference: 11,
+          },
+          {
+            name: 'Closure',
+            presentationHint: 'arguments',
+            variablesReference: 14,
+          },
+          { name: 'Script', variablesReference: 15 },
+        ],
+      })
+    if (command === 'variables' && arguments_.variablesReference === 10)
+      return Promise.resolve({
+        variables: [{ name: 'item', value: "'book'", variablesReference: 0 }],
+      })
+    if (command === 'variables' && arguments_.variablesReference === 11)
+      return Promise.reject(new Error('x'.repeat(5_000)))
+    return bunStopAnswer(command, arguments_)
+  }
+  const input = {
+    stack: STACK,
+    verifiedSource: SOURCE,
+    request: refusingClassification,
+    assertCurrent: () => undefined,
+    bunClosures: true as const,
+  }
+  // Act
+  const snapshot = await captureReplayDebugSnapshot(input)
+  // Assert
+  assert.deepEqual(savedNames(snapshot, 0), ['item'])
+  assert.equal(snapshot.limitations.length, 1)
+  assert.equal(snapshot.limitations[0]!.length, 4_096)
+  assert.equal(
+    snapshot.limitations[0]!.startsWith(
+      "The stopped frame's closure scopes could not be classified (xxx",
+    ),
+    true,
+  )
+  assert.equal(
+    snapshot.limitations[0]!.endsWith(
+      '… [truncated]), so none of them was saved.',
+    ),
+    true,
+  )
+})
+
+// Value: protects=an anonymous handler made by an anonymous factory saves its own values and never the factory's closure (a tenant name) in a captured Bun replay; fails_when=the factory closure reaches the saved history; seam=source text of a factory plus DAP answers for [handler, factory, module] closures; no_claim=adapters other than js-debug
+test('a captured Bun replay of a handler in an anonymous factory saves no factory closure value', async () => {
+  // Arrange
+  const source = [
+    "import { Elysia } from 'elysia'",
+    'const makeRoutes = (tenantName) => {',
+    '  return ({ query }) => {',
+    '    const name = query.name',
+    '    return name',
+    '  }',
+    '}',
+  ].join('\n')
+  const answers: Record<number, DebugProtocol.Variable[]> = {
+    11: [{ name: 'name', value: "'x'", variablesReference: 0 }],
+    12: [{ name: 'query', value: '{}', variablesReference: 0 }],
+    13: [{ name: 'tenantName', value: "'acme'", variablesReference: 0 }],
+    14: [{ name: 'makeRoutes', value: 'ƒ', variablesReference: 0 }],
+  }
+  const request = (
+    command: 'scopes' | 'variables',
+    arguments_: Record<string, number>,
+  ): Promise<unknown> => {
+    if (command === 'scopes')
+      return Promise.resolve({
+        scopes: [11, 12, 13, 14].map((variablesReference) => ({
+          name: 'Closure',
+          presentationHint: 'arguments',
+          variablesReference,
+        })),
+      })
+    return Promise.resolve({
+      variables: answers[arguments_.variablesReference ?? -1] ?? [],
+    })
+  }
+  const input = {
+    stack: {
+      stackFrames: [{ id: 1, name: '<anonymous>', line: 5, column: 5 }],
+      totalFrames: 1,
+    },
+    verifiedSource: {
+      name: 'src/index.ts',
+      text: source,
+      hash: sha256(source),
+      line: 5,
+    },
+    request,
+    assertCurrent: () => undefined,
+    bunClosures: true as const,
+  }
+  // Act
+  const snapshot = await captureReplayDebugSnapshot(input)
+  // Assert
+  assert.deepEqual(savedNames(snapshot, 0), ['name', 'query'])
 })
