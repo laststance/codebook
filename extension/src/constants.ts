@@ -2103,6 +2103,10 @@ export const NODE_SERVER_HISTORY_FORMAT_VERSION = 1
 export const NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION = 2
 /** The `formatVersion` a node-server history header is written with when its run declared `signIn`; a Codebook without it neither lists such a header nor deletes its files, and the header carries the `sign-in` entry's rules (format 3 if and only if the configuration has `signIn`). */
 export const NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION = 3
+/** The `formatVersion` of a node-server history header whose run declared `loader: "bun"` (and no `signIn`); a Codebook without it lists such a replay as saved by a newer Codebook instead of reading a loader it does not know as corrupt. */
+export const NODE_SERVER_HISTORY_BUN_HEADER_FORMAT_VERSION = 4
+/** The `formatVersion` of a node-server history header whose run declared both `loader: "bun"` and `signIn` (format 3's `sign-in` entry rules apply). */
+export const NODE_SERVER_HISTORY_BUN_SIGN_IN_HEADER_FORMAT_VERSION = 5
 /** The most entries one node-server history holds, `source` and `end` included. */
 export const NODE_SERVER_HISTORY_MAX_ENTRIES = 10_000
 /** The largest journal of a node-server history. */

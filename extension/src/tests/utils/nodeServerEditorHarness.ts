@@ -54,6 +54,12 @@ export async function editorHarness(
     ) => DebugProtocol.Breakpoint
     /** Runs the real {@link captureReplayDebugSnapshot} over the Local scope offering these variables, instead of the empty snapshot stand-in. */
     localVariables?: DebugProtocol.Variable[]
+    /** Scripts the stopped frame's scopes and each scope's variables (by `variablesReference`) and runs the real capture and the real declared inspections over them, as a Bun stop's closures need. */
+    scriptedScopes?: {
+      frameName?: string
+      scopes: DebugProtocol.Scope[]
+      variables: Record<number, DebugProtocol.Variable[]>
+    }
   } = {},
 ) {
   const calls: string[] = []
@@ -195,7 +201,7 @@ export async function editorHarness(
             ? [
                 {
                   id: 1,
-                  name: 'getUser',
+                  name: options.scriptedScopes?.frameName ?? 'getUser',
                   line: currentFrame.line,
                   column: currentFrame.column ?? 3,
                   source: { path: currentFrame.file },
@@ -205,8 +211,17 @@ export async function editorHarness(
         } satisfies DebugProtocol.StackTraceResponse['body']
       if (command === 'scopes')
         return {
-          scopes: [{ name: 'Local', variablesReference: 1, expensive: false }],
+          scopes: options.scriptedScopes?.scopes ?? [
+            { name: 'Local', variablesReference: 1, expensive: false },
+          ],
         } satisfies DebugProtocol.ScopesResponse['body']
+      if (command === 'variables' && options.scriptedScopes)
+        return {
+          variables:
+            options.scriptedScopes.variables[
+              (arguments_ as { variablesReference: number }).variablesReference
+            ] ?? [],
+        } satisfies DebugProtocol.VariablesResponse['body']
       if (command === 'variables' && options.localVariables)
         return {
           variables: options.localVariables,
@@ -367,17 +382,27 @@ export async function editorHarness(
           }
         },
       },
-      './utils/inspectNodeTestVariables': {
-        inspectNodeTestVariables: async () => ({
-          variables: [],
-          facts: [
-            { path: 'user.id', mode: 'value', display: '7', type: 'number' },
-          ],
-          unavailable: [],
-        }),
-      },
+      // Scripted scopes run the real declared inspections over them.
+      ...(options.scriptedScopes
+        ? {}
+        : {
+            './utils/inspectNodeTestVariables': {
+              inspectNodeTestVariables: async () => ({
+                variables: [],
+                facts: [
+                  {
+                    path: 'user.id',
+                    mode: 'value',
+                    display: '7',
+                    type: 'number',
+                  },
+                ],
+                unavailable: [],
+              }),
+            },
+          }),
       // Absent, the real capture runs over the variables the Local scope offers.
-      ...(options.localVariables
+      ...(options.localVariables || options.scriptedScopes
         ? {}
         : {
             './utils/captureReplayDebugSnapshot': {

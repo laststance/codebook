@@ -85,6 +85,8 @@ interface CaptureInput {
   moduleEvaluation?: boolean
   /** A Bun stop: the stopped function's own scopes arrive as closures, so the stopped frame's closures are copied like local values only when every name in one is declared in the stopped function's own source (`verifiedSource.text` at the top frame's line and column; {@link ownClosureScopePositionsOf}, {@link stoppedFunctionDeclaredNamesOf}). */
   bunClosures?: true
+  /** The positions, among the stopped frame's scopes, of the closures already decided to be the stopped function's own ({@link ownClosureScopePositionsOf}); a caller that decided it for another read of the same stop (a Bun stop's declared inspections) passes it so both reads share one decision, and it replaces the classification `bunClosures` would otherwise run. */
+  ownClosurePositions?: ReadonlySet<number>
   limits?: {
     timeoutMs: number
     maxFrames: number
@@ -316,7 +318,7 @@ const CLASSIFICATION_FAILURE_SUFFIX = '), so none of them was saved.'
  * @returns The sentence, at most {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS} characters, its ending kept.
  * @example classificationLimitationOf('adapter refused variables') // => "The stopped frame's closure scopes could not be classified (adapter refused variables), so none of them was saved."
  */
-function classificationLimitationOf(cause: string): string {
+export function classificationLimitationOf(cause: string): string {
   const room =
     REPLAY_DEBUG_TEXT_LIMIT_CHARS -
     CLASSIFICATION_FAILURE_PREFIX.length -
@@ -574,7 +576,10 @@ export async function captureReplayDebugSnapshot(
     frameName: string,
     scopes: z.infer<typeof scopeResponse>['scopes'],
   ): Promise<ReadonlySet<number>> => {
-    if (!input.bunClosures || frameIndex !== 0) return new Set<number>()
+    if (frameIndex !== 0) return new Set<number>()
+    // A decision the caller already made for this stop is the one used; it is never computed a second way.
+    if (input.ownClosurePositions) return input.ownClosurePositions
+    if (!input.bunClosures) return new Set<number>()
     try {
       const topFrame = input.stack.stackFrames[0]
       return await ownClosureScopePositionsOf(

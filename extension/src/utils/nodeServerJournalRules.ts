@@ -1,7 +1,6 @@
 import {
   NODE_SCRIPT_HISTORY_LIBRARY_FORMAT_VERSION,
   NODE_SERVER_HISTORY_MAX_STOPS,
-  NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
 } from '../constants'
 import type {
   NodeScriptHistoryEntry,
@@ -11,6 +10,8 @@ import type {
   NodeServerHistoryEntry,
   NodeServerHistoryHeader,
 } from '../nodeServerHistorySchemas'
+
+import { headerFormatHasSignIn } from './nodeServerHistoryHeaderFormat'
 
 /** What the node-server journal's ordering rules have accepted so far; the writer, the incremental scan and the full read each hold one and call {@link acceptNodeServerEntry}, so all three accept the same journals. */
 export type NodeServerJournalProgress = {
@@ -206,9 +207,7 @@ const ENTRY_RULES: {
   'output-truncated': (progress) =>
     acceptOutputTruncated(progress, SERVER_SUBJECT),
   'sign-in': (progress, entry, header) => {
-    if (
-      header.formatVersion !== NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION
-    )
+    if (!headerFormatHasSignIn(header.formatVersion))
       throw new Error('Node server history signs in without a format 3 header.')
     if (progress.hasSignIn)
       throw new Error('Node server history signs in twice.')
@@ -220,11 +219,7 @@ const ENTRY_RULES: {
   },
   request: (progress, entry, header) => {
     // A format 3 history signed in first; its request follows the sign-in.
-    if (
-      header.formatVersion ===
-        NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION &&
-      !progress.hasSignIn
-    )
+    if (headerFormatHasSignIn(header.formatVersion) && !progress.hasSignIn)
       throw new Error('Node server history opens a request before its sign-in.')
     if (progress.hasTerminal || progress.openAttempt !== undefined)
       throw new Error(
