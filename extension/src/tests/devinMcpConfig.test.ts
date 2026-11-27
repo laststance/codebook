@@ -13688,6 +13688,66 @@ test('A setup whose completed record a sync tool moves away right after its publ
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+test('First setup names the retained original and its tracking status when the receipt is moved during a setup record conflict', async (context) => {
+  // Value: protects=the first refusal points to the sole retained original beside both conflicting records; fails_when=the copy or its tracking status is omitted; no_claim=native filesystem timing.
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"mcpServers":{"notes":{"command":"notes"}}}\n'
+  await writeConfig(configPath, original)
+  const folder = join(storage, 'devin-mcp')
+  const pendingPath = join(folder, 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const receiptPath = join(folder, 'receipt.json')
+  const savedReceipt = join(home, 'saved-receipt.json')
+  const otherRecord = '{"saved":"another record"}\n'
+  let copyPath = ''
+  const moving = await loadWithAfterRename((_from, to) => {
+    if (to === receiptPath) renameSync(receiptPath, savedReceipt)
+  })
+
+  // Act
+  const message = await moving
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: (displacedPath) => {
+        if (!displacedPath || copyPath) return
+        copyPath = displacedPath
+        // The completed record cannot move its previous version to this occupied name.
+        writeFileSync(droppingPath, otherRecord)
+      },
+    })
+    .then(
+      ({ status }) => status,
+      (error: Error) => error.message,
+    )
+
+  // Assert
+  assert.notEqual(copyPath, '')
+  assert.ok(message.includes(receiptPath), message)
+  assert.ok(
+    message.includes(`at ${pendingPath} and another file at ${droppingPath}`),
+    message,
+  )
+  assert.ok(
+    message.includes(
+      `private copy of your previous Devin MCP config at ${copyPath} (`,
+    ),
+    message,
+  )
+  assert.match(message, /still tracks that copy/)
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+  assert.equal(
+    (await readRecordFile(storage, 'pending.json')).keptName,
+    basename(copyPath),
+  )
+  assert.equal(await readFile(droppingPath, 'utf8'), otherRecord)
+  assert.equal(existsSync(receiptPath), false)
+  assert.ok(existsSync(savedReceipt))
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')).mcpServers, {
+    notes: { command: 'notes' },
+    codebook: ENTRY,
+  })
+})
+
 test("A setup whose completed-record write finds a file at that record's dropping name keeps its entry and names both names in that refusal's own words, instead of saying another program changed its record", async (context) => {
   // Value: protects=a completed-record write that Codebook's own step at the record's dropping name refuses (a file already stands at pending.json.codebook-dropping) is reported with that refusal's own sentence, which names both names and its way out, instead of saying another program changed or replaced the setup's record; the setup still records its entry while the config is the file it published, and both names stay as they were (OCR L1 and L3 P2 on markCompleted; Cycle 0149 review round); fails_when=the setup answers anything but installed with the leftover warning followed by the dropping-name sentence, the setup record or the file at the dropping name changes or is gone, or no receipt of this setup stands; no_claim=how such a file got there (seam.afterPublish writes it once, after the config is in place and before the completed record), what the next run does with both names
   // Arrange

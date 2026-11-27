@@ -10658,7 +10658,10 @@ function firstSetupProofFailure(
   if (!(cause instanceof ReceiptConflictError)) return undefined
   // A stranded journal cannot authorize a take-back. Both failures have independent recovery steps.
   if (conflict)
-    return new Error(`${cause.message} ${conflict.message}`, { cause })
+    return new Error(
+      `${cause.message}${keptCopiesSentence(copies)} ${conflict.message}`,
+      { cause },
+    )
   if (context.journalVersion?.current) return undefined
   return new Error(
     `Codebook could no longer verify its receipt at ${context.receiptPath} for the entry it wrote in Devin Desktop's MCP config at ${context.path}. It left the current files untouched. Check both locations and keep any different receipt separately. Restore the matching receipt from backup or, if you have no backup, ${KEEP_ENTRY_ADVICE} in ${context.path}, ${context.retry}.`,
