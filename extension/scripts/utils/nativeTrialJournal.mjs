@@ -198,7 +198,12 @@ async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
       (await readRecord(join(dir, 'end.json')))
     )
       return null
-    const row = await collect()
+    // The grant's decision clock predates its publication. Bind each probe to the durable grant visible before it starts.
+    const grant = await readRecord(join(dir, PLAN_AUTHORIZATION))
+    const stopPlanWitness = grant?.status === 'accepted' ? grant.witness : null
+    if (stopPlanWitness) await syncDirectory(dir)
+    if (now() >= deadline) return null
+    const row = { ...(await collect()), stopPlanWitness }
     if (!afterPlanAt) {
       const key =
         slot === undefined ? `${Date.parse(row.at)}-${id}` : `slot-${slot}`
@@ -270,9 +275,10 @@ async function recordedStop(dir, rows, deadline) {
     (earliest, r) => Math.min(earliest, r.to),
     Infinity,
   )
-  const first = stopped
+  const confirmed = stopped
     .filter((s) => earliestRunning < s.from)
-    .sort((a, b) => a.to - b.to)[0]
+    .sort((a, b) => a.to - b.to)
+  const first = confirmed[0]
   if (!first) return null
 
   const beforeStop = running
@@ -291,6 +297,10 @@ async function recordedStop(dir, rows, deadline) {
     if (
       authorization?.status === 'accepted' &&
       authorized &&
+      // A slower overlapping inventory can have observed the same stop before the grant was published.
+      confirmed.every(
+        (s) => s.from > first.to || s.row.stopPlanWitness === authorized.file,
+      ) &&
       Date.parse(authorization.acceptedAt) <= first.from
     ) {
       witness = authorized
@@ -400,10 +410,6 @@ export async function watchTrial(
   const alreadyEnded = await durableEnd(dir)
   if (alreadyEnded) return alreadyEnded
   const rows = await history(dir)
-  let sawRunning = rows.some(
-    (row) =>
-      row.guest.state === 'running' || row.guest.initialRunningObservation,
-  )
   const started = Date.parse(trial.started)
   const deadline = Date.parse(trial.deadline)
   const clock = () => new Date(now()).toISOString()
@@ -438,13 +444,8 @@ export async function watchTrial(
       reachable: row.guest.reachable,
       workloads: row.host.workloads,
     })
-    if (!recorded || rows.at(-1)?.at !== row.at) rows.push(row)
-    if (row.guest.state === 'running' || row.guest.initialRunningObservation)
-      sawRunning = true
-    if (
-      (sawRunning || row.additionalObservation) &&
-      row.guest.state === 'stopped'
-    ) {
+    // A competing watcher or stop planner may have supplied the only running witness.
+    if (row.guest.state === 'stopped') {
       const stopped = await recordedStop(dir, await history(dir), deadline)
       if (stopped)
         return closeObserver(
@@ -660,9 +661,12 @@ export async function reportTrials(root) {
       const stop = await recordedStop(dir, rows, Date.parse(trial.deadline))
       if (stop?.sampleAt === ended.sampleAt) stopEvidence = stop.stopEvidence
     }
-    const cutoff = ended
-      ? Date.parse(stopEvidence?.stopped.to ?? ended.at)
-      : Infinity
+    // A timeout describes the declared interval, even when the closer recorded a different time.
+    const terminalTime =
+      ended?.outcome === 'observer-timeout'
+        ? trial.deadline
+        : (stopEvidence?.stopped.to ?? ended?.at)
+    const cutoff = ended ? Date.parse(terminalTime) : Infinity
     const within = (timestamp) => Date.parse(timestamp) <= cutoff
     const regular = rows.filter((row) => !row.additionalObservation)
     // With no per-metric clock in an older journal, only its completion time bounds the reading.

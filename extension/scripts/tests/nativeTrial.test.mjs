@@ -1298,6 +1298,146 @@ test('a refused stop plan during closing cannot authorize a subsequent confirmed
   )
 })
 
+test('a stop observed while a grant is being published cannot use the earlier decision timestamp as approval', async (t) => {
+  // Arrange: the planner has persisted its running witness and decided at two seconds, but its grant is still private.
+  const { root, put, at, start } = await startedTrial(t)
+  await put('plan-stop.json', { at: at(1), requiresAuthorization: true })
+  await put('observation-abcd.json', {
+    ...sample(start + 1500),
+    additionalObservation: true,
+    afterPlanAt: at(1),
+  })
+
+  // Act: the provider has already returned stopped when the competing planner publishes its grant.
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    async () => {
+      const stopped = sample(start + 3000, 'stopped', null)
+      await put('plan-stop-authorization.json', {
+        status: 'accepted',
+        witness: 'observation-abcd.json',
+        acceptedAt: at(2),
+      })
+      return stopped
+    },
+    () => start + 3000,
+  )
+
+  // Assert
+  assert.equal(end.outcome, 'unknown')
+  assert.equal(end.stopEvidence.stopped.to, at(3))
+})
+
+test('a faster approved stop probe cannot resolve an overlapping stop observed without the grant', async (t) => {
+  // Arrange: both reads saw a stop after the running witness. The grantless read can have observed it first.
+  const { root, put, at, start } = await startedTrial(t)
+  await put('plan-stop.json', { at: at(1), requiresAuthorization: true })
+  await put('observation-abcd.json', {
+    ...sample(start + 1500),
+    additionalObservation: true,
+    afterPlanAt: at(1),
+  })
+  await put('plan-stop-authorization.json', {
+    status: 'accepted',
+    witness: 'observation-abcd.json',
+    acceptedAt: at(2.5),
+  })
+  for (const [slot, from, to, stopPlanWitness] of [
+    [2, 2, 5, null],
+    [3, 3, 4, 'observation-abcd.json'],
+  ]) {
+    const row = sample(start + to * 1000, 'stopped', null)
+    row.guest.stateObservedFrom = at(from)
+    row.guest.stateObservedTo = at(to)
+    await put(`sample-slot-${slot}.json`, { ...row, stopPlanWitness })
+  }
+
+  // Act
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('stop already recorded'),
+    () => start + 6000,
+  )
+
+  // Assert
+  assert.equal(end.outcome, 'unknown')
+  assert.equal(end.stopEvidence.stopped.to, at(4))
+})
+
+test('a scheduled stop closes immediately when an independent planner supplied the only running observation', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  const start = Date.now()
+  const clock = { at: start }
+  let sleeps = 0
+
+  // Act
+  const end = await watchTrial(
+    root,
+    options,
+    clocked(
+      clock,
+      (time) =>
+        time === start
+          ? sample(time, 'unknown', null)
+          : sample(time, 'stopped', null),
+      async () => {
+        assert.equal(
+          ++sleeps,
+          1,
+          'the confirmed stop needs no next polling interval',
+        )
+        await controlTrial(
+          root,
+          options.id,
+          'plan-stop',
+          undefined,
+          async () => sample(start + 500),
+          () => start + 500,
+        )
+      },
+    ),
+  )
+
+  // Assert
+  assert.equal(end.outcome, 'planned-stop')
+  assert.equal(end.sampleAt, new Date(start + 1000).toISOString())
+})
+
+for (const endedAt of [9.5, 10.5]) {
+  test(`a timeout recorded at ${endedAt} seconds includes workload and paging evidence only through the ten-second deadline`, async (t) => {
+    // Arrange
+    const { root, put, at, start } = await startedTrial(t)
+    for (const [slot, seconds, count] of [
+      [8, 8, 1],
+      [9, 9.8, 2],
+      [10, 10.2, 99],
+    ]) {
+      const row = sample(start + seconds * 1000, 'running', true, count)
+      row.host.workloads = { build: count }
+      await put(`sample-slot-${slot}.json`, row)
+    }
+    await put('end.json', { at: at(endedAt), outcome: 'observer-timeout' })
+
+    // Act
+    const {
+      trials: [trial],
+    } = await reportTrials(root)
+
+    // Assert
+    assert.deepEqual(trial.peakProcesses, { build: 2 })
+    assert.equal(trial.samples, 2)
+    assert.equal(trial.pagingIntervals.host.length, 1)
+    assert.equal(trial.pagingIntervals.host[0].pages, 1)
+  })
+}
+
 test('legacy plan observations cannot establish an unrecorded approval on recovery', async (t) => {
   // Arrange
   const { root, put, at, start } = await startedTrial(t)
@@ -1394,7 +1534,7 @@ test('the CLI preserves a legacy terminal outcome and freezes its surviving samp
 
 test('an active trial can approve a fresh stop plan after a prior observation was refused', async (t) => {
   // Arrange
-  const { root, dir, put, at, start } = await startedTrial(t)
+  const { root, dir, at, start } = await startedTrial(t)
   const plan = (seconds, state) =>
     controlTrial(
       root,
@@ -1408,14 +1548,13 @@ test('an active trial can approve a fresh stop plan after a prior observation wa
   // Act
   await assert.rejects(plan(1, 'unknown'), /do not stop/i)
   await plan(2, 'running')
-  await put('sample-slot-3.json', sample(start + 3000, 'stopped', null))
   const end = await controlTrial(
     root,
     options.id,
     'finish',
     'unknown',
-    () => assert.fail('already stopped'),
-    () => start + 4000,
+    async () => sample(start + 3000, 'stopped', null),
+    () => start + 3000,
   )
 
   // Assert
