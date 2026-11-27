@@ -6934,6 +6934,90 @@ async function leaveLegacyCutShortSetup(
   return { home, storage, configPath, receiptPath, pendingPath, journalPath }
 }
 
+test('Recovery of an older first setup preserves disabled servers and tools saved before retry', async (context) => {
+  // Value: protects=Devin preferences on a plain-hash take-back record; fails_when=refresh removes the edited entry; no_claim=native Devin behavior.
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const notes = { command: 'notes' }
+  const staged =
+    JSON.stringify({ mcpServers: { notes, codebook: ENTRY } }, null, 2) + '\n'
+  await writeConfig(configPath, staged)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000011458',
+    stagedIno: statSync(configPath).ino,
+    stagedSha256: sha256(staged),
+    takeBack: true,
+  })
+  const editedEntry = { ...ENTRY, disabled: true, disabledTools: ['example'] }
+  const edited =
+    JSON.stringify({ mcpServers: { notes, codebook: editedEntry } }, null, 2) +
+    '\n'
+  writeFileSync(configPath, edited)
+
+  // Act
+  const retry = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(readFileSync(configPath, 'utf8'), edited)
+  assert.match(retry, /rename the "codebook" entry to an unused name/)
+  assert.ok(existsSync(pendingPath))
+  assert.equal(existsSync(receiptPath), false)
+  await writeConfig(
+    configPath,
+    JSON.stringify({ mcpServers: { notes, saved: editedEntry } }),
+  )
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  assert.equal(next.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers, {
+    notes,
+    saved: editedEntry,
+    codebook: ENTRY,
+  })
+})
+
+test('First setup keeps the config and asks for a retry when its receipt check cannot read it once', async (context) => {
+  // Value: protects=accurate recovery guidance after a temporary read failure; fails_when=setup says the config was edited and asks for a rename; no_claim=real disk failure.
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const folder = join(storage, 'devin-mcp')
+  let published = ''
+  let failed = false
+
+  // Act
+  const attempt = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      published = readFileSync(configPath, 'utf8')
+    },
+    afterStat: (path) => {
+      if (path !== configPath || !published || failed) return
+      failed = true
+      throw Object.assign(new Error('temporary read failure'), { code: 'EIO' })
+    },
+  }).then(
+    ({ status }) => status,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(failed, true)
+  assert.match(attempt, /could not verify/)
+  assert.match(attempt, /run Codebook: Set Up AI Chat again/)
+  assert.doesNotMatch(attempt, /edited in place|rename the "codebook"/)
+  assert.equal(readFileSync(configPath, 'utf8'), published)
+  assert.ok(existsSync(join(folder, 'pending.json')))
+  assert.equal(existsSync(join(folder, 'receipt.json')), false)
+  const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  assert.equal(retry.status, 'installed')
+})
+
 test('A legacy rollback journal whose published config was appended to in place still takes the failed first setup back', async (context) => {
   // Value: protects=a cut-short rollback journal of the released builds (no publish generation) still finishes the take-back when a writer appended to the published config in place before the rollback hashed it, so the failed first setup is never adopted as installed; fails_when=the refresh answers current, writes a receipt or leaves the entry in the config; no_claim=an append that does not start right after a line break (only prefixes that end in one are compared), a real editor's in-place save; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; a line break appended to the displaced file, and its new hash in keptSha256, stand for the in-place append the rollback saw
   // Arrange
@@ -7125,15 +7209,19 @@ test("A setup record a backup restores after a legacy rollback journal was found
       journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
     })
   const journalText = readFileSync(journalPath, 'utf8')
-  // Another setup's record: it names the entry of another extension folder (OTHER_ENTRY's plain hash) and, as its staged bytes, the bytes the journal names, so it reads as the journal's own setup.
+  const otherConfigText = `${JSON.stringify(
+    {
+      mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
+    },
+    null,
+    2,
+  )}\n`
+  // The restored record identifies both the other extension's entry and the exact config that setup published.
   const restoredPendingText = `${JSON.stringify({
     ...JSON.parse(readFileSync(pendingPath, 'utf8')),
     entrySha256:
       'ac2315e6a57265f50d9ac50f2f4ea13720f46de69a96edf77f972d1912caa196',
-    stagedSha256: JSON.parse(journalText).keptSha256,
-  })}\n`
-  const otherConfigText = `${JSON.stringify({
-    mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
+    stagedSha256: sha256(otherConfigText),
   })}\n`
   const backupPath = join(home, 'pending-from-backup.json')
   let hasRewrittenConfig = false
@@ -7295,15 +7383,19 @@ test("A setup record a sync tool moves away after a legacy rollback journal was 
       journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
     })
   const journalText = readFileSync(journalPath, 'utf8')
-  // Another setup's record: it names the entry of another extension folder (OTHER_ENTRY's plain hash) and, as its staged bytes, the bytes the journal names, so it reads as the journal's own setup.
+  const otherConfigText = `${JSON.stringify(
+    {
+      mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
+    },
+    null,
+    2,
+  )}\n`
+  // The restored record identifies both the other extension's entry and the exact config that setup published.
   const restoredPendingText = `${JSON.stringify({
     ...JSON.parse(readFileSync(pendingPath, 'utf8')),
     entrySha256:
       'ac2315e6a57265f50d9ac50f2f4ea13720f46de69a96edf77f972d1912caa196',
-    stagedSha256: JSON.parse(journalText).keptSha256,
-  })}\n`
-  const otherConfigText = `${JSON.stringify({
-    mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
+    stagedSha256: sha256(otherConfigText),
   })}\n`
   const movedPath = join(home, 'pending-moved-away.json')
   let hasRewrittenConfig = false

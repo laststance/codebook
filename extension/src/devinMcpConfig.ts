@@ -184,6 +184,8 @@ type ConfigLook =
       identity: FileIdentity
       /** SHA-256 of the bytes that were read, to tell a save made meanwhile from the file that was read. */
       sha256: string
+      /** Digest of the same JSON bytes before any extra trailing line breaks, used only by legacy take-back. */
+      sha256BeforeExtraLineBreaks: string | undefined
       /** Whether a number of the file would change when written back ({@link parseConfig}). */
       hasLossyNumber: boolean
     }
@@ -733,8 +735,27 @@ function parseConfig(
     servers: rawServers,
     identity,
     sha256: bytesSha256(bytes),
+    sha256BeforeExtraLineBreaks: hashBeforeExtraLineBreaks(bytes),
     hasLossyNumber,
   }
+}
+
+/**
+ * Identifies an older setup's staged JSON when only line breaks were appended.
+ * The validated root is an object, and the writer ended its closing brace with one LF.
+ * @example
+ * hashBeforeExtraLineBreaks(Buffer.from('{}\n\r\n')) // hashes '{}\n'
+ */
+function hashBeforeExtraLineBreaks(bytes: Buffer): string | undefined {
+  const firstBreak = bytes.lastIndexOf('}') + 1
+  // Hash an additional prefix only when the entire suffix consists of extra line breaks.
+  if (
+    bytes[firstBreak] === 10 &&
+    firstBreak + 1 < bytes.length &&
+    bytes.subarray(firstBreak + 1).every((byte) => byte === 10 || byte === 13)
+  )
+    return bytesSha256(bytes.subarray(0, firstBreak + 1))
+  return undefined
 }
 
 /**
@@ -9979,6 +10000,7 @@ type RollbackResult = {
     | 'took-out'
     | 'replaced-config'
     | 'edited-config'
+    | 'unverified-config'
     | 'not-ours'
     | 'unreadable'
     | 'not-taken-out'
@@ -10059,8 +10081,8 @@ async function rollBackPublishedEntry(
     return { outcome: confirmed.outcome, keptLeft: [] }
   const { look } = confirmed
   // The same snapshot that proves the original config also guards its move during rollback.
-  if (!rollbackConfigStillMatches(look, stagedSha256, configStill))
-    return { outcome: 'edited-config', keptLeft: [] }
+  const conflict = rollbackConfigConflict(look, stagedSha256, configStill)
+  if (conflict) return { outcome: conflict, keptLeft: [] }
   try {
     const { keptLeft, status } = await takeEntryOut(
       rollbackContextOf(context, written.generation),
@@ -10088,18 +10110,21 @@ async function rollBackPublishedEntry(
  * Checks the snapshot used by {@link rollBackPublishedEntry} against the bytes staged for publication and, during the same setup, the identity found before writing the receipt.
  * Older records without that evidence keep their existing entry and inode checks.
  * @example
- * rollbackConfigStillMatches(look, pending.stagedSha256)
+ * rollbackConfigConflict(look, pending.stagedSha256) // 'edited-config' after an in-place change
  */
-function rollbackConfigStillMatches(
+function rollbackConfigConflict(
   look: Extract<ConfigLook, { kind: 'present' }>,
   stagedSha256: string | undefined,
   configStill?: StillLook,
-): boolean {
+): 'edited-config' | 'unverified-config' | undefined {
+  // Only a mismatch of verified bytes establishes a content edit.
+  if (stagedSha256 !== undefined && look.sha256 !== stagedSha256)
+    return 'edited-config'
   try {
     configStill?.assert()
-    return stagedSha256 === undefined || look.sha256 === stagedSha256
+    return undefined
   } catch {
-    return false
+    return 'unverified-config'
   }
 }
 
@@ -10243,6 +10268,8 @@ function rollbackOutcomeClause(
   const journal = rollbackContextOf(context).pendingPath
   return {
     'took-out': 'so it took that entry out again and changed nothing else',
+    'unverified-config':
+      'and could not verify that the config stayed unchanged, so it kept the file and its recovery record',
     'edited-config': `but the file at that path was edited in place, so it left that file unchanged; ${KEEP_ENTRY_ADVICE}`,
     'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
     'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
@@ -12185,6 +12212,26 @@ async function dropAdoptedReceiptOf(
 }
 
 /**
+ * Returns the config digest a recovering take-back must see again. A plain-hash
+ * legacy record accepts appended line breaks only on the exact bytes it staged.
+ * @example
+ * takeBackConfigHash(pending, look) // the full current digest after a verified legacy append
+ */
+function takeBackConfigHash(
+  pending: Pending,
+  look: Extract<ConfigLook, { kind: 'present' }>,
+): string | undefined {
+  const { stagedSha256 } = pending
+  if (
+    stagedSha256 !== undefined &&
+    stagedSha256 === look.sha256BeforeExtraLineBreaks &&
+    !isFirstSetupRecord(pending)
+  )
+    return look.sha256
+  return stagedSha256
+}
+
+/**
  * Finishes the take-back of a first setup whose rollback was cut short; called by {@link inspect} after {@link settleRollbackJournal} put the published config back.
  * That config holds the entry the failed setup published, and its receipt was never written, so the publish record is not adopted: the entry is taken out again with the rollback's own steps and checks ({@link rollBackPublishedEntry}) and the setup's record is retired. A config with no matching publish record, one a receipt of the same generation that setup wrote itself covers ({@link isTakeBackCovered}), or a record marked {@link Pending.notLinked} (that publish linked nothing), is not concerned. A receipt of the same generation that an adoption wrote ({@link Receipt.adopted}) covers nothing: the entry is taken back all the same, and that receipt goes with it, before the record ends, while `receipt.json` still shows the version this run read and the entry is still out of the config ({@link dropAdoptedReceiptOf}).
  * Limit: an adopted receipt that cannot go then (another file at its name, a delete that fails) stays beside no entry, as a removal's receipt that it left does, and the next setup or removal settles it.
@@ -12243,7 +12290,7 @@ async function finishCutShortSetup(
     result = await rollBackPublishedEntry(
       context,
       written,
-      isFirstSetupRecord(pending) ? pending.stagedSha256 : undefined,
+      takeBackConfigHash(pending, look),
     )
   } catch (error) {
     // The record this take-back rests on changed or disappeared before the config moved: nothing changed, and the run goes no further.
