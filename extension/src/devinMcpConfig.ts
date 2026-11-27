@@ -3125,6 +3125,15 @@ function journalOf(
 }
 
 /**
+ * Encodes the bytes {@link publishRoot} writes, also used by recovery to recognize the result of removing Codebook's entry.
+ * @example
+ * serializedConfig({ mcpServers: {} }) // => '{\n  "mcpServers": {}\n}\n'
+ */
+function serializedConfig(root: JsonObject): string {
+  return `${JSON.stringify(root, null, 2)}\n`
+}
+
+/**
  * Publishes the config. The new bytes are staged first and their inode read from the open handle; the pending record then names the staged file, its inode, the probe name and the private name for the displaced file before anything is moved; the record stays from the first move on, because only the next run can tell how far a crash got.
  * A create links the staged file in ({@link createConfig}). A replacement moves the config aside, compares it and links the new file in ({@link replaceConfig}), so no file is replaced without being compared. Either link goes only while the staged name still shows the file and bytes this run wrote there ({@link assertStagedConfigStill}), and nothing rests on it until a read right after it finds that file with those bytes at the config name ({@link linkedConfigState}). The new file keeps the owner's permission bits only (`mode & 0o600`), so a rewrite never widens access.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
@@ -3147,7 +3156,7 @@ async function publishRoot(
   head: PendingHead,
   staleReceipt?: Receipt,
 ): Promise<Published> {
-  const serialized = `${JSON.stringify(root, null, 2)}\n`
+  const serialized = serializedConfig(root)
   assertWithinSizeLimit(context, serialized)
   const mode =
     look.kind === 'present'
@@ -5772,7 +5781,7 @@ function publishedConfigUnprovenError(
   copyPath: string,
 ): PublishedConfigUnprovenError {
   return new PublishedConfigUnprovenError(
-    `Codebook could not verify that the config at ${path} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy: a later run of Codebook deletes it only while it still holds exactly your previous config and the published config still stands with the bytes Codebook wrote; look at both files before you use either, and never copy the private file over the config, ${retry}.`,
+    `Codebook could not verify that the config at ${path} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy. To keep both versions and finish recovery, move the private copy to a new, unused private filename of your choice, leave the config and Codebook’s record where they are, ${retry}.`,
   )
 }
 
@@ -5831,6 +5840,9 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 
 /** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
 class HandedCopyError extends Error {}
+
+/** A completed replacement's original is being handed over because its settings already stand in the exact format written by withdrawal. */
+class WithdrawnConfigCopyError extends HandedCopyError {}
 
 /** Thrown by a write or delete of a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`), and by a write of a tracked publish record whose name was found empty (`gone`, {@link writeTrackedJournal}); nothing was written or deleted at that name ({@link journalConflictError}), and {@link settleRollbackJournal} ends the run with it, or {@link publishRecordConflict} words it as the publish record's. */
 class JournalConflictError extends Error {
@@ -6073,6 +6085,12 @@ function unsettledRefusal(
     return new Error(
       `${changedWhileWorking(context).message} ${replacedCopySentence(leftover.path)}`,
     )
+  if (cause instanceof WithdrawnConfigCopyError)
+    return new Error(
+      isHandoverUnrecorded
+        ? `Codebook kept ${keptCopyPhrase(leftover.path)}, ${UNCONFIRMED_CLAUSE}; ${context.retry}.`
+        : `Your settings are present at ${context.path} in the format Codebook writes after taking out its entry. Codebook kept the original formatting in ${leftover.path} for you; ${context.retry}.`,
+    )
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   // A record that stands and still names the copy, or one that could not be read back, may still let a later run delete that copy: it is never left to the learner.
   if (copyFate === 'tracked' || copyFate === 'unconfirmed')
@@ -6297,26 +6315,13 @@ async function tidyLeftover(
 }
 
 /**
- * Deletes a leftover that holds exactly the bytes its record names, once its name, a fresh hash of it and, for a displaced original of a change that published, the published config still show what recovery checked; called by {@link tidyLeftover}.
- * Same-size overwrites keep inode and size, so the file is hashed again right before; a copy of the previous config goes only on the word of the record as recovery read it ({@link recordStillCheck}). Each synchronous look comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers.
- * Limits: a swap or a write between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode or content); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
- * @param context - The run.
- * @param leftover - The accepted leftover; its hash is the one its record holds.
- * @param copy - What {@link lookAtLeftover} found.
- * @param pending - The pending record of the interrupted run; its staged hash names the published bytes.
- * @param publishedIno - The published config's inode for a displaced original of a change that published ({@link keepOriginalUnlessPublished}); undefined otherwise.
- * @throws When the leftover's bytes are not the ones its record names, a name no longer shows what was checked, the bytes changed, the config is no longer the published file, the record changed, or the unlink fails; the leftover stays then.
- * @example
- * await deleteRecordedLeftover(context, stagedLeftover, copy, pending, undefined) // the staged name is gone
- */
-/**
  * Verifies the published config of a completed replacement before its displaced copy is deleted.
  * @param context - The run.
  * @param pending - The pending record of the interrupted run.
  * @param publishedIno - The published config's inode.
  * @param leftoverPath - The displaced copy that stays tracked when proof fails.
  * @returns The config as it was read.
- * @throws The {@link publishedConfigUnprovenError} when the published config cannot be verified.
+ * @throws A {@link WithdrawnConfigCopyError} to preserve the original formatting, or the {@link publishedConfigUnprovenError} when recovery cannot verify either outcome.
  */
 async function assertCompletedPublishStill(
   context: Context,
@@ -6332,30 +6337,58 @@ async function assertCompletedPublishStill(
       leftoverPath,
     )
   } catch {
-    // A backup may instead have put the previous config itself back: those very bytes standing at the config name make the copy redundant as well. Any other or unreadable config leaves the copy possibly the last one, so the record keeps tracking it.
-    const restored = await readConfigHoldingBytes(context, pending.keptSha256)
-    if (restored) return restored
+    // A byte-exact restored original is redundant. Withdrawal can instead have preserved the settings but changed their formatting: keep the original bytes for the learner in that case.
+    const current = await inspectCopy(context.path, context.seam).catch(
+      () => undefined,
+    )
+    if (current && current.sha256 === pending.keptSha256) return current
+    if (
+      current &&
+      (await showsWithdrawnSettings(
+        context,
+        pending,
+        leftoverPath,
+        current,
+      ).catch(() => false))
+    )
+      throw new WithdrawnConfigCopyError()
     throw publishedConfigUnprovenError(context, leftoverPath)
   }
 }
 
 /**
- * Reads the config as proof that the displaced copy's exact bytes still stand at the config name; called by {@link assertCompletedPublishStill} when the published replacement no longer stands because a backup may have put the previous config back.
- * @param context - The run; its seam is called inside the read.
- * @param keptSha256 - The displaced copy's recorded bytes.
- * @returns The config as it was read when it holds exactly those bytes; undefined when it holds anything else or cannot be read.
+ * Recognizes the exact config {@link takeEntryOut} writes from the recorded original, before {@link assertCompletedPublishStill} hands that original to the learner.
+ * The original must still be the same readable file, with its recorded bytes and round-trippable settings. Both names are checked once more after the read.
  * @example
- * await readConfigHoldingBytes(context, pending.keptSha256) // => the config's read once a backup restored the previous config byte for byte
+ * await showsWithdrawnSettings(context, pending, copyPath, current) // true for withdrawal's formatted settings
  */
-async function readConfigHoldingBytes(
+async function showsWithdrawnSettings(
   context: Context,
-  keptSha256: string | undefined,
-): Promise<InspectedCopy | undefined> {
-  if (keptSha256 === undefined) return undefined
-  const config = await inspectCopy(context.path, context.seam).catch(
-    () => undefined,
+  pending: Pending,
+  copyPath: string,
+  current: InspectedCopy,
+): Promise<boolean> {
+  const original = await lookAtConfig({ ...context, path: copyPath })
+  if (
+    original.kind === 'absent' ||
+    original.hasLossyNumber ||
+    original.sha256 !== pending.keptSha256 ||
+    pending.keptIno === undefined ||
+    !isSameFileId(pending.keptIno, original.identity.ino) ||
+    original.servers?.[SERVER_NAME] !== undefined
   )
-  return config?.sha256 === keptSha256 ? config : undefined
+    return false
+  // A first setup creates the servers object if missing; its withdrawal writes that empty object back. All other keys are preserved.
+  const withdrawn = serializedConfig({
+    ...original.root,
+    mcpServers: original.servers ?? {},
+  })
+  if (current.sha256 !== bytesSha256(withdrawn)) return false
+  await lookAheadAt([context.path, copyPath])
+  return (
+    isLeftoverStill(context, context.path, current) &&
+    isLeftoverStill(context, copyPath, original.identity)
+  )
 }
 
 /**
@@ -6438,6 +6471,19 @@ async function verifyPublishedCopyDeletion(
   return { publishedLook, lastLook }
 }
 
+/**
+ * Deletes a leftover that holds exactly the bytes its record names, once its name, a fresh hash of it and, for a displaced original of a change that published, the published config still show what recovery checked; called by {@link tidyLeftover}.
+ * Same-size overwrites keep inode and size, so the file is hashed again right before; a copy of the previous config goes only on the word of the record as recovery read it ({@link recordStillCheck}). Each synchronous look comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers.
+ * Limits: a swap or a write between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode or content); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run.
+ * @param leftover - The accepted leftover; its hash is the one its record holds.
+ * @param copy - What {@link lookAtLeftover} found.
+ * @param pending - The pending record of the interrupted run; its staged hash names the published bytes.
+ * @param publishedIno - The published config's inode for a displaced original of a change that published ({@link keepOriginalUnlessPublished}); undefined otherwise.
+ * @throws When the leftover's bytes are not the ones its record names, a name no longer shows what was checked, the bytes changed, the config is no longer the published file, the record changed, or the unlink fails; the leftover stays then.
+ * @example
+ * await deleteRecordedLeftover(context, stagedLeftover, copy, pending, undefined) // the staged name is gone
+ */
 async function deleteRecordedLeftover(
   context: Context,
   leftover: Leftover,
@@ -6470,7 +6516,13 @@ async function deleteRecordedLeftover(
     path,
   ])
   // Only synchronous looks follow: the config name first (it must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode), the record, the displaced name last.
-  if (publishedLook) assertConfigUnchangedSince(context, publishedLook, path)
+  if (publishedLook)
+    assertConfigUnchangedSince(
+      context,
+      publishedLook,
+      path,
+      leftoverPhaseOf(pending) === 'completed',
+    )
   recordStill?.assert()
   // The hash came from the open handle; the unlink acts on the name, which must still show that same file with the size and times it had at its last hash.
   assertLeftoverStill(context, path, lastLook)
@@ -6870,16 +6922,24 @@ function proofOfRecordedCopy(
  * @param context - The run.
  * @param look - The config as {@link assertConfigStillPublished} read it.
  * @param leftoverPath - The displaced name about to be unlinked; kept and named when the check fails.
- * @throws An error naming `leftoverPath` when the config changed.
+ * @param isCompleted - A completed replacement keeps the original tracked if its final proof changes or cannot be read.
+ * @throws An error naming `leftoverPath` when the config changed or the final proof failed.
  */
 function assertConfigUnchangedSince(
   context: Context,
   look: InspectedCopy,
   leftoverPath: string,
+  isCompleted: boolean,
 ): void {
-  const { ino, size, mtimeNs, ctimeNs } = look
-  if (!isLeftoverStill(context, context.path, { ino, size, mtimeNs, ctimeNs }))
-    throw configChangedError(context, leftoverPath)
+  try {
+    if (isLeftoverStill(context, context.path, look)) return
+  } catch (cause) {
+    // A failed last look also leaves a completed publish unproven. An in-progress change keeps its existing read failure.
+    if (!isCompleted) throw cause
+  }
+  throw isCompleted
+    ? publishedConfigUnprovenError(context, leftoverPath)
+    : configChangedError(context, leftoverPath)
 }
 
 /** Throws when a displaced copy's last read shows other bytes or another inode than the ones Codebook checked; the copy stays untouched. */

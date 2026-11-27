@@ -2093,6 +2093,151 @@ test('Recovery of a completed removal keeps tracking the old copy when reading i
   )
 })
 
+test('Recovery keeps the recorded original when the last look at a completed replacement no longer proves the live config', async (context) => {
+  // protects=the recovery record still leads to the original after the last config check fails; fails_when=the copy is left untracked or either file is overwritten; no_claim=a real editor (the test writes an ordinary config on the final lookup).
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const published =
+    '{"mcpServers":{"alpha":{"command":"a"},"codebook":{"command":"node"}}}\n'
+  const edited = '{"mcpServers":{"gamma":{"command":"c"}}}\n'
+  await writeConfig(configPath, published)
+  const copyPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(copyPath, original)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(copyPath),
+    keptIno: (await stat(copyPath)).ino,
+    keptSha256: sha256(original),
+    stagedIno: (await stat(configPath)).ino,
+    stagedSha256: sha256(published),
+  })
+  let configReads = 0
+
+  // Act
+  const recovery = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path === configPath) configReads++
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path === configPath && configReads === 1)
+        writeFileSync(configPath, edited)
+    },
+  })
+
+  // Assert
+  await assert.rejects(recovery, /still tracks that copy/)
+  assert.equal(
+    (await readRecordFile(storage, 'pending.json')).keptName,
+    basename(copyPath),
+  )
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+  assert.equal(await readFile(configPath, 'utf8'), edited)
+  await assert.rejects(
+    refreshManagedDevinMcpEntry(storage, ENTRY, home),
+    /move the private copy to a new, unused private filename/,
+  )
+  // Follow the recovery guidance without altering the active config or removing its record.
+  const preserved = join(home, 'original-devin-config.json')
+  await rename(copyPath, preserved)
+  assert.equal(
+    (await refreshManagedDevinMcpEntry(storage, ENTRY, home)).status,
+    'not-managed',
+  )
+  assert.equal(await readFile(preserved, 'utf8'), original)
+  assert.equal(await readFile(configPath, 'utf8'), edited)
+})
+
+test('A withdrawn first setup leaves its compact original with the learner and a normal retry can install again', async (context) => {
+  // protects=withdrawal that formats the config leaves the original bytes intact and ends recovery on a normal retry; fails_when=each retry refuses the compact original; no_claim=real I/O failure (the test refuses the receipt write and the first copy cleanup).
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"theme":"dark","mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, original)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let copyPath = ''
+  let refusedCleanup = false
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      if (!copyPath) copyPath = displacedPath ?? ''
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== copyPath || refusedCleanup) return
+      refusedCleanup = true
+      throw new Error('test: temporarily unavailable')
+    },
+    beforeRecordWrite: ({ path }) => {
+      if (path === receiptPath) throw noSpaceLeft()
+    },
+  })
+  await assert.rejects(setup, /took that entry out again/)
+  const withdrawn =
+    '{\n  "theme": "dark",\n  "mcpServers": {\n    "alpha": {\n      "command": "a"\n    }\n  }\n}\n'
+  assert.equal(await readFile(configPath, 'utf8'), withdrawn)
+
+  // Act
+  const recovery = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(recovery, (error: Error) => {
+    assert.match(error.message, /kept the original formatting/)
+    assert.ok(error.message.includes(copyPath))
+    return true
+  })
+  assert.equal(await readFile(configPath, 'utf8'), withdrawn)
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+  assert.equal(
+    (await writeManagedDevinMcpEntry(storage, ENTRY, home)).status,
+    'installed',
+  )
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    theme: 'dark',
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+})
+
+test('A completed record kept by an earlier retry releases the compact original when withdrawal added an empty servers object', async (context) => {
+  // protects=a retry after upgrading can settle the reduced record old versions retained; fails_when=an absent entry hash or originally absent servers object causes a repeated refusal; no_claim=running the old extension (its reduced record is supplied).
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"theme":"dark"}\n'
+  const withdrawn = '{\n  "theme": "dark",\n  "mcpServers": {}\n}\n'
+  const published =
+    '{"theme":"dark","mcpServers":{"codebook":{"command":"node"}}}\n'
+  await writeConfig(configPath, published)
+  const publishedIno = (await stat(configPath)).ino
+  await writeFile(configPath, withdrawn)
+  const copyPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(copyPath, original)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(copyPath),
+    keptIno: (await stat(copyPath)).ino,
+    keptSha256: sha256(original),
+    stagedIno: publishedIno,
+    stagedSha256: sha256(published),
+  })
+
+  // Act
+  const recovery = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(recovery, /kept the original formatting/)
+  assert.equal(
+    (await refreshManagedDevinMcpEntry(storage, ENTRY, home)).status,
+    'not-managed',
+  )
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+  assert.equal(await readFile(configPath, 'utf8'), withdrawn)
+})
+
 test('A removal whose completed record cannot be written puts the config back, keeps the receipt and refuses', async (context) => {
   // Value: protects=a removed config never comes back from a later recovery after its receipt was dropped; fails_when=the removal reports file-removed or drops the receipt while the record could not say completed; why_new=the failed write of the completed record was swallowed; seam=seam.afterPublish puts a folder where pending.json was so the record write fails
   // Arrange
@@ -16811,7 +16956,7 @@ test('A completed update record never costs the moved-aside copy after the publi
   assert.equal(copyAfterUpdate, beforeUpdate)
   assert.equal(
     nextError instanceof Error ? nextError.message : nextError,
-    `Codebook could not verify that the config at ${configPath} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy: a later run of Codebook deletes it only while it still holds exactly your previous config and the published config still stands with the bytes Codebook wrote; look at both files before you use either, and never copy the private file over the config, then run Codebook: Set Up AI Chat again.`,
+    `Codebook could not verify that the config at ${configPath} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy. To keep both versions and finish recovery, move the private copy to a new, unused private filename of your choice, leave the config and Codebook’s record where they are, then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(copyAfterNext, beforeUpdate)
   assert.equal(recordAfterNext.phase, 'completed')
