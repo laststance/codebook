@@ -550,18 +550,26 @@ export async function captureReplayDebugSnapshot(
     frameIndex: number,
     frameName: string,
     scopes: z.infer<typeof scopeResponse>['scopes'],
-  ): Promise<ReadonlySet<number>> =>
-    input.bunClosures && frameIndex === 0
-      ? ownClosureScopePositionsOf(
-          scopes,
-          async (variablesReference) =>
-            variableResponse
-              .parse(await read('variables', { variablesReference }))
-              .variables.map((variable) => variable.name),
-          input.bunClosures.moduleBindingNames,
-          frameName,
-        )
-      : new Set<number>()
+  ): Promise<ReadonlySet<number>> => {
+    if (!input.bunClosures || frameIndex !== 0) return new Set<number>()
+    try {
+      return await ownClosureScopePositionsOf(
+        scopes,
+        async (variablesReference) =>
+          variableResponse
+            .parse(await read('variables', { variablesReference }))
+            .variables.map((variable) => variable.name),
+        input.bunClosures.moduleBindingNames,
+        frameName,
+      )
+    } catch (error) {
+      // A failed classification read copies no closure, and the frame's other scopes are still saved by the default policy; a resume or a cancellation still ends the capture, as `unavailable` rethrows them.
+      snapshot.limitations.push(
+        `The stopped frame's closure scopes could not be classified (${unavailable(error)}), so none of them was saved.`,
+      )
+      return new Set<number>()
+    }
+  }
   if (
     (input.stack.totalFrames ?? input.stack.stackFrames.length) >
     Math.min(input.stack.stackFrames.length, maxFrames)

@@ -111,3 +111,38 @@ test('a release without an entry pause continues nothing and reports the first s
   )
   await debug.release()
 })
+
+// Value: protects=a stop that a Bun target made and ran on before the release (an exception pause during startup the learner continued) is not handed to the run at the release, and the next stop of the same thread is; fails_when=the release re-queues every stop of the session, so the run hears a pause of a thread that is running (Cycle 0152 review finding); seam=the editor harness's startup stop, the adapter's continued event, then an owned hit; no_claim=which startup stops real Bun makes
+test('a stop that ran on before a Bun release is not reported at the release, and the next stop is', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
+  })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await debug.armStops(
+    TWO_STOPS.map((stop, index) => ({
+      declaredStopIndex: index,
+      path: 'src/routes/users.ts',
+      file: STOP_FILE,
+      line: stop.line,
+      column: stop.column,
+      hash: 'a'.repeat(64),
+      inspections: [],
+    })),
+    AbortSignal.timeout(5_000),
+  )
+  editor.adapter.continued(1, true)
+  // Act
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  editor.adapter.stop('breakpoint', [OWNED_IDS[1]!], {
+    file: STOP_FILE,
+    line: 20,
+  })
+  const first = await nextPause()
+  // Assert
+  assert.equal(first.declaredStopIndex, 1)
+  assert.equal(first.reason, 'breakpoint')
+  await debug.release()
+})

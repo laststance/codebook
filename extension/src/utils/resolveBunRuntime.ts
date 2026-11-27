@@ -18,6 +18,15 @@ const bunIdentitySchema = z.strictObject({
   executable: z.string().min(1),
 })
 
+/** The facts of an `execFile` failure that tell its kinds apart: the exit code (a number) or error code (a string), the signal, and whether `execFile` itself ended the run (its timeout, its output limit). */
+const executionFailureSchema = z
+  .object({
+    code: z.union([z.string(), z.number()]).nullish(),
+    signal: z.string().nullish(),
+    killed: z.boolean().optional(),
+  })
+  .catch({})
+
 /** The one-line script Bun runs to name itself: the PATH lookup ends at the real binary, so the run records the path it launches. */
 const BUN_IDENTITY_SCRIPT =
   'console.log(JSON.stringify({version:Bun.version,executable:process.execPath}))'
@@ -43,6 +52,8 @@ export type RunBunProgram = (program: string, args: string[]) => Promise<string>
 async function runBunProgram(program: string, args: string[]): Promise<string> {
   const { stdout } = await executeFile(program, args, {
     timeout: BUN_VERSION_READ_TIMEOUT_MS,
+    // A wrapper that handles SIGTERM must still end at the deadline, or the lookup would never answer.
+    killSignal: 'SIGKILL',
   })
   return stdout
 }
@@ -61,6 +72,27 @@ function bunRefusal(message: string, recovery: string): StudyError {
     message,
     recovery,
   )
+}
+
+/**
+ * Says why a Bun that exists gave no identity, for its refusal; called by {@link askBunIdentity} so the learner is pointed at the real cause (slowness, a crash, a permission), never told a failed run was slow.
+ * @param error - What `execFile` threw for the identity read.
+ * @returns The clause after "found a Bun (…) that", naming only the exit code, error code or signal (never output or paths).
+ * @example
+ * bunIdentityFailureOf({ code: 1 }) // => 'ended `bun -e` with exit code 1'
+ * bunIdentityFailureOf({ killed: true, signal: 'SIGTERM', code: null }) // => 'did not answer `bun -e` within 5 s'
+ */
+function bunIdentityFailureOf(error: unknown): string {
+  const { code, signal, killed } = executionFailureSchema.parse(error)
+  // A number is the exit code of a Bun that ran and failed.
+  if (typeof code === 'number') return `ended \`bun -e\` with exit code ${code}`
+  // execFile ends a run that outlives its timeout and marks it killed, with no code of its own.
+  if (code === 'ETIMEDOUT' || (killed === true && !code))
+    return `did not answer \`bun -e\` within ${BUN_VERSION_READ_TIMEOUT_MS / 1000} s`
+  // Any other error code (a permission, the output limit) is named as it is.
+  if (code) return `could not run \`bun -e\` (${code})`
+  if (signal) return `was ended by ${signal} while answering \`bun -e\``
+  return 'could not run `bun -e`'
 }
 
 /**
@@ -84,7 +116,7 @@ async function askBunIdentity(
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
       return undefined
     throw bunRefusal(
-      `node-server's loader "bun" found a Bun (${BUN_LOOKUP_DESCRIPTION}) that did not answer \`bun -e\` within ${BUN_VERSION_READ_TIMEOUT_MS / 1000} s, so nothing was launched.`,
+      `node-server's loader "bun" found a Bun (${BUN_LOOKUP_DESCRIPTION}) that ${bunIdentityFailureOf(error)}, so nothing was launched.`,
       `Check that \`bun --version\` works in a terminal, reinstall Bun ${BUN_MINIMUM_VERSION} or later if it does not, then start a new run.`,
     )
   }

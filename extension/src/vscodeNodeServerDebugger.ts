@@ -272,6 +272,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       (threadId === undefined || stop.threadId === threadId)
     if (threadId === undefined) this.pausedThreads.delete(sessionId)
     else this.pausedThreads.get(sessionId)?.delete(threadId)
+    // A stop that ran on is no pause any more: the release, which hands the session's earlier stops to the run, must not report it (a Bun target runs before its release).
+    for (let index = this.sessionStops.length - 1; index >= 0; index -= 1)
+      if (ranOn(this.sessionStops[index]!)) this.sessionStops.splice(index, 1)
     for (const [token, stop] of this.unreportedStops)
       if (ranOn(stop)) this.unreportedStops.delete(token)
     for (const [token, { stop }] of this.livePauses)

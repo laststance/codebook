@@ -132,6 +132,56 @@ test('a Bun stop saves the handler own closures and never the module scope or a 
   )
 })
 
+// Value: protects=a Bun stop whose closure classification read fails still saves the frame's block scope and the caller frames, records why no closure was saved, and claims no closure; fails_when=one failed `variables` request during classification marks the whole stopped frame unavailable and drops values the default policy could save (Cycle 0152 review finding), or the failure is silent; seam=DAP answers with a block scope before the closures and a refused variables request; no_claim=which adapter failures happen in practice
+test('a failed closure classification keeps the block scope, saves no closure and says why', async () => {
+  // Arrange
+  const refusingClassification = (
+    command: 'scopes' | 'variables',
+    arguments_: Record<string, number>,
+  ): Promise<unknown> => {
+    if (command === 'scopes' && arguments_.frameId === 1)
+      return Promise.resolve({
+        scopes: [
+          { name: 'Block', presentationHint: 'locals', variablesReference: 10 },
+          {
+            name: 'Closure',
+            presentationHint: 'arguments',
+            variablesReference: 11,
+          },
+          {
+            name: 'Closure',
+            presentationHint: 'arguments',
+            variablesReference: 14,
+          },
+          { name: 'Script', variablesReference: 15 },
+        ],
+      })
+    if (command === 'variables' && arguments_.variablesReference === 10)
+      return Promise.resolve({
+        variables: [{ name: 'item', value: "'book'", variablesReference: 0 }],
+      })
+    if (command === 'variables' && arguments_.variablesReference === 11)
+      return Promise.reject(new Error('adapter refused variables'))
+    return bunStopAnswer(command, arguments_)
+  }
+  const input = {
+    stack: STACK,
+    verifiedSource: SOURCE,
+    request: refusingClassification,
+    assertCurrent: () => undefined,
+    bunClosures: { moduleBindingNames: new Set(['Elysia', 'greet', 'app']) },
+  }
+  // Act
+  const snapshot = await captureReplayDebugSnapshot(input)
+  // Assert
+  assert.deepEqual(savedNames(snapshot, 0), ['item'])
+  assert.equal(snapshot.frames[0]?.unavailable, undefined)
+  assert.deepEqual(savedNames(snapshot, 1), [])
+  assert.deepEqual(snapshot.limitations, [
+    "The stopped frame's closure scopes could not be classified (adapter refused variables), so none of them was saved.",
+  ])
+})
+
 // Value: protects=a node stop's capture is unchanged by the Bun rule: without bunClosures every closure stays out, as before; fails_when=closures are copied for a node stop; seam=the same answers without the Bun input; no_claim=V8 scope shapes
 test('without the Bun input the same closures are not saved', async () => {
   // Arrange

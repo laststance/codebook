@@ -2051,21 +2051,24 @@ test('both Test workflow jobs install the pinned Bun before they run tests', asy
     .filter((part) => /\n    steps:\n/.test(part))
 
   // Act
-  const installs = jobs.map(
-    (job) =>
-      /uses: oven-sh\/setup-bun@([0-9a-f]{40}) # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version-file: \.bun-version\n/.exec(
-        job,
-      ) !== null,
+  // The position compared is the pinned install's own, so an unpinned setup-bun earlier in the job cannot stand in for it.
+  const installs = jobs.map((job) =>
+    /uses: oven-sh\/setup-bun@([0-9a-f]{40}) # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version-file: \.bun-version\n/.exec(
+      job,
+    ),
   )
-  const installBeforeTests = jobs.map((job) => {
-    const install = job.indexOf('oven-sh/setup-bun')
+  const installBeforeTests = jobs.map((job, index) => {
+    const install = installs[index]?.index ?? -1
     const tests = job.search(/run: .*(?:test-shard\.mjs|split)/)
     return install !== -1 && tests !== -1 && install < tests
   })
 
   // Assert
   assert.equal(jobs.length, 2)
-  assert.deepEqual(installs, [true, true])
+  assert.deepEqual(
+    installs.map((install) => install !== null),
+    [true, true],
+  )
   assert.deepEqual(installBeforeTests, [true, true])
   assert.equal(bunVersion, '1.4.4\n')
 })

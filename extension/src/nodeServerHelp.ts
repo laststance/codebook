@@ -71,14 +71,14 @@ const SAMPLE_SOURCE = {
 /** The `bun` section of `codebook://help/node-server`: when a declaration names loader bun, what the learner needs, how the run differs from a node launch, and its one limit (Cycle 0152). */
 const NODE_SERVER_BUN_HELP = {
   api: BUN_LOADER_API,
-  when: 'The repository runs its server with Bun (a bun dev or start script, bun.lock, Bun.serve or an Elysia app). Declare loader "bun"; it is never chosen by default.',
+  when: 'The repository runs its server with Bun: its own start or dev script runs the entry with bun, or the entry calls Bun.serve or starts an Elysia app. A bun.lock alone only shows that Bun installs the packages; a server its scripts start with node keeps the node or tsx loader. Declare loader "bun"; it is never chosen by default.',
   prerequisite: `Bun ${BUN_MINIMUM_VERSION} or later, found as ${BUN_LOOKUP_DESCRIPTION}. A missing, unreadable or older Bun is refused with NODE_SERVER_SOURCE_REFUSED before anything is launched; its message names what was found and how to install or update Bun.`,
   howItRuns:
     "Codebook starts the entry with that Bun in packageRoot, preloading a bootstrap that opens Bun's node:inspector endpoint for the editor's JavaScript debugger. Bun runs TypeScript itself, so no tsx is needed, and Bun's source maps let the stops bind on the TypeScript lines.",
   stops:
-    'The stops are armed once the declared port accepts connections and before the declared request is sent, so every line the request runs pauses. Bun has no paused entry, so a stop in code that runs only while a module loads (a top-level line) has already run by then and is not reached: declare stops inside the route handler or a function it calls.',
+    "The stops are armed once the declared port accepts connections and before the declared request is sent, so every line the request runs pauses. Bun has no paused entry, so a stop in code that runs only while a module loads (a top-level line) has already run by then and is not reached: declare stops inside the route handler or a function it calls. Declare them in files inside packageRoot, where Bun's source maps are mapped; a stop in a file outside it (a workspace library) is not supported on Bun yet, and a stop that does not bind ends the run as an error before the request is sent.",
   values:
-    "Bun reports a function's own scopes as closures. The native debugger shows them as Closure scopes, the declared inspections read them, and a saved replay keeps the stopped function's own closures (never the module's scope or a global).",
+    "Bun reports a function's own scopes as closures. The native debugger shows them as Closure scopes, the declared inspections read them, and a saved replay keeps the stopped function's own closures (never an enclosing function's scope, the module's scope or a global).",
 } as const
 
 const NODE_SERVER_HELP_SAMPLES = {
@@ -246,7 +246,7 @@ export function nodeServerHelp() {
     profile: NODE_SERVER_PROFILE,
     entry:
       API_SERVER_PAGE_ROUTE_RULE +
-      " Use codebook_start with profile node-server and one stable key to run the repository's own Node HTTP server, send one declared request, and stop in the route-handler source. Select the exact retained book revision/node that cites every stop, the server's entry file and the port its own code listens on. Codebook starts only `node [--import <the repository's tsx>] <entry>` in packageRoot: no command, environment, port assignment or node option can be declared.",
+      " Use codebook_start with profile node-server and one stable key to run the repository's own Node HTTP server, send one declared request, and stop in the route-handler source. Select the exact retained book revision/node that cites every stop, the server's entry file and the port its own code listens on. Codebook starts only `node [--import <the repository's tsx>] <entry>` in packageRoot, or `bun --preload <Codebook's inspector bootstrap> <entry>` when the configuration declares loader bun (API 1.46 or later; see bun): no command, environment, port assignment or node option can be declared.",
     configurationSchema: z.toJSONSchema(nodeServerConfigSchema, {
       io: 'input',
     }),

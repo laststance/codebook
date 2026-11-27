@@ -156,6 +156,47 @@ test('a Bun that does not answer is refused and no other Bun is tried', async ()
   assert.deepEqual(programs.asked, ['bun'])
 })
 
+// Value: protects=a Bun that fails at once is refused with the way it failed, not as a slow Bun: an exit code, a signal or an error code is named, and a run its timeout ended still reads as not answering in time; fails_when=every failure that is not ENOENT is worded as a 5 s timeout (Cycle 0152 review finding), or the refusal quotes Bun's output; seam=scripted readers throwing execFile-shaped errors; no_claim=which failures real Bun produces
+test('a Bun that fails at once is refused naming its exit code or signal, and a timed-out one as not answering in time', async () => {
+  // Arrange
+  const failingWith = (failure: object) =>
+    scriptedPrograms({
+      bun: async () => {
+        throw Object.assign(new Error('Command failed: bun -e'), failure)
+      },
+    })
+  const exited = failingWith({ code: 1 })
+  const signalled = failingWith({ code: null, signal: 'SIGKILL' })
+  const timedOut = failingWith({ code: null, signal: 'SIGTERM', killed: true })
+  // Act
+  const exitedError = await refusalOf(
+    resolveBunRuntime(exited.runProgram, '/Users/learner'),
+  )
+  const signalledError = await refusalOf(
+    resolveBunRuntime(signalled.runProgram, '/Users/learner'),
+  )
+  const timedOutError = await refusalOf(
+    resolveBunRuntime(timedOut.runProgram, '/Users/learner'),
+  )
+  // Assert
+  assert.equal(
+    exitedError.message,
+    `node-server's loader "bun" found a Bun (the first bun on the editor's PATH, then ~/.bun/bin/bun) that ended \`bun -e\` with exit code 1, so nothing was launched.`,
+  )
+  assert.equal(
+    signalledError.message,
+    `node-server's loader "bun" found a Bun (the first bun on the editor's PATH, then ~/.bun/bin/bun) that was ended by SIGKILL while answering \`bun -e\`, so nothing was launched.`,
+  )
+  assert.equal(
+    timedOutError.message,
+    `node-server's loader "bun" found a Bun (the first bun on the editor's PATH, then ~/.bun/bin/bun) that did not answer \`bun -e\` within 5 s, so nothing was launched.`,
+  )
+  assert.deepEqual(
+    [exited.asked, signalled.asked, timedOut.asked],
+    [['bun'], ['bun'], ['bun']],
+  )
+})
+
 // Value: protects=an answer that is not Bun's identity (a wrapper's banner, a relative path) is refused as unreadable; fails_when=a relative executable or garbage version is launched; seam=scripted readers; no_claim=every wrapper's output
 test('an unreadable identity or a relative executable is refused as unreadable', async () => {
   // Arrange

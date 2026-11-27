@@ -97,3 +97,27 @@ test('a Bun server run sends the declared request only after its stops are armed
     harness.order.indexOf('armStops') < harness.order.indexOf('window:true'),
   )
 })
+
+// Value: protects=a Bun run whose debug session ends while it arms its stops after readiness stops arming at once, fails the start with the session's own reason and sends no request; fails_when=the late arming ignores the run's abort and waits for its arming deadline (the start then fails late, as a timeout, not as the session end), or the request is sent; seam=the harness's arming that waits for its abort signal and a session end during it; no_claim=the real adapter's session end
+test('a Bun run whose debug session ends during the late arming fails with the session reason and sends no request', async () => {
+  // Arrange
+  const harness = createHarness({
+    launchLoader: BUN_LOADER,
+    armHangsUntilAborted: true,
+    duringArm: (debug) => debug.handlers?.onEnd('adapter crashed'),
+  })
+  // Act
+  const failure = await harness.run.prepare().catch((error: unknown) => error)
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'RUNTIME_FAILED')
+  assert.match(
+    String(failure.causeDetail ?? failure.message),
+    /adapter crashed/,
+  )
+  // The session ended inside the late arming, after the readiness check.
+  assert.ok(
+    harness.order.indexOf('armStops') > harness.order.indexOf('verifyListener'),
+  )
+  assert.equal(harness.sender.calls.length, 0)
+})

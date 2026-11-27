@@ -35,22 +35,31 @@ async function freePort(): Promise<number> {
   return address.port
 }
 
-/** Reads one GET answer from the fixture server, or `undefined` while it does not accept. */
+/** How long one readiness GET may take before it is abandoned and tried again. */
+const HEALTH_REQUEST_TIMEOUT_MS = 2_000
+
+/** Reads one GET answer from the fixture server, or `undefined` while it does not accept or does not answer within {@link HEALTH_REQUEST_TIMEOUT_MS}, so the readiness wait can try again and keep its own deadline. */
 async function healthOf(port: number): Promise<string | undefined> {
   return new Promise((resolve) => {
     const request = get(
-      { host: '127.0.0.1', port, path: '/health' },
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/health',
+        signal: AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS),
+      },
       (response) => {
         let body = ''
         response.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')))
         response.on('end', () => resolve(body))
+        response.on('error', () => resolve(undefined))
       },
     )
     request.on('error', () => resolve(undefined))
   })
 }
 
-// Value: protects=a `loader: "bun"` launch end to end on a real Bun: the compiled bootstrap opens Bun's node:inspector, the announcement is read, Codebook's own ownership probe (pid, working folder, process group) accepts the Bun process, the release lets the TypeScript server listen, and the close ends the whole group; fails_when=the bootstrap is missing from dist or prints no endpoint, the probe rejects Bun's answers (Bun reports process.version v26), the server never listens after runIfWaitingForDebugger, or the group survives the close; why_new=Cycle 0152 Task 5: the Bun route has no other real-process proof in the suite; seam=a real Bun found as learners' is (resolveBunRuntime) and a raw CDP connection in place of js-debug; no_claim=js-debug's attach, breakpoints and source maps (probes E1-M2 and the native check cover them)
+// Value: protects=a `loader: "bun"` launch end to end on a real Bun: the compiled bootstrap opens Bun's node:inspector, the announcement is read, Codebook's own ownership probe (pid, working folder, process group) accepts the Bun process, the release lets the TypeScript server listen, and the close ends the whole group; fails_when=the bootstrap is missing from dist or prints no endpoint, the probe rejects Bun's answers (Bun reports process.version v26), the server never listens after runIfWaitingForDebugger, the group survives the close, or a readiness answer from another program on the port passes for the Bun server; why_new=Cycle 0152 Task 5: the Bun route has no other real-process proof in the suite; seam=a real Bun found as learners' is (resolveBunRuntime) and a raw CDP connection in place of js-debug; no_claim=js-debug's attach, breakpoints and source maps (probes E1-M2 and the native check cover them)
 test('a Bun server launch announces its inspector, passes the ownership probe, listens once released and ends with its group', async (t) => {
   // Arrange
   const workspace = await realpath(
@@ -66,7 +75,7 @@ test('a Bun server launch announces its inspector, passes the ownership probe, l
       `const port: number = ${port}`,
       'createServer((_request, response) => {',
       "  const status: string = 'ok'",
-      '  response.end(JSON.stringify({ status }))',
+      '  response.end(JSON.stringify({ status, pid: process.pid }))',
       "}).listen(port, '127.0.0.1')",
       '',
     ].join('\n'),
@@ -112,7 +121,8 @@ test('a Bun server launch announces its inspector, passes the ownership probe, l
       processGroup: server.processGroup,
       workspace,
     })
-    assert.equal(health, '{"status":"ok"}')
+    // The answer names the launched Bun's pid, so another program on the port cannot pass for it.
+    assert.deepEqual(JSON.parse(health), { status: 'ok', pid: server.pid })
     assert.ok(exit.signal !== null || exit.exitCode !== null)
     assert.equal(isProcessGroupGone(server.processGroup!), true)
     assert.equal(journal[0]?.type, 'node-server.started')

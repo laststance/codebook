@@ -34,8 +34,6 @@ import type { CauseRoots } from './sanitizeCause'
 import { signalProcessGroup } from './signalProcessGroup'
 import { watchOwnedProcess } from './watchOwnedProcess'
 
-/** The inspector option every server launch carries: a pause before the first line, on loopback, at a port node chooses and announces. */
-
 /** What a node-server launch runs: the checked real paths ({@link ResolvedNodeServerLaunch}), the opened repository they lie in, and the external Node. */
 export type NodeServerLaunchRequest = ResolvedNodeServerLaunch & {
   /** The opened repository's real root; the journal names paths relative to it. */
@@ -204,11 +202,11 @@ async function endGroupBySignals(input: {
 }
 
 /**
- * Starts a repository's own server entry as `node --inspect-brk=127.0.0.1:0 [--import <the repository's tsx loader>] <entry>` in its package root, in a process group of its own, with the restricted environment of {@link buildNodeServerEnvironment}; Codebook never sets the port or any other variable, and never reads the server's `.env`.
- * The server stays paused before its first line until a debugger releases it; readiness and listener ownership are the run's checks.
+ * Starts a repository's own server entry as `node --inspect-brk=127.0.0.1:0 [--import <the repository's tsx loader>] <entry>`, or for `loader: "bun"` as `bun --preload <Codebook's inspector bootstrap> <entry>` ({@link launchCommandOf}), in its package root, in a process group of its own, with the restricted environment of {@link buildNodeServerEnvironment}; Codebook never sets the port or any other variable, and never reads the server's `.env`.
+ * A node server stays paused before its first line until a debugger releases it; a Bun server waits in the bootstrap until a debugger attaches and lets it run. Readiness and listener ownership are the run's checks.
  * Called by the node-server run after {@link resolveNodeServerLaunch} checked the real paths.
  * @param launch - The checked real paths, the repository root and the external Node ({@link NodeServerLaunchRequest}).
- * @param record - The run's journal: `node-server.started` (sanitized argv, inherited variable names, loader path, Node version, `secretEnvironmentInherited: false`) and `node-server.closed`.
+ * @param record - The run's journal: `node-server.started` (sanitized argv, inherited variable names, the loader path and Node version, or for Bun the loader and the Bun release, `secretEnvironmentInherited: false`) and `node-server.closed`.
  * @param onOutput - Receives each redacted, stamped output chunk at once, in arrival order.
  * @returns The owned server: its pid and process group, output, inspector endpoint, exit and close.
  * @example
