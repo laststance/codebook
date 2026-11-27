@@ -7,7 +7,7 @@ import { join } from 'node:path'
  *
  * @example
  * ```ts
- * spawn(bun.executable, ['--preload', BUN_INSPECTOR_BOOTSTRAP, entry])
+ * spawn(bun.executable, ['--no-install', '--preload', BUN_INSPECTOR_BOOTSTRAP, entry])
  * ```
  */
 export const BUN_INSPECTOR_BOOTSTRAP = join(

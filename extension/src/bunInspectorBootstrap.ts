@@ -1,4 +1,4 @@
-// Preloaded by Bun for a `loader: "bun"` node-server run (`bun --preload <this file> <entry>`, launched by `launchNodeServer`).
+// Preloaded by Bun for a `loader: "bun"` node-server run (`bun --no-install --preload <this file> <entry>`, launched by `launchNodeServer`).
 // It must stay free of extension imports: Bun loads it into the learner's server process before the server's own entry.
 import * as inspector from 'node:inspector'
 
@@ -11,7 +11,7 @@ import * as inspector from 'node:inspector'
  *
  * @example
  * ```ts
- * // bun --preload dist/bunInspectorBootstrap.js src/index.ts
+ * // bun --no-install --preload dist/bunInspectorBootstrap.js src/index.ts
  * // stderr: Debugger listening on ws://127.0.0.1:52817/0f3c…
  * ```
  */

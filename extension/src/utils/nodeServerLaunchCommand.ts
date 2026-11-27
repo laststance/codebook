@@ -10,6 +10,9 @@ export type NodeServerLaunchCommandInput = ResolvedNodeServerLaunch & {
 /** The inspector option of a node or tsx launch: a free loopback port, paused before the entry's first line until the debugger releases it. */
 const INSPECTOR_OPTION = '--inspect-brk=127.0.0.1:0'
 
+/** The option of a Bun launch that turns off Bun's automatic install of missing packages, so a start in a checkout without `node_modules` fails instead of fetching and running dependencies the learner never installed. */
+const BUN_NO_INSTALL_OPTION = '--no-install'
+
 /**
  * Writes a launch path as the journal names it: inside the repository as `<workspace>/<path>`.
  * @param workspace - The repository's real root.
@@ -30,8 +33,8 @@ function journalPath(workspace: string, path: string): string {
  * @param launch - The resolved launch.
  * @returns
  * - node: `node --inspect-brk=127.0.0.1:0 [--import <tsx loader>] [<library hook>] <entry>`, paused before its first line
- * - Bun: `bun --preload <inspector bootstrap> <entry>`, which waits for the debugger in the bootstrap (Bun has no `--inspect-brk` for the protocol the debugger speaks)
- * @example launchCommandOf({ loader: { kind: 'bun', executable: '/Users/learner/.bun/bin/bun', version: '1.4.5', bootstrap: '/ext/dist/bunInspectorBootstrap.js' }, entry: '/repo/src/index.ts', … }) // => { program: '/Users/learner/.bun/bin/bun', args: ['--preload', '/ext/dist/bunInspectorBootstrap.js', '/repo/src/index.ts'] }
+ * - Bun: `bun --no-install --preload <inspector bootstrap> <entry>`, which waits for the debugger in the bootstrap (Bun has no `--inspect-brk` for the protocol the debugger speaks)
+ * @example launchCommandOf({ loader: { kind: 'bun', executable: '/Users/learner/.bun/bin/bun', version: '1.4.5', bootstrap: '/ext/dist/bunInspectorBootstrap.js' }, entry: '/repo/src/index.ts', … }) // => { program: '/Users/learner/.bun/bin/bun', args: ['--no-install', '--preload', '/ext/dist/bunInspectorBootstrap.js', '/repo/src/index.ts'] }
  */
 export function launchCommandOf(launch: NodeServerLaunchCommandInput): {
   program: string
@@ -40,7 +43,12 @@ export function launchCommandOf(launch: NodeServerLaunchCommandInput): {
   if (launch.loader.kind === 'bun')
     return {
       program: launch.loader.executable,
-      args: ['--preload', launch.loader.bootstrap, launch.entry],
+      args: [
+        BUN_NO_INSTALL_OPTION,
+        '--preload',
+        launch.loader.bootstrap,
+        launch.entry,
+      ],
     }
   return {
     program: launch.node.executable,
@@ -58,7 +66,7 @@ export function launchCommandOf(launch: NodeServerLaunchCommandInput): {
  * The launch facts the start journal records, with every path written relative to the workspace; called by `launchNodeServer` for `node-server.started`.
  * @param launch - The resolved launch.
  * @returns The journaled arguments, folder, loader and runtime release (`nodeVersion` for node and tsx, `bunVersion` for Bun).
- * @example journaledLaunchOf(bunLaunch) // => { args: ['--preload', '<inspector-bootstrap>', 'src/index.ts'], cwd: '.', loader: 'bun', bunVersion: '1.4.5' }
+ * @example journaledLaunchOf(bunLaunch) // => { args: ['--no-install', '--preload', '<inspector-bootstrap>', 'src/index.ts'], cwd: '.', loader: 'bun', bunVersion: '1.4.5' }
  */
 export function journaledLaunchOf(launch: NodeServerLaunchCommandInput) {
   const cwd = journalPath(launch.workspace, launch.packageRoot)
@@ -66,7 +74,12 @@ export function journaledLaunchOf(launch: NodeServerLaunchCommandInput) {
   // Bun's executable and the bootstrap lie outside the workspace; the journal names the bootstrap by its role only.
   if (launch.loader.kind === 'bun')
     return {
-      args: ['--preload', '<inspector-bootstrap>', entry],
+      args: [
+        BUN_NO_INSTALL_OPTION,
+        '--preload',
+        '<inspector-bootstrap>',
+        entry,
+      ],
       cwd,
       loader: 'bun',
       bunVersion: launch.loader.version,

@@ -219,7 +219,7 @@ const requestSchema = z
 
 /**
  * Bounds one node-server run before anything is spawned: the repository's own server entry (run by node, optionally through the repository's tsx, or by the learner's Bun when declared), the port the server's own code listens on, one declared HTTP request, and the stops with their inspections.
- * No command, environment, port assignment or node option can be declared: Codebook starts only `node [--import <the repository's tsx>] <entry>`, or `bun --preload <Codebook's inspector bootstrap> <entry>` for `loader: "bun"`, in `packageRoot` and checks the declared port.
+ * No command, environment, port assignment or node option can be declared: Codebook starts only `node [--import <the repository's tsx>] <entry>`, or `bun --no-install --preload <Codebook's inspector bootstrap> <entry>` for `loader: "bun"`, in `packageRoot` and checks the declared port.
  * The loader defaults from the entry's extension (TypeScript → `tsx`, JavaScript → `node`); a TypeScript entry declared with `node` is refused, and `bun` is used only when declared.
  * Parsed by the node-server start; its issues are worded by {@link describeNodeServerConfigurationIssues}.
  * @example

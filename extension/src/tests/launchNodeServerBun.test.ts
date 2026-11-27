@@ -128,7 +128,12 @@ test('a Bun server launch announces its inspector, passes the ownership probe, l
     assert.equal(journal[0]?.type, 'node-server.started')
     assert.ok(launch.loader.kind === 'bun')
     assert.deepEqual(bunStartFactsSchema.parse(journal[0]?.detail), {
-      args: ['--preload', '<inspector-bootstrap>', '<workspace>/server.ts'],
+      args: [
+        '--no-install',
+        '--preload',
+        '<inspector-bootstrap>',
+        '<workspace>/server.ts',
+      ],
       cwd: '<workspace>',
       loader: 'bun',
       bunVersion: launch.loader.version,

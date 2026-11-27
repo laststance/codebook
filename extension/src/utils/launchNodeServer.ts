@@ -202,7 +202,7 @@ async function endGroupBySignals(input: {
 }
 
 /**
- * Starts a repository's own server entry as `node --inspect-brk=127.0.0.1:0 [--import <the repository's tsx loader>] <entry>`, or for `loader: "bun"` as `bun --preload <Codebook's inspector bootstrap> <entry>` ({@link launchCommandOf}), in its package root, in a process group of its own, with the restricted environment of {@link buildNodeServerEnvironment}; Codebook never sets the port or any other variable, and never reads the server's `.env`.
+ * Starts a repository's own server entry as `node --inspect-brk=127.0.0.1:0 [--import <the repository's tsx loader>] <entry>`, or for `loader: "bun"` as `bun --no-install --preload <Codebook's inspector bootstrap> <entry>` ({@link launchCommandOf}), in its package root, in a process group of its own, with the restricted environment of {@link buildNodeServerEnvironment}; Codebook never sets the port or any other variable, and never reads the server's `.env`.
  * A node server stays paused before its first line until a debugger releases it; a Bun server waits in the bootstrap until a debugger attaches and lets it run. Readiness and listener ownership are the run's checks.
  * Called by the node-server run after {@link resolveNodeServerLaunch} checked the real paths.
  * @param launch - The checked real paths, the repository root and the external Node ({@link NodeServerLaunchRequest}).

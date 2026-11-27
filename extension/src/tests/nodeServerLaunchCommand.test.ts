@@ -32,6 +32,7 @@ test('a Bun launch runs the learner Bun with the inspector bootstrap preloaded b
   assert.deepEqual(command, {
     program: '/Users/learner/.bun/bin/bun',
     args: [
+      '--no-install',
       '--preload',
       '/extension/dist/bunInspectorBootstrap.js',
       '/repo/apps/api/src/index.ts',
@@ -82,6 +83,7 @@ test('the start journal of a Bun launch names bun, its release and only workspac
   // Assert
   assert.deepEqual(journaled, {
     args: [
+      '--no-install',
       '--preload',
       '<inspector-bootstrap>',
       '<workspace>/apps/api/src/index.ts',

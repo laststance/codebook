@@ -527,3 +527,17 @@ test('the node-server help tells the chat the sign-in password needs 8 character
     ),
   )
 })
+
+// protects=the learner who reads the Bun section of the node-server help before declaring loader bun learns the exact command Codebook starts and that the repository's dependencies must be installed first; fails_when=the section names `bun --preload` without `--no-install`, or drops the install-first sentence, so a fresh checkout looks as if Bun would fetch the packages; no_claim=that the launch arguments match (nodeServerLaunchCommand.test.ts covers them)
+test('the node-server help names the Bun command with --no-install and says to install the dependencies first', async () => {
+  // Arrange
+  const { body } = await servedHelp()
+  // Act
+  const howItRuns = body.bun.howItRuns as string
+  // Assert
+  assert.match(
+    howItRuns,
+    /`bun --no-install --preload <Codebook's inspector bootstrap> <entry>`/,
+  )
+  assert.match(howItRuns, /install the repository's dependencies first/)
+})
