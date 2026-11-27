@@ -204,8 +204,8 @@ importers:
         specifier: 12.0.0
         version: 12.0.0
       devtools-protocol:
-        specifier: 0.0.1754134
-        version: 0.0.1754134
+        specifier: 0.0.1755318
+        version: 0.0.1755318
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -1257,8 +1257,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  devtools-protocol@0.0.1754134:
-    resolution: {integrity: sha512-4yEmphk3HMZogFuc4rToQlbK85ZK7f9Oapv8ivClMDsA6TUr3Eqf6QK13w6UGbI/RA7LxKME7+0kaqgcndz8Tg==}
+  devtools-protocol@0.0.1755318:
+    resolution: {integrity: sha512-ZTuMGdpyddC36xxOcDACwjr4QJvfz/XtbdomhoJN8rOv+Z8A4ApwEIpsUkBdlIeKE2QtXVU268jiJWpgokDQHg==}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -3252,7 +3252,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  devtools-protocol@0.0.1754134: {}
+  devtools-protocol@0.0.1755318: {}
 
   dunder-proto@1.0.1:
     dependencies:
