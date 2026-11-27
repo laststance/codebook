@@ -2040,3 +2040,53 @@ test('the Fallow workflow runs audit as a gate and flags, security, similar-code
     /fallow suppressions[^\n]*\|\|/,
   )
 })
+
+// Value: protects=the Bun server-launch test in every Test shard and in the split-files job: both jobs install Bun from an action pinned to a full commit at the version of .bun-version before any test runs, so `launchNodeServerBun.test.ts` finds a real Bun as a learner's PATH would and never the runner image's Bun or none; fails_when=a job runs the suite without installing Bun, installs it by a tag or a branch, reads the version elsewhere, or installs it only after the tests started; why_new=Cycle 0152 Task 5 (`loader: "bun"`); seam=the text of .github/workflows/test.yml and .bun-version; no_claim=that the action installs a working Bun (the test itself proves that on the runner)
+test('both Test workflow jobs install the pinned Bun before they run tests', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+  const bunVersion = await repositoryText('.bun-version')
+  const jobs = workflow
+    .split(/\n  (?=[\w-]+:\n)/)
+    .filter((part) => /\n    steps:\n/.test(part))
+
+  // Act
+  const installs = jobs.map(
+    (job) =>
+      /uses: oven-sh\/setup-bun@([0-9a-f]{40}) # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version-file: \.bun-version\n/.exec(
+        job,
+      ) !== null,
+  )
+  const installBeforeTests = jobs.map((job) => {
+    const install = job.indexOf('oven-sh/setup-bun')
+    const tests = job.search(/run: .*(?:test-shard\.mjs|split)/)
+    return install !== -1 && tests !== -1 && install < tests
+  })
+
+  // Assert
+  assert.equal(jobs.length, 2)
+  assert.deepEqual(installs, [true, true])
+  assert.deepEqual(installBeforeTests, [true, true])
+  assert.equal(bunVersion, '1.4.4\n')
+})
+
+// Value: protects=the measured health shards, which run every compiled test file under coverage, install the pinned Bun before they measure, so the Bun server-launch test runs there too; fails_when=the health-shard job measures without installing Bun or installs it unpinned; why_new=Cycle 0152 Task 5; seam=the text of .github/workflows/fallow.yml; no_claim=the shards' coverage
+test('the Fallow health shards install the pinned Bun before they measure the suite', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/fallow.yml')
+  const shardJob = workflow.slice(
+    workflow.indexOf('\n  health-shard:\n'),
+    workflow.indexOf('\n  health-merge:\n'),
+  )
+
+  // Act
+  const install = shardJob.search(
+    /uses: oven-sh\/setup-bun@[0-9a-f]{40} # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version-file: \.bun-version\n/,
+  )
+  const measure = shardJob.indexOf('run: pnpm --dir extension health --shard')
+
+  // Assert
+  assert.notEqual(install, -1)
+  assert.notEqual(measure, -1)
+  assert.ok(install < measure)
+})

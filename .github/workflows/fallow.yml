@@ -33,6 +33,12 @@ jobs:
       - name: Prepare environment
         uses: ./.github/actions/prepare
 
+      # The measured suite includes the Bun server-launch test, which runs a real Bun found on the PATH (.bun-version pins it).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
       - name: Measure this shard of the suite
         run: pnpm --dir extension health --shard ${{ matrix.shard }}/3 --out "$RUNNER_TEMP/health-shard"
 
