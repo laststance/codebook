@@ -5312,6 +5312,23 @@ function receiptConflictError(
 class ReceiptConflictError extends Error {}
 
 /**
+ * Gives the safe recovery steps when first setup or a subsequent receipt read finds a directory.
+ * Only a fresh look at the receipt name can distinguish a folder holding the learner's files.
+ * @example
+ * const refusal = receiptFolderRefusal(context, cause)
+ */
+function receiptFolderRefusal(
+  context: Context,
+  cause: unknown,
+): Error | undefined {
+  if (!isFolderAt(context.receiptPath)) return undefined
+  return new Error(
+    `Codebook found a folder at ${context.receiptPath}, where it keeps its receipt for Devin Desktop's MCP config at ${context.path}. To keep its contents, move that folder to another folder, never delete it. Restore the matching receipt from the moved folder or a backup if you have one, or ${KEEP_ENTRY_ADVICE} in ${context.path} if that entry exists, ${context.retry}.`,
+    { cause },
+  )
+}
+
+/**
  * Words the refusal of a write of Codebook's record of the entry ({@link receiptConflictError}): what the run found at `receipt.json` against what it knew of that name.
  * @param context - The run; its paths and retry are named, and its known version there ({@link Context.receiptVersion}) tells a record it read from a name it found or left empty.
  * @param kind - What the run found ({@link receiptConflictError}).
@@ -10663,6 +10680,8 @@ function firstSetupProofFailure(
       { cause },
     )
   if (context.journalVersion?.current) return undefined
+  const folder = receiptFolderRefusal(context, cause)
+  if (folder) return folder
   return new Error(
     `Codebook could no longer verify its receipt at ${context.receiptPath} for the entry it wrote in Devin Desktop's MCP config at ${context.path}. It left the current files untouched. Check both locations and keep any different receipt separately. Restore the matching receipt from backup or, if you have no backup, ${KEEP_ENTRY_ADVICE} in ${context.path}, ${context.retry}.`,
     { cause },
@@ -12592,7 +12611,10 @@ async function settleAfterRecovery(
     receipt: stored,
     version: storedVersion,
     otherConfigPath,
-  } = await readReceiptWithVersion(context)
+  } = await readReceiptWithVersion(context).catch((cause: unknown) => {
+    // A folder at the receipt name may hold the learner's files on an immediate retry.
+    throw receiptFolderRefusal(context, cause) ?? cause
+  })
   // This read itself passes the note that receipt.json is unverified: a look before it that found the name empty grants nothing to a file put there since.
   assertNotedReceipt(context, storedVersion)
   // The note is the publish record's as read, which this read settles: the run's own later writes and put-backs answer to the records they write.

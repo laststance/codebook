@@ -2195,7 +2195,11 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
     assert.ok(
       error.message.includes(`at ${configPath} and left that file untouched`),
     )
-    assert.match(error.message, /valid JSON/)
+    assert.ok(
+      error.message.includes(
+        `text that is not valid JSON in Devin Desktop's MCP config at ${configPath}`,
+      ),
+    )
     assert.ok(error.message.includes(`at ${copyPath} (`))
     assert.match(error.message, /still tracks that copy/)
     return true
@@ -2213,7 +2217,11 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
       assert.ok(
         error.message.includes(`at ${configPath} and left that file untouched`),
       )
-      assert.match(error.message, /valid JSON/)
+      assert.ok(
+        error.message.includes(
+          `text that is not valid JSON in Devin Desktop's MCP config at ${configPath}`,
+        ),
+      )
       return true
     },
   )
@@ -33095,6 +33103,7 @@ for (const changedFile of [
   'config',
   'receipt',
   'receipt without backup',
+  'receipt folder',
 ] as const) {
   test(`First setup notices a restored ${changedFile} during cleanup after its recovery record was retired`, async (context) => {
     // Value: protects=truthful first-setup result once the pending record is already gone; fails_when=late file changes yield installed or cause recovery on the retired record; no_claim=real background software.
@@ -33106,6 +33115,7 @@ for (const changedFile of [
     const receiptPath = join(folder, 'receipt.json')
     const pendingPath = join(folder, 'pending.json')
     const savedReceipt = join(home, 'original-setup-receipt.json')
+    const folderAside = join(home, 'receipt-folder-aside')
     let restored = false
     const restoring = await loadModule<typeof DevinMcpConfigModule>(
       resolve(__dirname, '../devinMcpConfig.js'),
@@ -33130,7 +33140,16 @@ for (const changedFile of [
             if (changedFile === 'config') swapFile(configPath, restoredConfig)
             else if (changedFile === 'receipt')
               renameSync(receiptPath, savedReceipt)
-            else unlinkSync(receiptPath)
+            else {
+              unlinkSync(receiptPath)
+              if (changedFile === 'receipt folder') {
+                mkdirSync(receiptPath)
+                writeFileSync(
+                  join(receiptPath, 'notes.txt'),
+                  'keep these notes',
+                )
+              }
+            }
           },
         },
       },
@@ -33156,6 +33175,38 @@ for (const changedFile of [
       assert.equal(await readFile(configPath, 'utf8'), restoredConfig)
       assert.ok(existsSync(receiptPath))
     } else {
+      if (changedFile === 'receipt folder') {
+        const unchanged = await readFile(configPath, 'utf8')
+        const retry = await writeManagedDevinMcpEntry(
+          storage,
+          ENTRY,
+          home,
+        ).then(
+          ({ status }) => status,
+          (error: Error) => error.message,
+        )
+        const notices = [outcome, retry]
+        assert.deepEqual(
+          notices.map((message) =>
+            message.includes(
+              'move that folder to another folder, never delete it',
+            ),
+          ),
+          [true, true],
+        )
+        for (const notice of notices) {
+          assert.ok(notice.includes(receiptPath))
+          assert.ok(notice.includes('matching receipt'))
+          assert.match(notice, /rename the "codebook" entry to an unused name/)
+          assert.doesNotMatch(notice, /remove that record/)
+        }
+        assert.equal(await readFile(configPath, 'utf8'), unchanged)
+        assert.equal(
+          await readFile(join(receiptPath, 'notes.txt'), 'utf8'),
+          'keep these notes',
+        )
+        await rename(receiptPath, folderAside)
+      }
       assert.equal(existsSync(receiptPath), false)
       assert.deepEqual(
         JSON.parse(await readFile(configPath, 'utf8')).mcpServers,
@@ -33186,9 +33237,15 @@ for (const changedFile of [
       {
         notes: { command: 'notes' },
         codebook: ENTRY,
-        ...(changedFile === 'receipt without backup' && { saved: ENTRY }),
+        ...((changedFile === 'receipt without backup' ||
+          changedFile === 'receipt folder') && { saved: ENTRY }),
       },
     )
+    if (changedFile === 'receipt folder')
+      assert.equal(
+        await readFile(join(folderAside, 'notes.txt'), 'utf8'),
+        'keep these notes',
+      )
   })
 }
 
