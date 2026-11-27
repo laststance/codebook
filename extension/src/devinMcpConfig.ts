@@ -6116,7 +6116,7 @@ function unsettledRefusal(
     return new Error(
       isHandoverUnrecorded
         ? `Codebook kept ${keptCopyPhrase(leftover.path)}, ${UNCONFIRMED_CLAUSE}; ${context.retry}.`
-        : `Your settings are present at ${context.path} in the format Codebook writes after taking out its entry. Codebook kept the original formatting in ${leftover.path} for you; ${context.retry}.`,
+        : `When Codebook checked ${context.path}, it contained your settings in the format Codebook writes after taking out its entry. Codebook kept the original formatting in ${leftover.path} for you. Restore the settings you need from the copy if the active file is missing, or merge them with any newer edits, ${context.retry}.`,
     )
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   // A record that stands and still names the copy, or one that could not be read back, may still let a later run delete that copy: it is never left to the learner.

@@ -2376,6 +2376,68 @@ test('A completed record kept by an earlier retry releases the compact original 
   assert.equal(await readFile(configPath, 'utf8'), withdrawn)
 })
 
+test('A config moved during handover can be restored from the named original before setup is retried', async (context) => {
+  // Value: protects=handover guidance stays actionable when the active settings moved since inspection; no_claim=native sync timing.
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"theme":"dark","mcpServers":{"alpha":{"command":"a"}}}\n'
+  const published = JSON.stringify({
+    theme: 'dark',
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  await writeConfig(configPath, published)
+  const withdrawn = JSON.stringify(JSON.parse(original), null, 2) + '\n'
+  await writeFile(configPath, withdrawn)
+  const copyPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(copyPath, original)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(copyPath),
+    keptIno: (await stat(copyPath)).ino,
+    keptSha256: sha256(original),
+    stagedIno: (await stat(configPath)).ino,
+    stagedSha256: sha256(published),
+  })
+  const moved = join(home, 'moved-active.json')
+
+  // Act
+  const refusal = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') renameSync(configPath, moved)
+    },
+  }).then(
+    ({ status }) => status,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(existsSync(configPath), false)
+  assert.equal(await readFile(moved, 'utf8'), withdrawn)
+  assert.ok(refusal.includes(`When Codebook checked ${configPath},`), refusal)
+  assert.ok(
+    refusal.includes(`kept the original formatting in ${copyPath} for you`),
+    refusal,
+  )
+  assert.match(
+    refusal,
+    /restore the settings you need from the copy if the active file is missing/i,
+  )
+  await writeFile(configPath, await readFile(copyPath), {
+    flag: 'wx',
+    mode: 0o600,
+  })
+  const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  assert.equal(retry.status, 'installed')
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    theme: 'dark',
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+})
+
 test('Two further removal attempts leave the withdrawn settings and their compact original intact', async (context) => {
   // Value: protects=retrying the removal command after handover of the original config; fails_when=removal loops on formatting or changes either retained file; no_claim=a real storage failure or editor interaction.
   // Arrange
@@ -13733,7 +13795,12 @@ test('First setup names the retained original and its tracking status when the r
     ),
     message,
   )
-  assert.match(message, /still tracks that copy/)
+  assert.ok(
+    message.includes(
+      'but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.',
+    ),
+    message,
+  )
   assert.equal(await readFile(copyPath, 'utf8'), original)
   assert.equal(
     (await readRecordFile(storage, 'pending.json')).keptName,
@@ -33092,6 +33159,7 @@ for (const changedFile of [
         },
       )
       if (changedFile === 'receipt') {
+        assert.match(outcome, /Restore the matching receipt from backup/)
         // The saved receipt proves ownership for the retry.
         renameSync(savedReceipt, receiptPath)
       } else {
@@ -33163,10 +33231,11 @@ for (const [changedFile, moment] of [
 
     // Assert
     assert.equal(placed, true)
-    assert.ok(
-      outcome.includes(changedFile === 'config' ? configPath : receiptPath),
-      outcome,
-    )
+    const changedFileNotice =
+      changedFile === 'config'
+        ? `a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched`
+        : `Codebook found nothing at ${receiptPath}, where it keeps its record`
+    assert.ok(outcome.includes(changedFileNotice), outcome)
     assert.ok(
       outcome.includes(`at ${pendingPath} and another file at ${droppingPath}`),
     )
@@ -33209,6 +33278,7 @@ for (const config of ['new', 'existing'] as const) {
     const pendingPath = join(storage, 'devin-mcp', 'pending.json')
 
     let saved = false
+    let receiptWriteFailures = 0
 
     // Act
     const first = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
@@ -33218,7 +33288,10 @@ for (const config of ['new', 'existing'] as const) {
         writeFileSync(configPath, edited)
       },
       beforeRecordWrite: ({ path }) => {
-        if (path === receiptPath) throw new Error('receipt write failed')
+        if (path === receiptPath) {
+          receiptWriteFailures++
+          throw new Error('receipt write failed')
+        }
       },
     }).then(
       ({ status }) => status,
@@ -33227,6 +33300,7 @@ for (const config of ['new', 'existing'] as const) {
 
     // Assert
     assert.equal(saved, true)
+    assert.equal(receiptWriteFailures, 1)
     assert.equal(await readFile(configPath, 'utf8'), edited)
     assert.match(first, /rename the "codebook" entry to an unused name/)
     assert.equal(existsSync(receiptPath), false)
