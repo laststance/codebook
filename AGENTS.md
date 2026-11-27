@@ -301,7 +301,7 @@ Delivery commands (`--help` prints usage, exit codes, `E_…` codes; refusal's f
 | --- | --- |
 | `node extension/scripts/bump-version.mjs <v>` / `--check` | release commit, after `/ship` Step 12 |
 | `node extension/scripts/qa-build.mjs` (`--status`) | on clean commit whose VSIX native check installs |
-| `node extension/scripts/native-precheck.mjs` (`--json`) | before each native step in Space (exit 3 = Mac busy: wait) |
+| `node extension/scripts/native-precheck.mjs` (`--json`) | before each native step in Space; exit 3 reports the current condition to resolve. Use `--experiment` for a recorded local overlap |
 | `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` | after native check |
 | `node extension/scripts/merge-pr.mjs <n>` (`--dry-run`) | merge, after CI and exact-HEAD gate |
 | `node extension/scripts/rotate-artifacts.mjs --current <N>` (plan) / `--apply` / `--restore <folder>` / `--init` | after cycle time report, before Issue closes |
@@ -381,7 +381,10 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 - After every VSIX install: reload each host window, then confirm loaded build (run's `header.json` `sourceBuild.revision` or that window's Output header; installed `dist/build.json` proves installation only) before counting a run.
 - Host updated before native check → run live step once on baseline build first; judge candidate against that same-day baseline, never earlier cycles' runs. Failure of unknown origin → scan Space's run journals for its signature's first build and date before blaming candidate.
 - Guidance text a native check exercises (`SKILL.md`, renderer's refusal sentences): cycle's review round reviews that text before the QA build the check installs, also for trials before `/ship`; its notes fixed, then one build. Build itself still gets no own review.
-- Mac load: native check in Space starts only while no build, suite, package test or measured health runs on Mac and swap has room (VM stops when Mac's swap fills): `node extension/scripts/native-precheck.mjs` before each native step prints load, swap, running builds and suites (exit 3 = busy: wait). Fixers wait for check, or check waits for them.
+- Run a solo native trial or a solo build even when host swap usage remains high. Before each native step, run `node extension/scripts/native-precheck.mjs --json`. Read current host pressure and active jobs. Retained swap is telemetry and has no admission ceiling. Critical host pressure or missing required host observations warrants a fresh check. No waiting for old swap to drain.
+- Normally sequence a heavy build, suite, package test or measured health run with native QA. For a local load experiment, start the recorder, run the precheck with `--experiment`, then overlap the actual product workload being investigated. Unexpected stops of this QA VM are acceptable evidence. Keep unrelated host apps, work and drafts intact.
+- Start `node extension/scripts/native-trial.mjs watch --id <unique-id> --cycle <N> --profile <scenario>` on the Mac before the measured work. Record the editor task, build/test command and their start/end times. After observing the task result, run `finish --id <id> --outcome healthy` on the same script. Use `plan-stop --id <id>` before a deliberate shutdown and keep the recorder running through the stop. If the guest disconnects, record the provider state and time; distinguish unexpected VM stop, guest/observer disconnect, planned shutdown and unknown outcome. A stopped VM alone cannot identify guest memory exhaustion.
+- Use the recorder's `report --json` and the saved host-side samples when revising a scheduling rule. Compare like workloads across guest RAM sizes, actual overlap, host/guest pressure, swap-out changes and rates, and observed resource use. Count successful and interrupted trials and give the denominator, missing observations and trial IDs. Repeat real conditions to check a suspected boundary. A lone retained-swap reading or one crash cannot establish it.
 - Native candidate frozen once cycle's defects fixed; `/ship` reviews that tree. Fix after freeze reruns only native steps whose path it changed (frozen expectations name them).
 - Candidate or `/ship` review P2/Low/Medium finding on path native check already verified: Skip by default, named once in PR, unless it blocks that check's frozen expectation.
 - Cycle Issue's timeline records, per candidate review, count of P2/Low/Medium findings per natively verified file; two consecutive reviews each ≥ 3 on same file → structural task for that file on later-candidate list (not current cycle).
@@ -426,7 +429,7 @@ sips -s format jpeg -s formatOptions 70 -Z 1000 /tmp/shot.png --out /tmp/shot.jp
 
 **macOS Space (`local:codebook-qa`).**
 
-- macOS 26 VM from `ghcr.io/trycua/macos:26`, run by Cua Spaces on Mac with own Lume (Apple Virtualization framework): 8 CPUs, 16 GB, 150 GB disk, display 1920 × 1080, account `lume`.
+- macOS 26 VM from `ghcr.io/trycua/macos:26`, run by Cua Spaces on Mac with own Lume (Apple Virtualization framework): 8 CPUs, guest RAM configurable up to 32 GiB for the authorized local QA trials, 150 GB disk, display 1920 × 1080, account `lume`.
 - Setup and repair inside (tools, target clone, QA profiles, OBS) need no new permission; treat its settings, profiles, data as owner's.
 - Keep Space's VS Code and Cursor current:
   - `update.mode` stays `default` in both;
