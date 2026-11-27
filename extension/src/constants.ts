@@ -59,6 +59,9 @@ export const BUN_MINIMUM_VERSION = '1.4.4'
 /** How long the identity read (`bun -e`, printing Bun's release and executable) may take when a `loader: "bun"` run resolves its Bun, in milliseconds; a Bun that does not answer in time is refused as not answering. */
 export const BUN_VERSION_READ_TIMEOUT_MS = 5_000
 
+/** The most output (bytes) the Bun identity probe may print before it is ended; its real answer is one short line. */
+export const BUN_VERSION_READ_MAX_OUTPUT_BYTES = 1_048_576
+
 /** The name prefix of the private, empty working folder the Bun identity read runs in (created inside the OS temp folder, removed after the read). */
 export const BUN_PROBE_FOLDER_PREFIX = 'codebook-bun-identity-'
 

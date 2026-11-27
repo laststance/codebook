@@ -135,16 +135,57 @@ test('a Bun older than 1.4.4 is refused naming its release, and 1.4.10 is accept
   assert.equal(accepted.version, '1.4.10')
 })
 
-// Value: protects=a canary or build suffix does not decide the release line; fails_when=`1.4.6-canary.3+abc` is refused as unreadable; seam=a scripted reader; no_claim=canary Bun behaviour
-test('a pre-release Bun is judged by its release numbers', async () => {
+// Value: protects=a pre-release is placed by SemVer precedence: below its own release when that is the minimum, above the minimum when it belongs to a later release, and reported as the Bun printed it; fails_when=`1.4.4-canary.1` is accepted as 1.4.4, `1.4.5-canary.1` is refused or reported as `1.4.5`, or a release suffix is dropped; seam=a scripted reader; no_claim=canary Bun behaviour
+test('a pre-release of the minimum is refused, a pre-release of a later release is accepted as reported', async () => {
   // Arrange
-  const programs = scriptedPrograms({
-    bun: async () => identity('1.4.6-canary.3+abc', '/usr/local/bin/bun'),
+  const belowMinimum = scriptedPrograms({
+    bun: async () => identity('1.4.4-canary.1+local', '/usr/local/bin/bun'),
+  })
+  const laterRelease = scriptedPrograms({
+    bun: async () => identity('1.4.5-canary.1', '/usr/local/bin/bun'),
+  })
+  const minimum = scriptedPrograms({
+    bun: async () => identity('1.4.4', '/usr/local/bin/bun'),
   })
   // Act
-  const bun = await resolveBunRuntime(programs.runProgram, '/Users/learner')
+  const refused = await refusalOf(
+    resolveBunRuntime(belowMinimum.runProgram, '/Users/learner'),
+  )
+  const later = await resolveBunRuntime(
+    laterRelease.runProgram,
+    '/Users/learner',
+  )
+  const exact = await resolveBunRuntime(minimum.runProgram, '/Users/learner')
   // Assert
-  assert.deepEqual(bun, { executable: '/usr/local/bin/bun', version: '1.4.6' })
+  assert.match(
+    refused.message,
+    /the Bun found \(.*\) is 1\.4\.4-canary\.1\+local, so nothing was launched\.$/,
+  )
+  assert.deepEqual(later, {
+    executable: '/usr/local/bin/bun',
+    version: '1.4.5-canary.1',
+  })
+  assert.equal(exact.version, '1.4.4')
+})
+
+// Value: protects=a non-executable bun earlier on the PATH does not hide a valid ~/.bun/bin/bun; fails_when=EACCES refuses the run although the home fallback answers; seam=a scripted reader whose bun throws EACCES; no_claim=the real file permission
+test('a PATH bun that is not executable falls through to ~/.bun/bin', async () => {
+  // Arrange
+  const asked: string[] = []
+  const runProgram: RunBunProgram = async (program) => {
+    asked.push(program)
+    if (program === 'bun')
+      throw Object.assign(new Error('spawn bun EACCES'), { code: 'EACCES' })
+    return identity('1.4.5', '/Users/learner/.bun/bin/bun')
+  }
+  // Act
+  const bun = await resolveBunRuntime(runProgram, '/Users/learner')
+  // Assert
+  assert.deepEqual(bun, {
+    executable: '/Users/learner/.bun/bin/bun',
+    version: '1.4.5',
+  })
+  assert.deepEqual(asked, ['bun', '/Users/learner/.bun/bin/bun'])
 })
 
 // Value: protects=a Bun that exists but hangs or crashes is refused as not answering, and the lookup does not silently fall back to another Bun; fails_when=a timeout reads as missing and a different Bun runs, or the run launches on an unverified Bun; seam=a reader whose bun throws a timeout; no_claim=the real timeout length
@@ -273,7 +314,7 @@ test('the identity probe folder is private to the learner', async (context) => {
   const fakeBun = join(folder, 'fake-bun')
   await writeFile(
     fakeBun,
-    '#!/bin/sh\nstat -f %Lp . 2>/dev/null || stat -c %a .\n',
+    '#!/bin/sh\nstat -c %a . 2>/dev/null || stat -f %Lp .\n',
   )
   await chmod(fakeBun, 0o755)
   try {
@@ -323,6 +364,52 @@ test('the identity probe removes its working folder when Bun fails', async () =>
     assert.notEqual(probeFolder, '')
     await assert.rejects(stat(probeFolder), { code: 'ENOENT' })
   } finally {
+    await removeTestFolder(folder)
+  }
+})
+
+// Value: protects=a bun wrapper that starts the real Bun as a child and waits leaves nothing running after the probe's deadline; fails_when=only the wrapper is killed and its child survives; seam=the default reader against a fake wrapper that starts a long-lived child and records its pid; no_claim=Windows taskkill
+test('the identity probe ends a wrapper and the child it started at the deadline', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') {
+    context.skip('process groups do not apply on Windows')
+    return
+  }
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-bun-probe-'))
+  const fakeBun = join(folder, 'fake-bun')
+  const childPidFile = join(folder, 'child-pid')
+  await writeFile(
+    fakeBun,
+    `#!/bin/sh\nsleep 30 &\necho $! > "${childPidFile}"\nwait\n`,
+  )
+  await chmod(fakeBun, 0o755)
+  let childPid = 0
+  try {
+    // Act
+    const failure = runBunProgram(fakeBun, [], 500)
+    // Assert
+    await assert.rejects(failure, { code: 'ETIMEDOUT' })
+    childPid = Number((await readFile(childPidFile, 'utf8')).trim())
+    assert.ok(childPid > 1)
+    const waitDeadline = Date.now() + 5_000
+    let alive = true
+    while (alive && Date.now() < waitDeadline) {
+      try {
+        process.kill(childPid, 0)
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      } catch {
+        alive = false
+      }
+    }
+    assert.equal(alive, false, 'the wrapper child must be gone')
+  } finally {
+    if (childPid > 1) {
+      try {
+        process.kill(childPid, 'SIGKILL')
+      } catch {
+        // Already gone.
+      }
+    }
     await removeTestFolder(folder)
   }
 })
