@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { countProcessKinds } from '../native-precheck.mjs'
+import { countProcessKinds, parseSwapUsage } from '../native-precheck.mjs'
 
 const execute = promisify(execFile)
 const precheckPath = fileURLToPath(
@@ -13,7 +13,15 @@ const pressureLevels = new Set(['normal', 'warning', 'critical', 'unsupported'])
 const guestPressure = { 1: 'normal', 2: 'warning', 4: 'critical' }
 const guestName = 'local:codebook-qa'
 const guestMarker = 'codebook-qa-sample'
-const guestRead = `printf '%s\\n' '${guestMarker}'; /usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level; /usr/bin/vm_stat`
+const guestRead = [
+  `printf '%s\\n' '${guestMarker}'`,
+  '/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level',
+  '/usr/bin/vm_stat',
+  "printf '\\nmemoryBytes='",
+  '/usr/sbin/sysctl -n hw.memsize',
+  "printf '\\nswapUsage='",
+  '/usr/sbin/sysctl -n vm.swapusage',
+].join('; ')
 
 /**
  * Reads one command's bounded stdout. The busy precheck also supplies valid JSON on exit 3.
@@ -71,6 +79,20 @@ function workloadCounts(processes) {
   )
 }
 
+/**
+ * Projects available per-workload RSS readings onto the precheck's known kinds.
+ * Missing and malformed measurements never stand in for an observed zero.
+ * @example workloadRss({ nodeTest: 142.5, tsc: 0 })
+ */
+function workloadRss(readings) {
+  const measured = workloadKinds.filter(
+    (kind) => Number.isFinite(readings?.[kind]) && readings[kind] >= 0,
+  )
+  return measured.length
+    ? Object.fromEntries(measured.map((kind) => [kind, readings[kind]]))
+    : null
+}
+
 /** Reads the named guest only after the control plane confirms it is running. @example await readGuest(readCommand) */
 async function readGuest(run) {
   const info = readJson(
@@ -82,6 +104,8 @@ async function readGuest(run) {
   const unmeasured = {
     reachable: null,
     memoryPressure: 'unknown',
+    memoryBytes: null,
+    usedSwapMb: null,
     pageSize: null,
     swapouts: null,
   }
@@ -97,13 +121,18 @@ async function readGuest(run) {
     const reachable = result?.code === 0 ? null : false
     return { state: 'running', ...unmeasured, reachable }
   }
+  const measurements = lines.slice(1).join('\n')
+  const ram = Number(/^memoryBytes=(\d+)$/m.exec(measurements)?.[1])
+  const swapLine = /^swapUsage=([^\n]*)$/m.exec(measurements)?.[1]
   return {
     state: 'running',
     reachable: true,
     memoryPressure: Object.hasOwn(guestPressure, lines[1])
       ? guestPressure[lines[1]]
       : 'unknown',
-    ...pageFacts(lines.slice(1).join('\n')),
+    memoryBytes: Number.isSafeInteger(ram) && ram > 0 ? ram : null,
+    usedSwapMb: parseSwapUsage(swapLine)?.usedMb ?? null,
+    ...pageFacts(measurements),
   }
 }
 
@@ -142,6 +171,7 @@ export async function readNativeTrialSample({
         : 'unknown',
       usedSwapMb: Number.isFinite(used) && used >= 0 ? used : null,
       workloads: workloadCounts(facts?.processes),
+      rssMiBByKind: workloadRss(facts?.rssMiBByKind),
       ...pageFacts(hostPages?.code === 0 ? hostPages.stdout : ''),
     },
     guest,

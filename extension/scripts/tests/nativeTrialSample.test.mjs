@@ -20,6 +20,13 @@ function fixtureRunner({
     stdout: JSON.stringify({
       memoryPressure: 'warning',
       swap: { usedMb: 42.5 },
+      rssMiBByKind: {
+        nodeTest: 183.25,
+        tsc: 0,
+        health: -1,
+        gate: '12',
+        unrelatedDetail: 4200,
+      },
       processes: {
         ...countProcessKinds([], 0),
         nodeTest: 2,
@@ -32,7 +39,10 @@ function fixtureRunner({
     stdout: JSON.stringify({ state, detail: 'fixture-private' }),
   },
   pages = { code: 0, stdout: hostVmStat },
-  exec = { code: 0, stdout: `codebook-qa-sample\n4\n${guestVmStat}` },
+  exec = {
+    code: 0,
+    stdout: `codebook-qa-sample\n4\n${guestVmStat}memoryBytes=17179869184\nswapUsage=total = 2.00G  used = 768.50M  free = 1279.50M  (encrypted)\n`,
+  },
 } = {}) {
   const calls = []
   return {
@@ -79,11 +89,14 @@ test('a busy host and ready guest report independent absolute counters and only 
   assert.equal(sample.host.swapouts, 124)
   assert.equal(sample.host.workloads.nodeTest, 2)
   assert.equal(sample.host.workloads.tsc, 0)
+  assert.deepEqual(sample.host.rssMiBByKind, { nodeTest: 183.25, tsc: 0 })
   assert.equal(Object.hasOwn(sample.host.workloads, 'unrelatedDetail'), false)
   assert.deepEqual(sample.guest, {
     state: 'running',
     reachable: true,
     memoryPressure: 'critical',
+    memoryBytes: 17179869184,
+    usedSwapMb: 768.5,
     pageSize: 4096,
     swapouts: 18,
   })
@@ -123,6 +136,8 @@ test('only an explicit stopped state confirms a stop and skips guest execution',
       state,
       reachable: null,
       memoryPressure: 'unknown',
+      memoryBytes: null,
+      usedSwapMb: null,
       pageSize: null,
       swapouts: null,
     })
@@ -171,6 +186,8 @@ test('a running guest distinguishes a failed probe, malformed output and an answ
       state: 'running',
       reachable,
       memoryPressure,
+      memoryBytes: null,
+      usedSwapMb: null,
       pageSize,
       swapouts,
     })
@@ -204,6 +221,7 @@ test('unreadable precheck counters stay unknown while independent measurements s
     memoryPressure: 'unknown',
     usedSwapMb: null,
     workloads: null,
+    rssMiBByKind: null,
     pageSize: null,
     swapouts: null,
   }
@@ -212,4 +230,44 @@ test('unreadable precheck counters stay unknown while independent measurements s
   assert.deepEqual(unavailable.host, unknownHost)
   assert.equal(unavailable.guest.state, 'unknown')
   assert.equal(JSON.stringify(unavailable).includes('fixture-private'), false)
+})
+
+test('guest RAM and swap survive independently when one sysctl fails', async () => {
+  // Value: protects=trial groups reflect measured guest RAM and swap; fails_when=one failed guest read suppresses the other or unknown becomes zero; no_claim=live sysctl availability.
+  // Arrange
+  const cases = [
+    ['memoryBytes=8589934592\nswapUsage=', 8589934592, null],
+    [
+      'memoryBytes=\nswapUsage=total = 2.00G  used = 0.25G  free = 1.75G',
+      null,
+      256,
+    ],
+    [
+      'memoryBytes=9007199254740993\nswapUsage=total = 0.00M  used = 0.00M  free = 0.00M',
+      null,
+      0,
+    ],
+    ['memoryBytes=0\nswapUsage=unavailable', null, null],
+  ]
+  for (const [readings, memoryBytes, usedSwapMb] of cases) {
+    const { run, calls } = fixtureRunner({
+      exec: {
+        code: 1,
+        stdout: `codebook-qa-sample\n2\n${guestVmStat}${readings}\n`,
+      },
+    })
+
+    // Act
+    const { guest } = await readNativeTrialSample({ run, now })
+
+    // Assert
+    assert.equal(guest.memoryBytes, memoryBytes)
+    assert.equal(guest.usedSwapMb, usedSwapMb)
+    assert.equal(guest.swapouts, 18)
+    assert.equal(guest.reachable, true)
+    const guestCalls = calls.filter(([, args]) => args[0] === 'sb')
+    assert.equal(guestCalls.length, 1)
+    assert.match(guestCalls[0][1][3], /sysctl -n hw\.memsize/)
+    assert.match(guestCalls[0][1][3], /sysctl -n vm\.swapusage/)
+  }
 })

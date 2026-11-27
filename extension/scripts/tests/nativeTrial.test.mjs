@@ -266,3 +266,46 @@ test('unknown counters or zero elapsed time leave the rate unknown', () => {
   assert.equal(swapoutChange(first, next, 'host'), null)
   assert.equal(swapoutChange(null, first, 'host'), null)
 })
+
+test('reports separate 16 GiB, 32 GiB and previously unmeasured trials even with the same declared workload', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  for (const [id, memoryBytes] of [
+    ['guest16', 16 * 2 ** 30],
+    ['guest32', 32 * 2 ** 30],
+    ['legacy', undefined],
+  ]) {
+    const start = Date.now()
+    const clock = { at: start }
+    const get = (at) => {
+      const row = sample(at, at === start ? 'running' : 'stopped', at === start)
+      if (memoryBytes !== undefined) {
+        row.host.rssMiBByKind = { build: at === start ? 47.25 : 61.75 }
+        row.guest.memoryBytes = at === start ? memoryBytes : null
+        row.guest.usedSwapMb = at === start ? 128.5 : null
+      }
+      return row
+    }
+    await watchTrial(root, { ...options, id }, clocked(clock, get))
+  }
+  // Act
+  const { groups, trials } = await reportTrials(root)
+  // Assert
+  assert.deepEqual(
+    groups.map((g) => [g.guestMemoryBytes, g.total, g.ids]),
+    [
+      [17179869184, 1, ['guest16']],
+      [34359738368, 1, ['guest32']],
+      [null, 1, ['legacy']],
+    ],
+  )
+  assert.equal(trials[0].guestMemorySamples, 1)
+  assert.equal(trials[0].guestSwapSamples, 1)
+  assert.equal(trials[0].minGuestUsedSwapMb, 128.5)
+  assert.equal(trials[0].maxGuestUsedSwapMb, 128.5)
+  assert.deepEqual(trials[0].peakHostRssMiBByKind, { build: 61.75 })
+  assert.equal(trials[0].hostRssSamples, 2)
+  assert.deepEqual(trials[2].observedGuestMemoryBytes, [])
+  assert.equal(trials[2].minGuestUsedSwapMb, null)
+  assert.equal(trials[2].peakHostRssMiBByKind, null)
+})

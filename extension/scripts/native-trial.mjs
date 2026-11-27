@@ -22,6 +22,14 @@ Run QA normally and use finish on completion. Leave watch running through a plan
 An unexpectedly stopped VM requires a previously observed running state. The cause is unknown.
 Resume a killed observer with the same watch arguments and ID. Deadlines do not reset.`
 
+/** Human-readable measured guest capacity; missing older evidence remains unknown. @example ramLabel([17179869184]) */
+function ramLabel(sizes) {
+  return sizes.length
+    ? sizes.map((bytes) => Number((bytes / 2 ** 30).toFixed(2))).join('/') +
+        ' GiB'
+    : 'unknown'
+}
+
 async function main() {
   const { values: v, positionals } = parseArgs({
     allowPositionals: true,
@@ -64,7 +72,7 @@ async function main() {
     )
     for (const g of result.groups)
       console.log(
-        `${g.profile} / observed ${g.observed} — ${g.total} trial(s): ${Object.entries(
+        `${g.profile} / guest RAM ${ramLabel(g.observedGuestMemoryBytes)} / observed ${g.observed} — ${g.total} trial(s): ${Object.entries(
           g.counts,
         )
           .filter(([, n]) => n)
@@ -73,7 +81,7 @@ async function main() {
       )
     for (const t of result.trials)
       console.log(
-        `${t.id} · cycle ${t.cycle} · ${t.outcome} · ${t.samples} samples · peaks ${JSON.stringify(t.peakProcesses)} · pressure ${t.pressures.join('/') || 'unknown'} · used swap ${t.minUsedSwapMb ?? '?'}–${t.maxUsedSwapMb ?? '?'} MiB`,
+        `${t.id} · cycle ${t.cycle} · ${t.outcome} · ${t.samples} samples · peaks ${JSON.stringify(t.peakProcesses)} · peak host RSS MiB ${JSON.stringify(t.peakHostRssMiBByKind)} · guest RAM ${ramLabel(t.observedGuestMemoryBytes)} · guest swap ${t.minGuestUsedSwapMb ?? '?'}–${t.maxGuestUsedSwapMb ?? '?'} MiB · pressure ${t.pressures.join('/') || 'unknown'} · used swap ${t.minUsedSwapMb ?? '?'}–${t.maxUsedSwapMb ?? '?'} MiB`,
       )
     return
   }

@@ -267,6 +267,43 @@ function countsByOutcome() {
 }
 
 /**
+ * Describe the sizes the guest itself reported during a trial. Older records have no RAM measurement.
+ * @example observedGuestMemory([{ guest: { memoryBytes: 17179869184 } }])
+ */
+function observedGuestMemory(samples) {
+  const measured = samples
+    .map((row) => row.guest?.memoryBytes)
+    .filter((value) => Number.isSafeInteger(value) && value > 0)
+  const sizes = [...new Set(measured)].sort((a, b) => a - b)
+  return {
+    guestMemoryBytes: sizes.length === 1 ? sizes[0] : null,
+    observedGuestMemoryBytes: sizes,
+    guestMemorySamples: measured.length,
+  }
+}
+
+/**
+ * Keeps the largest observed per-kind sum across samples. Distinct peaks may come from different times.
+ * @example peakWorkloadRss([{host:{rssMiBByKind:{tsc:128}}}])
+ */
+function peakWorkloadRss(samples) {
+  const peaks = {}
+  let measured = 0
+  for (const { host } of samples) {
+    if (!host.rssMiBByKind) continue
+    measured++
+    for (const [kind, value] of Object.entries(host.rssMiBByKind)) {
+      if (Number.isFinite(value) && (value > 0 || host.workloads?.[kind] > 0))
+        peaks[kind] = Math.max(peaks[kind] ?? 0, value)
+    }
+  }
+  return {
+    peakHostRssMiBByKind: measured ? peaks : null,
+    hostRssSamples: measured,
+  }
+}
+
+/**
  * Group every recorded trial by declared profile and actual workload kinds so both successes and failures have denominators.
  * @example const { trials, groups } = await reportTrials(root)
  */
@@ -313,6 +350,13 @@ export async function reportTrials(root) {
       ...new Set(samples.map((s) => s.host.memoryPressure)),
     ].sort()
     const swap = samples.map((s) => s.host.usedSwapMb).filter(Number.isFinite)
+    const guestMemory = observedGuestMemory(samples)
+    const guestSwap = samples
+      .map((s) => s.guest?.usedSwapMb)
+      .filter(Number.isFinite)
+    const guestPressures = [
+      ...new Set(samples.map((s) => s.guest?.memoryPressure ?? 'unknown')),
+    ].sort()
     const outcome = ended?.outcome ?? 'incomplete'
     const hostRates = samples.map((s) => s.change?.host).filter(Boolean)
     const pressureChanges = {
@@ -323,6 +367,12 @@ export async function reportTrials(root) {
     }
     const record = {
       ...pressureChanges,
+      ...guestMemory,
+      ...peakWorkloadRss(samples),
+      guestPressures,
+      minGuestUsedSwapMb: guestSwap.length ? Math.min(...guestSwap) : null,
+      maxGuestUsedSwapMb: guestSwap.length ? Math.max(...guestSwap) : null,
+      guestSwapSamples: guestSwap.length,
       id: trial.id,
       cycle: trial.cycle,
       profile: trial.profile,
@@ -337,8 +387,14 @@ export async function reportTrials(root) {
       ended: ended?.at ?? null,
     }
     trials.push(record)
-    const key = JSON.stringify([trial.profile, observed])
+    const key = JSON.stringify([
+      trial.profile,
+      observed,
+      guestMemory.observedGuestMemoryBytes,
+    ])
     const group = groups.get(key) ?? {
+      guestMemoryBytes: guestMemory.guestMemoryBytes,
+      observedGuestMemoryBytes: guestMemory.observedGuestMemoryBytes,
       profile: trial.profile,
       observed,
       total: 0,
