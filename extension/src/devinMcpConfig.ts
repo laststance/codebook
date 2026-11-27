@@ -5888,16 +5888,18 @@ class PutBackCheckError extends Error {
 }
 
 /**
- * Tells whether a recovery failure's own text names both files and what stays ({@link PutBackCheckError}, {@link ConfigChangedError}), so it is shown as it is; called by {@link unsettledRefusal} and {@link mergeWithLeftover}.
+ * Tells whether a recovery failure's own text names both files and what stays ({@link PutBackCheckError}, {@link ConfigChangedError}, or {@link PublishedConfigUnprovenError}), so a later refusal cannot hide the recovery paths. Called by {@link unsettledRefusal} and {@link mergeWithLeftover}.
  * @param cause - What stopped the leftover's recovery.
- * @returns `true` for those two errors; `false` for every other failure, which {@link unsettledRefusal} words itself.
+ * @returns Whether the learner needs the error's own two-file recovery directions.
  * @example
  * namesBothFiles(configChangedError(context, keptPath)) // => true
  * namesBothFiles(new Error('busy'))                     // => false
  */
 function namesBothFiles(cause: unknown) {
   return (
-    cause instanceof PutBackCheckError || cause instanceof ConfigChangedError
+    cause instanceof PutBackCheckError ||
+    cause instanceof ConfigChangedError ||
+    cause instanceof PublishedConfigUnprovenError
   )
 }
 

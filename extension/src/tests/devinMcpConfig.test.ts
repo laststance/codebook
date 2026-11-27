@@ -2151,6 +2151,70 @@ test('Recovery keeps the recorded original when the last look at a completed rep
   assert.equal(await readFile(configPath, 'utf8'), edited)
 })
 
+test('Set Up AI Chat identifies both the unreadable configuration and its tracked original until a retry verifies the repaired file', async (context) => {
+  // protects=the first refusal gives the learner both locations after concurrent config damage; fails_when=the JSON refusal hides the original or a retry loses the other server; no_claim=an actual editor rewrite.
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const published =
+    JSON.stringify({
+      mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+    }) + '\n'
+  const damaged = '{"mcpServers":'
+  await writeConfig(configPath, published)
+  const copyPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(copyPath, original)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(copyPath),
+    keptIno: (await stat(copyPath)).ino,
+    keptSha256: sha256(original),
+    stagedIno: (await stat(configPath)).ino,
+    stagedSha256: sha256(published),
+  })
+  let configReads = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path === configPath) configReads++
+    },
+    beforeLeftoverCheck: (path) => {
+      // An editor leaves a partial write just before Codebook verifies the published file.
+      if (path === configPath && configReads === 1)
+        writeFileSync(configPath, damaged)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(configPath))
+    assert.match(error.message, /valid JSON/)
+    assert.ok(error.message.includes(copyPath))
+    assert.match(error.message, /still tracks that copy/)
+    return true
+  })
+  assert.equal(await readFile(configPath, 'utf8'), damaged)
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+  assert.equal(
+    (await readRecordFile(storage, 'pending.json')).keptName,
+    basename(copyPath),
+  )
+  // Repair the interrupted in-place write, then retry through the same public operation.
+  await writeFile(configPath, published)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')).mcpServers, {
+    alpha: { command: 'a' },
+    codebook: ENTRY,
+  })
+  assert.equal(existsSync(copyPath), false)
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 for (const journal of ['pending.json', 'pending.json.rollback']) {
   test(`A temporary failure at the last config check keeps the original tracked by ${journal} until the next refresh verifies it`, async (context) => {
     // protects=the current or rollback journal retains a completed change's original on a failed final read; fails_when=the journal disappears or the original is deleted before the live config is verified; no_claim=real storage faults (one final lookup reports EIO).
