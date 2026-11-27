@@ -16,7 +16,10 @@ import { browserAttributeText } from '../utils/browserAttributeText'
 import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { withServedAddresses } from '../utils/withServedAddresses'
 
-import { shortestTimesInTurns } from './utils/shortestTimesInTurns'
+import {
+  measureServingTurns,
+  shortestTimesInTurns,
+} from './utils/shortestTimesInTurns'
 
 // The pinned parser alone reads a select by the rules before 2025; Node 24 loads this ESM package synchronously.
 const parse5: typeof Parse5 = require('parse5')
@@ -31,8 +34,6 @@ const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
 const SELECT_PAIRS_PARSER_BOUND_RATIO = 2
 /** How many runs of the page the select-pairs timing test times for the reader and for the parser alone, in turns ({@link shortestTimesInTurns}); the shortest of each counts, so one scheduling stall on a loaded host does not decide the ratio. */
 const SELECT_PAIRS_TIMED_RUNS = 5
-/** How many times {@link servingTimes} serves each crafted page and the ordinary page in turns with it; the shortest of each counts. */
-const SERVING_TIMED_RUNS = 2
 /** How long the timing test waits for worker startup and each ordinary-page calibration before marking the remaining work unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
 /** How much worker CPU time one measured call may spend relative to its same-turn ordinary page. This exceeds the largest wall-time acceptance ratio ({@link CLOSED_SVG_PAGE_BOUND_RATIO}). The independent wall watchdog uses the larger of this budget and {@link FILTER_DEADLINE_MS}, so a descheduled or blocked worker cannot keep a test open indefinitely. */
@@ -47,8 +48,8 @@ const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
 /** The reader's script tag as {@link servedWikiPageHtml} hands it to the filter for a page served without a publication. */
 const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 
-/** A crafted page's shortest serving time and the shortest time of the ordinary page served in turns with it, in milliseconds. */
-type ServedInTurns = { page: number; ordinary: number }
+/** Shortest elapsed times and the paired measurements retained by the serving worker for diagnosis. */
+type ServedInTurns = ReturnType<typeof measureServingTurns>
 
 /**
  * Marks unfinished or over-budget page measurements for the timing tests' failure lists.
@@ -57,7 +58,7 @@ type ServedInTurns = { page: number; ordinary: number }
  * exceedsServingBound({page: 70, ordinary: 10}, 6) // true
  */
 function exceedsServingBound(
-  time: ServedInTurns | 'unfinished',
+  time: Pick<ServedInTurns, 'page' | 'ordinary'> | 'unfinished',
   ratio: number,
 ): boolean {
   return time === 'unfinished' || time.page > ratio * time.ordinary
@@ -172,6 +173,7 @@ function servingDeadline(
  * @param exportName - The function it exports.
  * @param pages - The crafted pages, by name.
  * @param tagAtBodyEnd - The tag the function puts at the body's end of every page, the ordinary page's included, as the reader hands its script tag to the filter ({@link servedWikiPageHtml}); none when left out.
+ * @param confirmationRatio - Elapsed-time limit above which the initial two turns require three confirmation pairs.
  * @returns For each crafted page, its time and the time of the ordinary page served in turns with it, in milliseconds, or `unfinished`.
  * @example
  * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { small: { page: 0.1, ordinary: 128 } }
@@ -182,6 +184,7 @@ async function servingTimes(
   exportName: string,
   pages: Record<string, string>,
   tagAtBodyEnd?: string,
+  confirmationRatio = CRAFTED_PAGE_BOUND_RATIO,
 ): Promise<Record<string, ServedInTurns | 'unfinished'>> {
   const times: Record<string, ServedInTurns | 'unfinished'> =
     Object.fromEntries(Object.keys(pages).map((name) => [name, 'unfinished']))
@@ -189,26 +192,25 @@ async function servingTimes(
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
 const serve = require(workerData.module)[workerData.exportName]
-const { shortestTimesInTurns } = require(workerData.timing)
+const { measureServingTurns, threadCpuSnapshot } = require(workerData.timing)
 const serveOnce = (page) => {
   if (workerData.tagAtBodyEnd === undefined) serve(page, 'cursor')
   else serve(page, 'cursor', workerData.tagAtBodyEnd)
 }
 const reportTurn = (ordinaryMs) => workerData.calibrations.postMessage({
   startedAt: performance.now(), ordinaryMs,
-  cpuAtStart: ordinaryMs === undefined ? undefined : process.threadCpuUsage(),
+  cpuAtStart: ordinaryMs === undefined ? undefined : threadCpuSnapshot(),
 })
 serveOnce(workerData.warmUp)
 for (const [name, page] of Object.entries(workerData.pages)) {
-  const { measured: ordinary, baseline: measured } = shortestTimesInTurns(
+  const timings = measureServingTurns(
     () => serveOnce(workerData.ordinary),
     () => serveOnce(page),
-    workerData.runs,
-    undefined,
+    workerData.confirmationRatio,
     reportTurn,
   )
   reportTurn(undefined)
-  parentPort.postMessage({ name, page: measured, ordinary })
+  parentPort.postMessage({ name, timings })
 }
 workerData.calibrations.close()`,
     {
@@ -223,7 +225,7 @@ workerData.calibrations.close()`,
         ordinary: ORDINARY_PAGE,
         pages,
         tagAtBodyEnd,
-        runs: SERVING_TIMED_RUNS,
+        confirmationRatio,
       },
     },
   )
@@ -242,9 +244,12 @@ workerData.calibrations.close()`,
           }
         : undefined,
     )
-    worker.on('message', (message: { name: string } & ServedInTurns) => {
-      times[message.name] = { page: message.page, ordinary: message.ordinary }
-    })
+    worker.on(
+      'message',
+      (message: { name: string; timings: ServedInTurns }) => {
+        times[message.name] = message.timings
+      },
+    )
     worker.once('exit', () => {
       deadline.clear()
       resolve()
@@ -284,6 +289,66 @@ test('the timing-ratio tests time the measured run and its baseline in turns and
   ])
   assert.deepEqual(readingsMs, [])
   assert.deepEqual(times, { measured: 20, baseline: 50 })
+})
+
+test('a two-turn elapsed overrun gets exactly three confirmation pairs and preserves the fastest original baseline', () => {
+  // Arrange: the second scenario slows both sides in the confirmation. The third has a persistent wall-only delay.
+  for (const [limit, ordinaryMs, pageMs, expectedTimes, overLimit] of [
+    [4, [88, 90, 85, 86, 90], [492, 500, 125, 128, 135], [85, 125], false],
+    [4, [88, 90, 200, 200, 200], [492, 500, 490, 496, 510], [88, 490], true],
+    [6, [20, 20, 20, 20, 20], [145, 145, 145, 145, 145], [20, 145], true],
+  ] as const) {
+    let clock = 0
+    let turn = 0
+    // Act: the scripted wall times advance independently of the real CPU consumed by these additions.
+    const result = measureServingTurns(
+      () => {
+        clock += ordinaryMs[turn] ?? Number.NaN
+      },
+      () => {
+        clock += pageMs[turn++] ?? Number.NaN
+      },
+      limit,
+      undefined,
+      () => clock,
+    )
+    // Assert
+    assert.equal(turn, 5)
+    assert.deepEqual([result.ordinary, result.page], expectedTimes)
+    assert.equal(exceedsServingBound(result, limit), overLimit)
+    assert.deepEqual(
+      result.turns.map(({ ordinary, page }) => [ordinary.wallMs, page.wallMs]),
+      ordinaryMs.map((ordinary, i) => [ordinary, pageMs[i]]),
+    )
+  }
+})
+
+test('wall-clock comparisons work without thread CPU counters and wall-only callers never read them', (context) => {
+  // Arrange
+  const unavailable = context.mock.method(process, 'threadCpuUsage', () => {
+    throw new Error('CPU counter unavailable')
+  })
+  let clock = 0
+  const work = (): void => {
+    clock += 10
+  }
+  // Act
+  const wallOnly = shortestTimesInTurns(work, work, 2, () => clock)
+  const readsAfterWallOnly = unavailable.mock.callCount()
+  const serving = measureServingTurns(work, work, 4, undefined, () => clock)
+  // Assert
+  assert.deepEqual(wallOnly, { measured: 10, baseline: 10 })
+  assert.equal(readsAfterWallOnly, 0)
+  assert.deepEqual(serving.turns, [
+    {
+      ordinary: { wallMs: 10, cpuMs: null },
+      page: { wallMs: 10, cpuMs: null },
+    },
+    {
+      ordinary: { wallMs: 10, cpuMs: null },
+      page: { wallMs: 10, cpuMs: null },
+    },
+  ])
 })
 
 // Value: protects=current-turn calibration and the measured worker deadline; fails_when=a slower valid turn expires against the previous ordinary sample; seam=ordinary arithmetic, scripted elapsed time and the parent's fake timers; no_claim=real reader throughput.
@@ -559,6 +624,13 @@ test('the Wiki timing worker reports a completed ordinary link through its real 
   assert.ok(introduction && introduction !== 'unfinished')
   assert.ok(Number.isFinite(introduction.page) && introduction.page >= 0)
   assert.ok(Number.isFinite(introduction.ordinary) && introduction.ordinary > 0)
+  assert.equal(introduction.turns.length, 2)
+  for (const { ordinary, page } of introduction.turns) {
+    assert.ok(
+      ordinary.wallMs > 0 && (ordinary.cpuMs === null || ordinary.cpuMs >= 0),
+    )
+    assert.ok(page.wallMs >= 0 && (page.cpuMs === null || page.cpuMs >= 0))
+  }
 })
 
 // Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags or unmatched ends rescan a deep stack, including after formatting adoption changes it, so a crafted page takes many times as long as an ordinary page of its size served in turns with it; why_new=W1 and row1044 plus row1058's observed non-top insertion callback, and a closed camelCase svg name (clipPath) whose end the open-name index must lower; row1058's full parser exceeds a fixed 400 ms on any page of 1 MB under coverage; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker); serving each crafted page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
@@ -911,6 +983,7 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
     'withServedAddresses',
     pages,
     READER_SCRIPT_TAG,
+    CLOSED_SVG_PAGE_BOUND_RATIO,
   )
 
   // Assert: every page is over 1 MB, and each was filtered within the bound of the time of the ordinary page served in turns with it.
