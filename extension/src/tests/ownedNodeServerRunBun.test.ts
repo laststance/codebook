@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 
+import { defer } from './utils/defer'
 import { createHarness, sendRequest } from './utils/nodeServerRunHarness'
 
 /** The Bun loader a `loader: "bun"` declaration resolves to, with a learner's Bun and the extension's bootstrap. */
@@ -85,7 +86,7 @@ test('a Bun stop that binds elsewhere fails the start with RUNTIME_FAILED naming
   assert.equal(harness.sender.calls.length, 0)
 })
 
-// Value: protects=the declared request of a Bun run goes out only after the stops were armed; fails_when=the request window opens before armStops ran; seam=the harness's order journal and request sender; no_claim=network timing of a real server
+// Value: protects=the declared request of a Bun run goes out only after the stops were armed; fails_when=the request window opens before armStops ran, or armStops never ran at all (a missing index must fail, not sort first); seam=the harness's order journal and request sender; no_claim=network timing of a real server
 test('a Bun server run sends the declared request only after its stops are armed', async () => {
   // Arrange
   const harness = createHarness({ launchLoader: BUN_LOADER })
@@ -93,9 +94,78 @@ test('a Bun server run sends the declared request only after its stops are armed
   // Act
   await sendRequest(harness)
   // Assert
-  assert.ok(
-    harness.order.indexOf('armStops') < harness.order.indexOf('window:true'),
+  const armedAt = harness.order.indexOf('armStops')
+  const windowAt = harness.order.indexOf('window:true')
+  assert.ok(armedAt >= 0, 'the stops were armed')
+  assert.ok(windowAt >= 0, 'the request window opened')
+  assert.ok(armedAt < windowAt)
+})
+
+// Value: protects=a request tried while a Bun run's late arming is still open sends nothing, and the same request after the arming finished is sent exactly once; fails_when=the run publishes ready (or accepts the request) before its stops are armed; seam=the harness's arming held open by a gate; no_claim=real adapter timing
+test('a Bun run sends no request while its stops are still being armed and one request once they are armed', async () => {
+  // Arrange
+  const armGate = defer<void>()
+  const armStarted = defer<void>()
+  const harness = createHarness({
+    launchLoader: BUN_LOADER,
+    armGate: armGate.promise,
+    duringArm: () => armStarted.resolve(),
+  })
+  const preparing = harness.run.prepare()
+  await armStarted.promise
+  // Act
+  const early = await sendRequest(harness).catch((error: unknown) => error)
+  const sentWhileArming = harness.sender.calls.length
+  armGate.resolve()
+  await preparing
+  await sendRequest(harness)
+  // Assert
+  assert.ok(early instanceof StudyError)
+  assert.equal(sentWhileArming, 0)
+  assert.equal(harness.sender.calls.length, 1)
+})
+
+// Value: protects=a Bun server that exits while its stops are being armed after the listener check fails the start promptly with the server-exit error and no request; fails_when=the exit is ignored until the run is prepared, so arming waits for its deadline or the run publishes ready for a dead server; seam=the harness's arming held open until the run aborts it, and the fake server's exit during it; no_claim=a real Bun crash
+test('a Bun server that exits during the late arming fails the start with the server-exit error and sends no request', async () => {
+  // Arrange
+  const harnessRef: { current?: ReturnType<typeof createHarness> } = {}
+  const harness = createHarness({
+    launchLoader: BUN_LOADER,
+    armHangsUntilAborted: true,
+    duringArm: () =>
+      harnessRef.current?.server.exitNow({ exitCode: 7, signal: null }),
+  })
+  harnessRef.current = harness
+  // Act
+  const failure = await harness.run.prepare().catch((error: unknown) => error)
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'SERVER_EXITED')
+  assert.match(failure.message, /The server exited with code 7/)
+  assert.equal(harness.sender.calls.length, 0)
+})
+
+// Value: protects=a Bun stop the adapter withdrew after it verified it fails the start before the request with the unbound-stop sentence; fails_when=the run trusts the arming's earlier answer and sends the request with a stop that no longer pauses; seam=the harness's debugger re-read of its bindings; no_claim=how js-debug withdraws a binding
+test('a Bun stop withdrawn after arming fails the start before the request, naming that stop', async () => {
+  // Arrange
+  const harness = createHarness({
+    stops: 2,
+    launchLoader: BUN_LOADER,
+    withdrawnStops: [0],
+  })
+  // Act
+  const error = await harness.run.prepare().then(
+    () => undefined,
+    (thrown: unknown) => thrown,
   )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.match(
+    error.message,
+    /while arming the declared stops: Declared stop 1 at src\/routes\/users\.ts:14 did not bind on Bun/,
+  )
+  assert.equal(harness.sender.calls.length, 0)
 })
 
 // Value: protects=a Bun run whose debug session ends while it arms its stops after readiness stops arming at once, fails the start with the session's own reason and sends no request; fails_when=the late arming ignores the run's abort and waits for its arming deadline (the start then fails late, as a timeout, not as the session end), or the request is sent; seam=the harness's arming that waits for its abort signal and a session end during it; no_claim=the real adapter's session end

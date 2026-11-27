@@ -49,6 +49,10 @@ export type HarnessOptions = {
   unboundStops?: number[]
   /** Runs inside the debugger's arming, before the release, to end the session or the process while the run prepares. */
   duringArm?: (debug: FakeNodeServerDebugger) => void
+  /** Holds the arming until the test settles it, so a test can try the request while the stops are not armed yet. */
+  armGate?: Promise<void>
+  /** The declared stop indexes the adapter withdrew after arming: the debugger's re-read of its bindings finds them unverified. */
+  withdrawnStops?: number[]
   /** Arming waits until the run aborts it, then throws the abort's reason, so a test can act while the run is still before its release. */
   armHangsUntilAborted?: boolean
   /** Runs inside the debugger's entry release, to emit pauses before readiness. */
@@ -148,11 +152,20 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
       )
       signal.throwIfAborted()
     }
+    await this.options.armGate
     if (this.options.armFails) throw this.options.armFails
     return stops.map((stop) => ({
       declaredStopIndex: stop.declaredStopIndex,
       breakpointId: 100 + stop.declaredStopIndex,
       boundLine: this.options.unboundStops?.includes(stop.declaredStopIndex)
+        ? undefined
+        : stop.line,
+    }))
+  }
+  currentlyBoundStops(): NodeServerArmedStop[] {
+    return this.input.stops.map((stop) => ({
+      declaredStopIndex: stop.declaredStopIndex,
+      boundLine: this.options.withdrawnStops?.includes(stop.declaredStopIndex)
         ? undefined
         : stop.line,
     }))

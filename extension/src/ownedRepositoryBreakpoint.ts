@@ -127,6 +127,8 @@ type RegistrationReceipt = {
 /** Where the adapter verified a registration, and whether its latest news about the acknowledged breakpoint called it unverified since (a reloaded script), which {@link OwnedRepositoryBreakpoint.adapterVerifiedPlace} honours. */
 type VerifiedRegistration = {
   verifiedAt?: VerifiedPlace
+  /** The line of a verified reply or news that named a line but no column; read by {@link OwnedRepositoryBreakpoint.boundPlace}, which a Bun run's late arming uses (an editor may drop the column). */
+  verifiedLine?: number
   unverifiedByNews?: boolean
 }
 
@@ -441,6 +443,8 @@ export class OwnedRepositoryBreakpoint {
       } else {
         const { verifiedAt, ...moved } = this.verifiedPlaces(binding)
         registration.verifiedAt = verifiedAt
+        // A verified reply without a column still says on which line the breakpoint stands.
+        registration.verifiedLine = binding.verified ? binding.line : undefined
         registration.receipt = {
           sessionId: session.id,
           requestSequence: response.request_seq,
@@ -841,6 +845,25 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Reads where the adapter has this breakpoint verified now, with the column only when the adapter or the editor named one, for a Bun run's late arming and for the judgment of a pause by its place ({@link VscodeNodeServerDebugger}).
+   * Unlike {@link verifiedPlace} a verified binding that names a line alone counts; unlike it, a binding the adapter's latest news withdrew (unverified) counts as none. Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns The verified line and, when known, the column; `undefined` while pending, refused, withdrawn or gone.
+   * @example
+   * owned.boundPlace(session) // => { line: 14, column: 3 }, or { line: 14 } for a reply without a column
+   */
+  boundPlace(
+    session: vscode.DebugSession,
+  ): { line: number; column?: number } | undefined {
+    const registration = this.standingRegistration(session)
+    if (!registration || registration.unverifiedByNews) return undefined
+    if (registration.verifiedAt) return registration.verifiedAt
+    return registration.verifiedLine === undefined
+      ? undefined
+      : { line: registration.verifiedLine }
+  }
+
+  /**
    * Reads where the adapter itself has this breakpoint verified now under the acknowledged id the caller holds, for {@link ConfiguredBrowserRun} when the editor answers nothing for it at a pause (VS Code 1.145, Cycle 0095 C94-L1): like {@link verifiedPlace}, but nothing once the adapter's latest news called the breakpoint unverified, and nothing for a registration the adapter acknowledged under another id since the caller read its id (a re-registration while the editor was asked).
    * @param session - The debug session whose adapter acknowledged the breakpoint.
    * @param breakpointId - The adapter's id of the acknowledged registration the caller read before it asked the editor.
@@ -989,7 +1012,17 @@ export class OwnedRepositoryBreakpoint {
     const breakpoint = this.ownedBreakpointOfEvent(event, receipt)
     if (!breakpoint) return
     const { verifiedAt, ...moved } = this.verifiedPlaces(breakpoint)
-    if (!verifiedAt) return
+    if (!verifiedAt) {
+      // News that names a line but no column still verifies the breakpoint on that line, unless the owner refuses the line.
+      if (
+        breakpoint.line !== undefined &&
+        this.acknowledgesPosition(breakpoint)
+      ) {
+        registration.verifiedLine = breakpoint.line
+        registration.unverifiedByNews = false
+      }
+      return
+    }
     // The adapter moved the acknowledged breakpoint to a place the owner refuses: the earlier receipt no longer stands.
     if (!this.acknowledgesPosition(breakpoint)) {
       registration.refusedAt = verifiedAt

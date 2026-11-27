@@ -219,3 +219,130 @@ test('a node breakpoint stop without hit ids on an armed stop line stays the lea
   assert.equal(first.declaredStopIndex, undefined)
   await debug.release()
 })
+
+/** The stops of one line that holds two declared stops, at columns 3 and 24. */
+const SAME_LINE_STOPS = [
+  { line: 14, column: 3 },
+  { line: 14, column: 24 },
+]
+
+/** Arms the given stops in the harness's stop file and returns what arming answered. */
+function armStopsAt(
+  debug: NodeServerDebugger,
+  stops: Array<{ line: number; column: number }>,
+) {
+  return debug.armStops(
+    stops.map((stop, index) => ({
+      declaredStopIndex: index,
+      path: 'src/routes/users.ts',
+      file: STOP_FILE,
+      line: stop.line,
+      column: stop.column,
+      hash: 'a'.repeat(64),
+      inspections: [],
+    })),
+    AbortSignal.timeout(5_000),
+  )
+}
+
+// Value: protects=an ID-less Bun hit on a line that holds two declared stops is attributed by its column, so the second stop's hit is the second stop; fails_when=the hit goes to the first stop of the line (file and line alone decide), so the run captures the wrong stop; seam=the editor harness reporting an ID-less breakpoint stop at column 24; no_claim=js-debug's real column for a paused frame
+test('a Bun breakpoint stop without hit ids at the second column of a shared line is the second declared stop', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    firstStop: {
+      reason: 'breakpoint',
+      frame: { file: STOP_FILE, line: 14, column: 24 },
+    },
+  })
+  const { debug } = editor.createDebugger(SAME_LINE_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armStopsAt(debug, SAME_LINE_STOPS)
+  // Act
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  const first = await nextPause()
+  // Assert
+  assert.equal(first.declaredStopIndex, 1)
+  await debug.release()
+})
+
+// Value: protects=an ID-less Bun hit on a shared line at a column that matches neither declared stop stays the learner's pause; fails_when=the hit is guessed as the first stop of the line; seam=the editor harness reporting an ID-less stop at column 10; no_claim=which columns learners break on
+test('a Bun breakpoint stop without hit ids at a column matching neither stop of a shared line stays the learner pause', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    firstStop: {
+      reason: 'breakpoint',
+      frame: { file: STOP_FILE, line: 14, column: 10 },
+    },
+  })
+  const { debug } = editor.createDebugger(SAME_LINE_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armStopsAt(debug, SAME_LINE_STOPS)
+  // Act
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  const first = await nextPause()
+  // Assert
+  assert.equal(first.declaredStopIndex, undefined)
+  await debug.release()
+})
+
+// Value: protects=a Bun stop whose registration the adapter verified with a line but no column counts as bound at that line; fails_when=a line-only verified reply reads as unbound, so the run refuses a stop that binds; seam=the editor harness answering the registration without a column; no_claim=which editors drop the column
+test('a Bun stop verified with a line and no column is armed as bound at that line', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: (requested, id) => ({
+      id,
+      verified: true,
+      line: requested.line,
+    }),
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  // Act
+  const armed = await armStopsAt(debug, [{ line: 14, column: 3 }])
+  // Assert
+  assert.equal(armed[0]?.boundLine, 14)
+  await debug.release()
+})
+
+// Value: protects=a Bun stop whose registration is pending at first and verified before the arming deadline counts as bound; fails_when=a pending reply is asked once and then read as unbound, so a stop that binds a moment later is refused; seam=the editor harness's pending reply and a later breakpoint event; no_claim=how long js-debug takes to verify
+test('a Bun stop pending at first and verified before the arming deadline is armed as bound', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: (_requested, id) => ({ id, verified: false }),
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const arming = armStopsAt(debug, [{ line: 14, column: 3 }])
+  // Act
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  editor.adapter.breakpointNews({
+    id: OWNED_IDS[0]!,
+    verified: true,
+    line: 14,
+    column: 3,
+  })
+  const armed = await arming
+  // Assert
+  assert.equal(armed[0]?.boundLine, 14)
+  await debug.release()
+})
+
+// Value: protects=a Bun stop the adapter withdrew after verifying it is read as unbound by the re-read the run makes before it is prepared; fails_when=the re-read still reports the stop's earlier verified line; seam=the editor harness's unverified breakpoint event after arming; no_claim=when js-debug withdraws a binding
+test('a Bun stop withdrawn by the adapter after arming is reported unbound by the re-read', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  await armTwoStops(debug)
+  // Act
+  editor.adapter.breakpointNews({ id: OWNED_IDS[0]!, verified: false })
+  const current = plain(debug.currentlyBoundStops?.())
+  // Assert
+  assert.deepEqual(current, [
+    { declaredStopIndex: 0 },
+    { declaredStopIndex: 1, boundLine: 20 },
+  ])
+  await debug.release()
+})

@@ -47,6 +47,11 @@ export async function editorHarness(
     }>
     /** How long after js-debug's root session the target child session starts; the root is announced first, as in the real tree. */
     childStartDelayMs?: number
+    /** Replaces the adapter's registration reply for one owned breakpoint (its verified line and column, or a pending one); the id is the adapter's. */
+    breakpointReply?: (
+      requested: { line: number; column: number },
+      id: number,
+    ) => DebugProtocol.Breakpoint
     /** Runs the real {@link captureReplayDebugSnapshot} over the Local scope offering these variables, instead of the empty snapshot stand-in. */
     localVariables?: DebugProtocol.Variable[]
   } = {},
@@ -225,12 +230,18 @@ export async function editorHarness(
         for (const breakpoint of added) {
           const id = OWNED_IDS[armed++]!
           const requested = breakpoint.location.range.start
-          adapterReplies.set(breakpoint, {
-            id,
-            verified: true,
-            line: options.verifiedLine ?? requested.line + 1,
-            column: requested.character + 1,
-          })
+          adapterReplies.set(
+            breakpoint,
+            options.breakpointReply?.(
+              { line: requested.line + 1, column: requested.character + 1 },
+              id,
+            ) ?? {
+              id,
+              verified: true,
+              line: options.verifiedLine ?? requested.line + 1,
+              column: requested.character + 1,
+            },
+          )
           editorBreakpoints.push(breakpoint)
         }
         if (tracker) queueMicrotask(replaceBreakpoints)
@@ -418,6 +429,14 @@ export async function editorHarness(
         ...(answer.rejected
           ? { message: 'the thread is not paused' }
           : { body: { allThreadsContinued: true } }),
+      })
+    },
+    /** The adapter's later news about a breakpoint it acknowledged (a DAP `breakpoint` event). */
+    breakpointNews(breakpoint: DebugProtocol.Breakpoint): void {
+      tracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'breakpoint',
+        body: { reason: 'changed', breakpoint },
       })
     },
     /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread. */

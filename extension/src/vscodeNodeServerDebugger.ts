@@ -29,6 +29,7 @@ import {
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession'
@@ -410,10 +411,57 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       armedStops.push({
         declaredStopIndex: target.declaredStopIndex,
         breakpointId: receipt.breakpointId,
-        boundLine: breakpoint.verifiedPlace(session)?.line,
+        boundLine: await this.boundLineOf(breakpoint, session, signal),
       })
     }
     return armedStops
+  }
+
+  /**
+   * Reads the line a freshly armed stop is bound to. A Bun run arms once the server listens, so a registration still pending is waited for until it verifies or the arming deadline passes; a node run arms before its files load and takes a pending stop as it is.
+   * @param breakpoint - The armed stop's breakpoint.
+   * @param session - The bound session.
+   * @param signal - The arming's cancellation and deadline.
+   * @returns The verified line (a reply without a column counts); `undefined` while the stop is unverified.
+   * @throws The abort reason when the run itself ended the arming (an exit or a failure); the arming deadline is no throw, it leaves the stop unbound.
+   * @example await this.boundLineOf(breakpoint, session, signal) // => 14
+   */
+  private async boundLineOf(
+    breakpoint: OwnedRepositoryBreakpoint,
+    session: vscode.DebugSession,
+    signal: AbortSignal,
+  ): Promise<number | undefined> {
+    const now = breakpoint.boundPlace(session)?.line
+    if (now !== undefined || this.runtime !== 'bun') return now
+    try {
+      const place = await waitUntil(
+        () => breakpoint.boundPlace(session),
+        'the arming of a declared stop',
+        NODE_TEST_ATTACH_TIMEOUT_MS,
+        signal,
+      )
+      return place.line
+    } catch (error) {
+      // The arming deadline (the wait's own budget or the signal's timeout) leaves the stop unbound; any other end belongs to the run.
+      const isDeadline =
+        error instanceof WaitTimeoutError ||
+        (error instanceof DOMException && error.name === 'TimeoutError')
+      if (isDeadline) return undefined
+      throw error
+    }
+  }
+
+  /**
+   * Re-reads where every armed stop stands now, so the run can refuse a stop the adapter withdrew after it verified it; called by the run right before it is marked prepared.
+   * @returns One entry per armed stop; `boundLine` is absent for a stop that is no longer verified.
+   * @example this.currentlyBoundStops() // => [{ declaredStopIndex: 0, boundLine: 14 }, { declaredStopIndex: 1 }]
+   */
+  currentlyBoundStops(): NodeServerArmedStop[] {
+    const session = this.boundSession()
+    return this.armed.map(({ target, breakpoint }) => ({
+      declaredStopIndex: target.declaredStopIndex,
+      boundLine: breakpoint.boundPlace(session)?.line,
+    }))
   }
 
   /** Waits for the adapter's acknowledgement of one stop; a stop it moved to another place is refused with the sentence of both positions. */
@@ -572,21 +620,49 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   ): number | undefined {
     if (stop.reason !== 'breakpoint') return undefined
     const hitIds = stop.hitBreakpointIds
-    const isJudgedByPlace = this.runtime === 'bun' && !hitIds?.length
-    if (!hitIds && !isJudgedByPlace) return undefined
+    // A Bun stop without ids is judged by its place alone, which always needs the frame.
+    if (this.runtime === 'bun' && !hitIds?.length)
+      return frame ? this.armedStopAtFrame(session, frame) : undefined
+    if (!hitIds) return undefined
     for (const { target, breakpoint } of this.armed) {
       const id = breakpoint.acknowledgedId(session)
-      // An unbound stop is never hit; with ids, only the stop whose id the adapter names can be.
-      if (id === undefined || (!isJudgedByPlace && !hitIds?.includes(id)))
-        continue
+      // An unbound stop is never hit; only the stop whose id the adapter names can be.
+      if (id === undefined || !hitIds.includes(id)) continue
       const line = breakpoint.verifiedPlace(session)?.line ?? target.line
       const isAtStop =
         frame?.source?.path === target.file && frame.line === line
-      // Without a frame only the ids decide (the entry check); a judgment by place always needs the frame.
-      if (isAtStop || (!frame && !isJudgedByPlace))
-        return target.declaredStopIndex
+      // Without a frame only the ids decide (the entry check).
+      if (isAtStop || !frame) return target.declaredStopIndex
     }
     return undefined
+  }
+
+  /**
+   * Finds the one armed stop an ID-less Bun pause is, by its place: the stop's file, its verified line and, when the verified place has a column, that column.
+   * Why it exists: two stops may share a line (14:3 and 14:24) and a pause that names no id cannot be told between them by the line alone; an ambiguous or unmatched pause stays the learner's. Only a stop with a current verified binding is a candidate.
+   * Called by {@link ownedHitIndexOf}.
+   * @param session - The bound session.
+   * @param frame - The top frame of the pause.
+   * @returns The declared stop index when exactly one armed stop matches; `undefined` for none or several.
+   * @example this.armedStopAtFrame(session, { line: 14, column: 24, source: { path: file } }) // => 1 for stops at 14:3 and 14:24
+   */
+  private armedStopAtFrame(
+    session: vscode.DebugSession,
+    frame: DebugProtocol.StackFrame,
+  ): number | undefined {
+    const matches = this.armed.filter(({ target, breakpoint }) => {
+      const place = breakpoint.boundPlace(session)
+      return (
+        place !== undefined &&
+        frame.source?.path === target.file &&
+        frame.line === place.line &&
+        // A verified place without a column matches any column of its line.
+        (place.column === undefined || frame.column === place.column)
+      )
+    })
+    return matches.length === 1
+      ? matches[0]?.target.declaredStopIndex
+      : undefined
   }
 
   /** Names the top frame for an event: the repository-relative path inside the repository, the file name alone outside it. */

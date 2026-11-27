@@ -93,6 +93,10 @@ export interface NodeServerDebugger {
     signal: AbortSignal,
   ): Promise<NodeServerArmedStop[]>
   /**
+   * Re-reads where every armed stop stands now; a stop whose binding was withdrawn after arming has no `boundLine`. Implemented by the editor's debugger, which the run asks right before it marks a Bun launch prepared.
+   */
+  currentlyBoundStops?(): NodeServerArmedStop[]
+  /**
    * Continues the entry pause exactly once; an owned hit that comes first is no entry pause and is reported as a pause instead.
    * With `{ entryPause: false }` (a Bun launch, which has no paused entry) nothing is continued: the debugger only starts reporting stops.
    */

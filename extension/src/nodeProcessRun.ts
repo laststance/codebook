@@ -274,6 +274,8 @@ export class NodeProcessRun {
   /** A Bun launch's declared stops, held from the attach until {@link armDeferredStops} arms them once the server listens. */
   private deferredStops?: NodeServerStopTarget[]
   private prepared = false
+  /** True while {@link armDeferredStops} runs: a server exit then fails the start at once, as it does after the run is prepared. */
+  private armingDeferredStops = false
   private currentLifecycle: NodeProcessLifecycle = 'live'
   private stopAttempt?: Promise<void>
   private failedStops = 0
@@ -564,23 +566,61 @@ export class NodeProcessRun {
       this.abort.signal,
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
     ])
+    // An exit of the server from here on fails the start promptly instead of waiting for the arming deadline.
+    this.armingDeferredStops = true
     const armed = await this.step('arming the declared stops', async () => {
-      const answered = await this.requireDebugger().armStops(stops, signal)
+      const server = this.server
+      const exitBefore = server?.exited()
+      if (server && exitBefore)
+        throw serverExitedError(
+          exitBefore,
+          server.output(),
+          this.input.workspace,
+        )
+      const debug = this.requireDebugger()
+      const answered = await debug.armStops(stops, signal)
       // The server already runs its code, so a stop the debugger left unverified now never binds: the run ends before its request.
-      const unbound = stops.find((stop) =>
-        answered.some(
-          (arm) =>
-            arm.declaredStopIndex === stop.declaredStopIndex &&
-            arm.boundLine === undefined,
-        ),
-      )
-      if (unbound) throw new Error(unboundBunStopText(unbound))
+      this.assertEveryStopBound(stops, answered)
+      // A stop the adapter withdrew after it verified it is read again right before the run is marked prepared.
+      const current = debug.currentlyBoundStops?.()
+      if (current) this.assertEveryStopBound(stops, current)
+      // A server that exited meanwhile must not be published as ready.
+      const exitAfter = server?.exited()
+      if (server && exitAfter)
+        throw serverExitedError(
+          exitAfter,
+          server.output(),
+          this.input.workspace,
+        )
       return answered
+    }).finally(() => {
+      this.armingDeferredStops = false
     })
     this.applyBoundLines(armed)
     this.record('node-server.stops-armed-after-listen', {
       stops: armed.length,
     })
+  }
+
+  /**
+   * Refuses a late-armed stop that has no bound line, with the sentence that names it; called by {@link armDeferredStops} for the arming's answer and again for the re-read.
+   * @param stops - The declared stops.
+   * @param answered - The debugger's answer per stop.
+   * @throws The unbound-stop sentence ({@link unboundBunStopText}) for the first stop without a bound line.
+   * @example this.assertEveryStopBound(stops, [{ declaredStopIndex: 0, boundLine: 14 }])
+   */
+  private assertEveryStopBound(
+    stops: NodeServerStopTarget[],
+    answered: NodeServerArmedStop[],
+  ): void {
+    const unbound = stops.find((stop) =>
+      answered.some(
+        (arm) =>
+          arm.declaredStopIndex === stop.declaredStopIndex &&
+          arm.boundLine === undefined,
+      ),
+    )
+    if (unbound) throw new Error(unboundBunStopText(unbound))
   }
 
   /**
@@ -783,7 +823,12 @@ export class NodeProcessRun {
    * @param exit - How the process ended.
    */
   onServerExit(exit: NodeServerExit): void {
-    if (this.currentLifecycle !== 'live' || !this.prepared || !this.server)
+    // A Bun launch's late arming counts as prepared for an exit: the start fails at once.
+    if (
+      this.currentLifecycle !== 'live' ||
+      !(this.prepared || this.armingDeferredStops) ||
+      !this.server
+    )
       return
     this.failRun(
       serverExitedError(exit, this.server.output(), this.input.workspace),
