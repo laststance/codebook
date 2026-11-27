@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { Worker } from 'node:worker_threads'
+import {
+  MessageChannel,
+  type MessagePort,
+  receiveMessageOnPort,
+  Worker,
+} from 'node:worker_threads'
 
 import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
 
@@ -49,26 +54,36 @@ type ServedInTurns = { page: number; ordinary: number }
  * Arms the serving worker's watchdog for startup, each calibration, and each measured call.
  * The parent owns the timer so it can stop the worker even while a serving call is synchronous.
  * @param stop - Terminates the worker when the current step exhausts its budget.
+ * @param updates - The worker's calibration port. A queued update supersedes the expired interval even when its event has not been dispatched.
  * @returns Controls for starting the next step and clearing the timer on worker exit.
  * @example
  * const deadline = servingDeadline(() => void worker.terminate())
  * deadline.arm(150)
  * deadline.clear()
  */
-function servingDeadline(stop: () => void) {
-  let timer = setTimeout(stop, FILTER_DEADLINE_MS)
+function servingDeadline(stop: () => void, updates?: MessagePort) {
+  const onDeadline = (): void => {
+    // Timers can run before message events when the parent has been busy.
+    const queued = updates && receiveMessageOnPort(updates)
+    if (queued) arm(queued.message as number | undefined)
+    else stop()
+  }
+  let timer = setTimeout(onDeadline, FILTER_DEADLINE_MS)
+  function arm(ordinaryMs?: number): void {
+    clearTimeout(timer)
+    timer = setTimeout(
+      onDeadline,
+      ordinaryMs === undefined
+        ? FILTER_DEADLINE_MS
+        : PAGE_DEADLINE_RATIO * ordinaryMs,
+    )
+  }
+  updates?.on('message', arm)
   return {
-    arm(ordinaryMs?: number): void {
-      clearTimeout(timer)
-      timer = setTimeout(
-        stop,
-        ordinaryMs === undefined
-          ? FILTER_DEADLINE_MS
-          : PAGE_DEADLINE_RATIO * ordinaryMs,
-      )
-    },
+    arm,
     clear(): void {
       clearTimeout(timer)
+      updates?.close()
     },
   }
 }
@@ -95,6 +110,7 @@ async function servingTimes(
 ): Promise<Record<string, ServedInTurns | 'unfinished'>> {
   const times: Record<string, ServedInTurns | 'unfinished'> =
     Object.fromEntries(Object.keys(pages).map((name) => [name, 'unfinished']))
+  const { port1, port2 } = new MessageChannel()
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
 const serve = require(workerData.module)[workerData.exportName]
@@ -110,13 +126,17 @@ for (const [name, page] of Object.entries(workerData.pages)) {
     () => serveOnce(page),
     workerData.runs,
     undefined,
-    (ordinaryMs) => parentPort.postMessage({ ordinaryMs }),
+    (ordinaryMs) => workerData.calibrations.postMessage(ordinaryMs),
   )
+  workerData.calibrations.postMessage(undefined)
   parentPort.postMessage({ name, page: measured, ordinary })
-}`,
+}
+workerData.calibrations.close()`,
     {
       eval: true,
+      transferList: [port2],
       workerData: {
+        calibrations: port2,
         module: join(__dirname, '..', 'utils', `${moduleName}.js`),
         exportName,
         timing: join(__dirname, 'utils', 'shortestTimesInTurns.js'),
@@ -131,23 +151,10 @@ for (const [name, page] of Object.entries(workerData.pages)) {
   await new Promise<void>((resolve) => {
     const deadline = servingDeadline(() => {
       void worker.terminate()
+    }, port1)
+    worker.on('message', (message: { name: string } & ServedInTurns) => {
+      times[message.name] = { page: message.page, ordinary: message.ordinary }
     })
-    worker.on(
-      'message',
-      (
-        message:
-          | { ordinaryMs: number | undefined }
-          | ({ name: string } & ServedInTurns),
-      ) => {
-        // Each calibration has its own finite budget. Its result sets the next measured call's budget.
-        if ('ordinaryMs' in message) deadline.arm(message.ordinaryMs)
-        else
-          times[message.name] = {
-            page: message.page,
-            ordinary: message.ordinary,
-          }
-      },
-    )
     worker.once('exit', () => {
       deadline.clear()
       resolve()
@@ -273,6 +280,36 @@ test('the Wiki timing worker stops a stuck ordinary-page calibration and clears 
   // Assert
   assert.equal(beforeLimit, 0)
   assert.equal(atLimit, 1)
+  assert.equal(stops, 1)
+})
+
+// Value: protects=a healthy worker when the parent event loop is busy; fails_when=an expired timer ignores the next phase already in its port; seam=one real message channel and a scripted parent clock; no_claim=real reader throughput.
+test('a queued Wiki worker calibration takes effect before the old deadline can stop it', (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const { port1, port2 } = new MessageChannel()
+  let stops = 0
+  const deadline = servingDeadline(() => {
+    stops += 1
+  }, port1)
+  context.after(() => {
+    deadline.clear()
+    port1.close()
+    port2.close()
+  })
+
+  // Act: the updated measurement is queued while the parent is unable to dispatch its message event.
+  deadline.arm(5)
+  port2.postMessage(40)
+  context.mock.timers.tick(50)
+  const stopsAtPreviousDeadline = stops
+  context.mock.timers.tick(399)
+  const stopsBeforeCurrentDeadline = stops
+  context.mock.timers.tick(1)
+
+  // Assert
+  assert.equal(stopsAtPreviousDeadline, 0)
+  assert.equal(stopsBeforeCurrentDeadline, 0)
   assert.equal(stops, 1)
 })
 
