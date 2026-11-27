@@ -35,6 +35,9 @@ async function freePort(): Promise<number> {
   return address.port
 }
 
+/** How long the forked helper's reply may take before the test fails; a helper that waits for a debugger never answers. */
+const FORKED_HELPER_REPLY_BUDGET_MS = 10_000
+
 /** How long one readiness GET may take before it is abandoned and tried again. */
 const HEALTH_REQUEST_TIMEOUT_MS = 2_000
 
@@ -72,6 +75,8 @@ test('a Bun server launch announces its inspector, passes the ownership probe, l
     [
       "import { createServer } from 'node:http'",
       '',
+      // Observable proof that the entry's module body ran, which only happens after the debugger releases the wait.
+      "process.stdout.write('entry-started\\n')",
       `const port: number = ${port}`,
       'createServer((_request, response) => {',
       "  const status: string = 'ok'",
@@ -106,6 +111,8 @@ test('a Bun server launch announces its inspector, passes the ownership probe, l
       AbortSignal.timeout(10_000),
       () => undefined,
     )
+    // The entry must still be held back now that the identity probe is answered: the wait is what the debugger releases.
+    const outputBeforeRelease = server.output()
     await inspector.request('Runtime.runIfWaitingForDebugger', undefined)
     const health = await waitUntil(
       () => healthOf(port),
@@ -115,6 +122,8 @@ test('a Bun server launch announces its inspector, passes the ownership probe, l
     const connected = inspector
     const exit = await server.close(async () => connected.close())
     // Assert
+    assert.equal(outputBeforeRelease.includes('entry-started'), false)
+    assert.match(server.output(), /entry-started/)
     assert.match(endpoint, /^ws:\/\/127\.0\.0\.1:[1-9]\d*\/[a-f\d-]{36}$/)
     assert.deepEqual(identity, {
       pid: server.pid,
@@ -138,6 +147,79 @@ test('a Bun server launch announces its inspector, passes the ownership probe, l
       loader: 'bun',
       bunVersion: launch.loader.version,
     })
+  } finally {
+    inspector?.close()
+    await server.close().catch(() => undefined)
+  }
+})
+
+// Value: protects=a Bun server that forks a helper still answers: the helper (which inherits the preload on Bun 1.4.5) must not open a second inspector and wait for a debugger nobody answers; fails_when=a forked child waits for a debugger so the request never gets the helper's reply, or a second `Debugger listening on` line appears; why_new=Cycle 0152 /ship pass 1 defect G; seam=a real Bun and `child_process.fork()` with default options; no_claim=js-debug's attach to the launched process
+test('a Bun server that forks a helper answers with the helper reply and announces one inspector', async (t) => {
+  // Arrange
+  const workspace = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-bun-fork-')),
+  )
+  t.after(() => removeTestFolder(workspace))
+  const port = await freePort()
+  await writeFile(
+    join(workspace, 'helper.ts'),
+    [
+      "process.on('message', () => {",
+      "  process.send?.('helper-reply')",
+      '  process.exit(0)',
+      '})',
+      '',
+    ].join('\n'),
+  )
+  await writeFile(
+    join(workspace, 'server.ts'),
+    [
+      "import { fork } from 'node:child_process'",
+      "import { createServer } from 'node:http'",
+      "import { join } from 'node:path'",
+      '',
+      `const port: number = ${port}`,
+      'createServer((_request, response) => {',
+      "  const helper = fork(join(import.meta.dirname, 'helper.ts'))",
+      "  helper.on('message', (reply) => response.end(String(reply)))",
+      "  helper.send('go')",
+      "}).listen(port, '127.0.0.1')",
+      '',
+    ].join('\n'),
+  )
+  const launch = await resolveNodeServerLaunch(workspace, {
+    packageRoot: '.',
+    entry: 'server.ts',
+    loader: 'bun',
+  })
+  const server = await launchNodeServer(
+    {
+      ...launch,
+      workspace,
+      node: { executable: process.execPath, version: process.versions.node },
+    },
+    () => undefined,
+  )
+  let inspector: Cdp | undefined
+  try {
+    // Act
+    const endpoint = await server.inspectorEndpoint(AbortSignal.timeout(20_000))
+    inspector = await Cdp.connect(endpoint, () => undefined)
+    await inspector.request('Runtime.runIfWaitingForDebugger', undefined)
+    const reply = await waitUntil(
+      () => healthOf(port),
+      'forked helper reply',
+      FORKED_HELPER_REPLY_BUDGET_MS,
+    )
+    const connected = inspector
+    await server.close(async () => connected.close())
+    // Assert
+    assert.equal(reply, 'helper-reply')
+    // Bun may repeat the one inspector's line itself, so count distinct endpoints, not lines.
+    const announcedEndpoints = new Set(
+      server.output().match(/Debugger listening on (ws:\/\/\S+)/g),
+    )
+    assert.equal(announcedEndpoints.size, 1)
   } finally {
     inspector?.close()
     await server.close().catch(() => undefined)
