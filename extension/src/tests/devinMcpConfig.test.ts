@@ -32459,6 +32459,57 @@ test('A pre-update config a backup puts back right after a refresh published the
   assert.equal(next.status, 'refreshed')
 })
 
+for (const moment of [
+  'receipt publication',
+  'setup record retirement',
+] as const) {
+  test(`A first setup whose config changes during ${moment} keeps its recovery record and lets the learner retry`, async (context) => {
+    // Value: protects=setup reports success only for the entry it published and a retry preserves other servers; fails_when=a receipt alone permits retirement or setup overwrites restored settings; no_claim=a real sync tool or a change after the final look.
+    // Arrange
+    const { home, storage, configPath } = await arrange(context)
+    const restored = '{"mcpServers":{"notes":{"command":"notes"}}}\n'
+    await writeConfig(configPath, restored)
+    const folder = join(storage, 'devin-mcp')
+    const pendingPath = join(folder, 'pending.json')
+    const receiptPath = join(folder, 'receipt.json')
+    const restoreOn =
+      moment === 'receipt publication'
+        ? receiptPath
+        : `${pendingPath}.codebook-dropping`
+    let pendingAtPublication: string | undefined
+    const restoring = await loadWithAfterRename((_from, to) => {
+      if (to === receiptPath)
+        pendingAtPublication = readFileSync(pendingPath, 'utf8')
+      // The second case changes the config after the ordinary post-receipt check, while the record moves to its dropping name.
+      if (pendingAtPublication && to === restoreOn)
+        swapFile(configPath, restored)
+    })
+
+    // Act
+    await assert.rejects(
+      restoring.writeManagedDevinMcpEntry(storage, ENTRY, home),
+      {
+        message: `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+      },
+    )
+
+    // Assert
+    assert.ok(pendingAtPublication)
+    assert.equal(await readFile(configPath, 'utf8'), restored)
+    assert.equal(await readFile(pendingPath, 'utf8'), pendingAtPublication)
+    const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+    assert.equal(retry.status, 'installed')
+    assert.deepEqual(
+      JSON.parse(await readFile(configPath, 'utf8')).mcpServers,
+      {
+        notes: { command: 'notes' },
+        codebook: ENTRY,
+      },
+    )
+    assert.equal(existsSync(pendingPath), false)
+  })
+}
+
 test('A removal whose config and record a backup puts back in the gap of the record’s move aside refuses instead of reporting the entry removed', async (context) => {
   // Value: protects=a removal never reports success when a backup restores the entry while its record moves aside and the move takes the restored file, so the conflict exit that puts that file back rechecks the caller's end state before answering kept, exactly as every other non-delete exit of the delete does, and the removal refuses as one that did not last instead of reporting the entry removed beside an entry that is back (Cycle 0149 round-5 MINOR-5103); fails_when=the removal resolves or refuses with another sentence, the receipt bytes or the restored config change, or the replacement receipt's inode does not survive; no_claim=a real backup tool (the loaded module swaps the config with its entry and a copy of the receipt in once, inside the move's link of receipt.json to its dropping name, right before that link runs, so the move takes the copy), and a swap in the syscall gap after the move's proof at the dropping name
   // Arrange

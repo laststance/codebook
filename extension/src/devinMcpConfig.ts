@@ -10383,6 +10383,7 @@ async function publishEntry(
 /**
  * Writes the receipt of a publish and words what the publish left; the last steps of {@link publishEntry}, once the config stands.
  * A first setup never leaves an entry without a receipt: when that receipt cannot be written, or `receipt.json` no longer shows it once its write's awaited cleanup of the staged name ended ({@link publishedReceiptCheck}), its entry is taken out again ({@link takeOutUnrecordedEntry}); an update keeps its own record of the change and what stands at `receipt.json` (the old receipt while nothing was written there), and rejects. When another program kept the completed record from being written ({@link Published.recordConflict}), the receipt is written only while the config is still the file this setup published with its entry, and the copies are worded as the record that stands leaves them ({@link settleRecordConflict}). Once the receipt stands, a delete of the setup's own record that Codebook's own step at the record's dropping name refuses ({@link DroppingNameConflictError}) is no failure of that receipt: the entry stays, and the success says where the record stands in that refusal's own words, because both names stay and the next run stops at them; any other conflict of that delete leaves a stale record the next run reads first, as before.
+ * A first setup whose config changes after the receipt was written reports the change and leaves its recovery record for the next run.
  * @param context - The run.
  * @param written - The receipt this publish writes.
  * @param published - What the publish reported ({@link Published}).
@@ -10406,26 +10407,38 @@ async function recordPublishedEntry(
     : await settlePublishedConfig(context, written, published)
   // Codebook's own step at the record's dropping name can refuse the delete of this setup's record after the receipt stands: both names then stay and the next run stops at them, so the success names them in that refusal's own words instead of reporting nothing.
   let droppingConflict: DroppingNameConflictError | undefined
+  let receiptWasWritten = false
   try {
     await writeReceipt(context, written, settled.configStill)
-    // The receipt must still stand as its write published it once that write's awaited cleanup of its staged name ended: the setup's own record, which may go next, is the only other record of this entry.
-    const assertReceiptLeft = await publishedReceiptCheck(
-      context,
-      receiptConflictError,
+    receiptWasWritten = true
+    // A first setup can report installation only while the config still holds the entry it published and the receipt still records it.
+    const assertPublished = bothLooks(
+      await publishedReceiptCheck(context, receiptConflictError),
+      isFirst ? settled.configStill : undefined,
     )
-    await lookAheadAt(assertReceiptLeft.names)
-    assertReceiptLeft.assert()
-    // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it; one that goes here goes only while the receipt still stands.
-    if (keptLeft.length === 0 && !isRetiredKept)
+    await lookAndAssertStill(assertPublished)
+    // Keep records that name retained copies; otherwise check the same evidence throughout retirement.
+    if (keptLeft.length === 0 && !isRetiredKept) {
       await dropPending(context, {
-        assertStill: assertReceiptLeft,
+        assertStill: assertPublished,
         onConflict: 'throw',
       }).catch((error: unknown) => {
         // The dropping-name refusal is said with the success below, because the entry is installed and recorded once the receipt stands; another program's conflict leaves a stale record the next run reads first, as before. Anything else is the receipt's own look, which the caller answers as a receipt-write failure, as before.
         if (error instanceof DroppingNameConflictError) droppingConflict = error
         else if (!(error instanceof JournalConflictError)) throw error
       })
+      // A failed cleanup can leave the record standing without reaching its last check.
+      if (isFirst && context.journalVersion?.current)
+        await lookAndAssertStill(assertPublished)
+    }
   } catch (cause) {
+    // This receipt was published. Leave the changed config and recovery records for the next run.
+    if (receiptWasWritten && cause instanceof PublishUncoveredError)
+      throw new Error(
+        changedWhileWorking(context).message +
+          keptCopiesSentence(settled.copies.asTracked),
+        { cause },
+      )
     // An update keeps its own record of the change and rejects as before; a first setup's take-back decides from the config as it stands then.
     if (!isFirst) throw cause
     throw await takeOutUnrecordedEntry(
