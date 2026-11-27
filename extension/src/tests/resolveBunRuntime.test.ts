@@ -387,7 +387,10 @@ test('the identity probe ends a wrapper and the child it started at the deadline
   let childPid = 0
   try {
     // Act
-    const failure = runBunProgram(fakeBun, [], 2_000)
+    // The assertion starts first, so a rejection while the pid file is awaited is never unhandled.
+    const failure = assert.rejects(runBunProgram(fakeBun, [], 2_000), {
+      code: 'ETIMEDOUT',
+    })
     // The wrapper must have started its child before the deadline can mean anything.
     childPid = await waitUntil(
       async () =>
@@ -396,7 +399,7 @@ test('the identity probe ends a wrapper and the child it started at the deadline
       10_000,
     )
     // Assert
-    await assert.rejects(failure, { code: 'ETIMEDOUT' })
+    await failure
     assert.ok(childPid > 1)
     const waitDeadline = Date.now() + 5_000
     let alive = true

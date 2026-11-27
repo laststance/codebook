@@ -62,9 +62,6 @@ export const BUN_VERSION_READ_TIMEOUT_MS = 5_000
 /** The most output (bytes) the Bun identity probe may print before it is ended; its real answer is one short line. */
 export const BUN_VERSION_READ_MAX_OUTPUT_BYTES = 1_048_576
 
-/** The longest stopped-file text (characters) the Bun closure ownership scan reads; a longer or minified file copies no closure scope, so the quadratic scans cannot stall a stop. */
-export const BUN_CLOSURE_CLASSIFICATION_MAX_SOURCE_CHARS = 512_000
-
 /** The name prefix of the private, empty working folder the Bun identity read runs in (created inside the OS temp folder, removed after the read). */
 export const BUN_PROBE_FOLDER_PREFIX = 'codebook-bun-identity-'
 
@@ -3096,8 +3093,9 @@ export const PRESENTATION_SETTLE_CEILING_MS =
   REPLAY_DEBUG_INSPECTION_GRACE_MS +
   PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500
-/** One shared budget for every `variables` read that classifies a Bun stop's closures, about the snapshot's own budget ({@link NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}), so slow answers cannot hold the live handler for long. */
-export const BUN_SCOPE_CLASSIFICATION_TIMEOUT_MS = 1_500
+/** The limitation a Bun stop's saved replay records instead of the top frame's scope values: Bun reports a function's own variables in the same kind of scope as an enclosing function's, so only declared inspections are saved. */
+export const BUN_SCOPES_NOT_SAVED_LIMITATION =
+  "A Bun stop's scopes are not saved: Bun reports a function's own variables in the same kind of scope as an enclosing function's, so only the stop's declared inspections are saved."
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64
 export const NODE_REPLAY_DEBUG_MAX_DEPTH = 2

@@ -63,10 +63,6 @@ export async function editorHarness(
       frameName?: string
       scopes: DebugProtocol.Scope[]
       variables: Record<number, DebugProtocol.Variable[]>
-      /** What every `scopes` read after the first one answers (the adapter answering differently on a second read); absent, every read answers `scopes`. */
-      laterScopes?: DebugProtocol.Scope[]
-      /** Runs before each `variables` answer; it may wait or throw, as a slow or failing adapter does. */
-      beforeVariables?: (variablesReference: number) => Promise<void>
     }
   } = {},
 ) {
@@ -95,7 +91,6 @@ export async function editorHarness(
   let terminate: ((session: vscode.DebugSession) => void) | undefined
   let stopRequests = 0
   let requestSequence = 100
-  let scopesReads = 0
   let currentFrame: FrameAt | undefined
   // The file the declared stops lie in; a test that captures names a real one.
   let sourceFile = STOP_FILE
@@ -227,20 +222,13 @@ export async function editorHarness(
             : [],
         } satisfies DebugProtocol.StackTraceResponse['body']
       if (command === 'scopes') {
-        scopesReads += 1
         return {
-          scopes: (scopesReads > 1
-            ? options.scriptedScopes?.laterScopes
-            : undefined) ??
-            options.scriptedScopes?.scopes ?? [
-              { name: 'Local', variablesReference: 1, expensive: false },
-            ],
+          scopes: options.scriptedScopes?.scopes ?? [
+            { name: 'Local', variablesReference: 1, expensive: false },
+          ],
         } satisfies DebugProtocol.ScopesResponse['body']
       }
       if (command === 'variables' && options.scriptedScopes) {
-        await options.scriptedScopes.beforeVariables?.(
-          (arguments_ as { variablesReference: number }).variablesReference,
-        )
         return {
           variables:
             options.scriptedScopes.variables[

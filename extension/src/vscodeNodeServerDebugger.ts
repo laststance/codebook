@@ -5,12 +5,10 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import * as vscode from 'vscode'
 
 import {
-  BUN_SCOPE_CLASSIFICATION_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_MAX_DEPTH,
   NODE_REPLAY_DEBUG_MAX_FRAMES,
   NODE_REPLAY_DEBUG_MAX_VARIABLES,
-  REPLAY_DEBUG_MAX_SCOPES,
   NODE_SERVER_SESSION_NAME_PREFIX,
   NODE_TEST_ATTACH_TIMEOUT_MS,
 } from './constants'
@@ -36,24 +34,14 @@ import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession'
 import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
-import {
-  captureReplayDebugSnapshot,
-  classificationLimitationOf,
-} from './utils/captureReplayDebugSnapshot'
+import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
-import {
-  leadingBlockPositionsOf,
-  ownClosureScopePositionsOf,
-} from './utils/ownClosureScopePositionsOf'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
-import { redactSecretText } from './utils/redactSecretText'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
-import { stoppedFunctionDeclaredNamesOf } from './utils/stoppedFunctionDeclaredNamesOf'
 import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
-import { stripTerminalControls } from './utils/stripTerminalControls'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
 
@@ -833,21 +821,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     )) as DebugProtocol.ScopesResponse['body']
     // The stopped module's imports tell which export each imported name reads; this first read is verified by the second one below.
     const firstRead = await readFile(target.file)
-    // A Bun stop decides once which closures are the stopped function's own; the declared inspections and the replay snapshot below both use that decision. A Node run reads every non-global scope, as before.
-    const bunScopes =
-      this.runtime === 'bun'
-        ? await this.ownBunScopesOf(
-            session,
-            scopes.scopes,
-            frame,
-            firstRead.toString('utf8'),
-            signal,
-            assertCurrent,
-          )
-        : undefined
     const inspected = await inspectNodeTestVariables(
       session,
-      bunScopes?.inspectable ?? scopes.scopes,
+      scopes.scopes,
       target.inspections,
       sourceImportBindings(firstRead.toString('utf8')),
       signal,
@@ -871,16 +847,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       workspaceRoot: this.input.workspace,
       // Masked before the snapshot's cut, so a secret straddling it leaves no fragment; read at call time.
       maskKnownText: (text) => this.input.maskKnownText?.(text) ?? text,
-      // Bun reports the stopped function's own scopes as closures; the capture copies one only when the stopped function's own source declares every name in it.
-      ...(bunScopes
-        ? {
-            bunClosures: true as const,
-            classifiedTopFrame: {
-              scopes: scopes.scopes,
-              ownPositions: bunScopes.own,
-            },
-          }
-        : {}),
+      // A Bun stop saves no automatic copy of its scopes: the declared inspections above are what the replay keeps.
+      ...(this.runtime === 'bun' ? { savesNoScopeValues: true as const } : {}),
       limits: {
         timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
         maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,
@@ -889,7 +857,6 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       },
     })
     assertCurrent()
-    if (bunScopes?.limitation) snapshot.limitations.push(bunScopes.limitation)
     for (const fact of inspected.unavailable)
       snapshot.limitations.push(
         `Required fact ${fact} could not be read at this stop.`,
@@ -903,82 +870,6 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       facts: inspected.facts,
       unavailable: inspected.unavailable,
       snapshot,
-    }
-  }
-
-  /**
-   * Decides, once per Bun stop, which of the stopped frame's scopes are the stopped function's own: its block scopes and the closures {@link ownClosureScopePositionsOf} accepts.
-   * Why it exists: the replay snapshot copies only those scopes, so a declared inspection that read an enclosing factory's closure would save in `facts` a value the Variables snapshot leaves out; both reads now share this decision.
-   * Called by {@link VscodeNodeServerDebugger.capture} for a Bun run only; a Node run keeps reading every non-global scope.
-   * @param session - The bound session.
-   * @param scopes - The top frame's scopes, innermost first.
-   * @param frame - The top frame.
-   * @param sourceText - The stopped file's text (verified against the cited hash by the caller afterwards).
-   * @param signal - Run cancellation.
-   * @param assertCurrent - Throws when the pause is no longer current.
-   * @returns `own`, the positions of the own closures; `inspectable`, the scopes a declared inspection may read; `limitation`, set when the classification read failed (no closure is own then).
-   * @example await this.ownBunScopesOf(session, scopes, frame, text, signal, assertCurrent) // => { own: Set { 0 }, inspectable: [...], limitation: undefined }
-   */
-  private async ownBunScopesOf(
-    session: vscode.DebugSession,
-    scopes: DebugProtocol.Scope[],
-    frame: DebugProtocol.StackFrame,
-    sourceText: string,
-    signal: AbortSignal,
-    assertCurrent: () => void,
-  ): Promise<{
-    own: ReadonlySet<number>
-    inspectable: DebugProtocol.Scope[]
-    limitation?: string
-  }> {
-    let own: ReadonlySet<number> = new Set<number>()
-    let limitation: string | undefined
-    // One deadline for every classification read, so slow answers cannot hold the live handler scope by scope.
-    const deadline = performance.now() + BUN_SCOPE_CLASSIFICATION_TIMEOUT_MS
-    try {
-      own = await ownClosureScopePositionsOf(
-        // Only the scopes the snapshot may keep are examined; the rest are never own.
-        scopes.slice(0, REPLAY_DEBUG_MAX_SCOPES),
-        async (variablesReference) => {
-          const remainingMs = deadline - performance.now()
-          if (remainingMs <= 0)
-            throw new Error('Closure classification time limit reached.')
-          const body = (await awaitResponse(
-            session.customRequest('variables', {
-              variablesReference,
-              start: 0,
-              // One name more than the limit tells the scope is too large.
-              count: NODE_REPLAY_DEBUG_MAX_VARIABLES + 1,
-            }),
-            "a closure scope's names",
-            signal,
-            remainingMs,
-          )) as DebugProtocol.VariablesResponse['body']
-          return body.variables.map((variable) => variable.name)
-        },
-        stoppedFunctionDeclaredNamesOf(sourceText, frame.line, frame.column),
-        frame.name,
-        NODE_REPLAY_DEBUG_MAX_VARIABLES,
-      )
-    } catch (error) {
-      // A resume or cancellation still ends the capture; any other failed read leaves no closure own, so nothing of one is read or saved.
-      assertCurrent()
-      signal.throwIfAborted()
-      // Nothing own was proven; only the leading blocks, which need no closure facts, stay.
-      own = leadingBlockPositionsOf(scopes)
-      // Masked exactly as the snapshot masks saved text, before the cut, so no secret or fragment of one reaches history.
-      const plainCause = stripTerminalControls(
-        error instanceof Error ? error.message : String(error),
-      )
-      limitation = classificationLimitationOf(
-        redactSecretText(this.input.maskKnownText?.(plainCause) ?? plainCause),
-      )
-    }
-    return {
-      own,
-      // Exactly the verified own prefix the snapshot copies for the stopped frame: no default `locals` policy.
-      inspectable: scopes.filter((_scope, position) => own.has(position)),
-      ...(limitation !== undefined && { limitation }),
     }
   }
 
