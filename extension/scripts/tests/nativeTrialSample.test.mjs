@@ -616,3 +616,47 @@ test('the confirmation shares the original sampling budget and exhausted time ca
     '2026-11-27T06:00:12.000Z',
   )
 })
+
+test('a stopped confirmation counts only when its reply arrives within the guest observation budget', async () => {
+  // Arrange
+  const start = Date.parse(at)
+  for (const [replyTime, state, failure, observedTo] of [
+    [24000, 'stopped', undefined, '2026-11-27T06:00:24.000Z'],
+    [24001, 'unknown', 'timeout', '2026-11-27T06:00:24.001Z'],
+  ]) {
+    const fixture = fixtureRunner()
+    let elapsed = 0
+    const run = async (program, args, timeout) => {
+      if (program !== 'cua') return fixture.run(program, args)
+      if (args[0] === 'sb') {
+        elapsed = 23000
+        return { code: 2, stdout: '' }
+      }
+      if (elapsed === 0) {
+        elapsed = 12000
+        return { code: 0, stdout: '{"state":"Running"}' }
+      }
+      assert.equal(timeout, 1000)
+      elapsed = replyTime
+      return { code: 0, stdout: '{"state":"Stopped"}' }
+    }
+
+    // Act
+    const { guest } = await readNativeTrialSample({
+      run,
+      now: () => new Date(start + elapsed),
+      elapsed: () => elapsed,
+    })
+
+    // Assert
+    assert.equal(guest.state, state)
+    assert.equal(guest.observerFailure, failure)
+    assert.equal(guest.stateObservedFrom, '2026-11-27T06:00:23.000Z')
+    assert.equal(guest.stateObservedTo, observedTo)
+    assert.equal(guest.reachable, null)
+    assert.deepEqual(guest.initialRunningObservation, {
+      stateObservedFrom: '2026-11-27T06:00:00.000Z',
+      stateObservedTo: '2026-11-27T06:00:12.000Z',
+    })
+  }
+})

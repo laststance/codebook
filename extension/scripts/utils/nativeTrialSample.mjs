@@ -164,7 +164,11 @@ async function readGuest(run, now, elapsed) {
         observerFailure: 'timeout',
         attempted: false,
       }
-    return run('cua', args, timeout)
+    const result = await run('cua', args, timeout)
+    // A command can exit within its timeout while its completion reaches the observer after the shared deadline.
+    if (elapsed() > deadline)
+      return { code: null, stdout: '', observerFailure: 'timeout' }
+    return result
   }
   const observation = await readInventory(runGuest, now)
   const unmeasured = {
