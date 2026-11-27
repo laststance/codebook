@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { ownClosureScopePositionsOf } from '../utils/ownClosureScopePositionsOf'
 import { stoppedFunctionDeclaredNamesOf } from '../utils/stoppedFunctionDeclaredNamesOf'
 
 /** Sorted names of a result, for a stable comparison. */
@@ -171,4 +172,147 @@ test('nested functions with one name declare only the inner one own names', () =
   const names = stoppedFunctionDeclaredNamesOf(source, 3, 5)
   // Assert
   assert.deepEqual(sorted(names), ['name'])
+})
+
+// Value: protects=a name declared in an inner function that closed before the stop is not declared at the stop, so the enclosing factory's `apiKey` is not claimed; fails_when=the closed inner arrow's `const apiKey` counts; seam=a factory holding `apiKey` around a handler with a closed inner arrow; no_claim=values the inner arrow held
+test('a name declared in an inner function closed before the stop is not declared', () => {
+  // Arrange
+  const source = [
+    'const make = (apiKey) => (req) => {',
+    '  const run = () => {',
+    '    const apiKey = 1',
+    '    return apiKey',
+    '  }',
+    '  return req',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 6, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['req', 'run'])
+})
+
+// Value: protects=a const inside a block that closed before the stop is not declared at the stop; fails_when=the closed `if` block's const counts; seam=a closed `if` block before the stop line; no_claim=block-scoped values the block held
+test('a const in a closed if block is not declared after the block', () => {
+  // Arrange
+  const source = [
+    'const handle = (req) => {',
+    '  if (req) {',
+    '    const hidden = 1',
+    '  }',
+    '  return req',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 5, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['req'])
+})
+
+// Value: protects=a const in a block that still holds the stop is declared; fails_when=an open enclosing block hides its own const and the replay loses a value it should keep; seam=a stop inside an `if` block; no_claim=consts of sibling blocks
+test('a const in a block that holds the stop is declared', () => {
+  // Arrange
+  const source = [
+    'const handle = (req) => {',
+    '  if (req) {',
+    '    const visible = 1',
+    '    return visible',
+    '  }',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 4, 5)
+  // Assert
+  assert.deepEqual(sorted(names), ['req', 'visible'])
+})
+
+// Value: protects=a catch binding is declared only while the stop is inside its catch block; fails_when=a closed catch block's binding counts after it, or the binding is lost inside the block; seam=a closed catch before the stop and a stop inside a catch; no_claim=finally blocks
+test('a catch binding is declared only inside its catch block', () => {
+  // Arrange
+  const source = [
+    'const handle = (req) => {',
+    '  try {',
+    '    run()',
+    '  } catch (error) {',
+    '    log(error)',
+    '  }',
+    '  return req',
+    '}',
+  ].join('\n')
+  // Act
+  const insideCatch = stoppedFunctionDeclaredNamesOf(source, 5, 5)
+  const afterCatch = stoppedFunctionDeclaredNamesOf(source, 7, 3)
+  // Assert
+  assert.deepEqual(sorted(insideCatch), ['error', 'req'])
+  assert.deepEqual(sorted(afterCatch), ['req'])
+})
+
+// Value: protects=a for-of loop variable is declared only while the stop is inside the loop; fails_when=a finished loop's variable counts after it, or is lost inside the body; seam=a stop inside and after a `for...of` loop; no_claim=loops without braces
+test('a for-of loop variable is declared only inside its loop', () => {
+  // Arrange
+  const source = [
+    'const handle = (req) => {',
+    '  for (const item of req.items) {',
+    '    use(item)',
+    '  }',
+    '  return req',
+    '}',
+  ].join('\n')
+  // Act
+  const insideLoop = stoppedFunctionDeclaredNamesOf(source, 3, 5)
+  const afterLoop = stoppedFunctionDeclaredNamesOf(source, 5, 3)
+  // Assert
+  assert.deepEqual(sorted(insideLoop), ['item', 'req'])
+  assert.deepEqual(sorted(afterLoop), ['req'])
+})
+
+// Value: protects=a function written on the stop line after the stop column declares nothing at the stop; fails_when=the inline callback's const counts; seam=`items.forEach((item) => { const inner = item })` with the stop at the line start; no_claim=a stop inside the callback
+test('a const in an inline function after the stop column is not declared', () => {
+  // Arrange
+  const source = [
+    'const handle = (req) => {',
+    '  items.forEach((item) => { const inner = item })',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 2, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['req'])
+})
+
+// Value: protects=the replay privacy outcome: a factory closure holding `apiKey` is not copied when only a closed inner arrow declares that name; fails_when=the factory closure's position is copied into replay history; seam=the names this source yields at `return req` fed to the replay policy with JavaScriptCore-shaped scopes; no_claim=other engines' scope shapes
+test('a factory closure holding apiKey is not copied when only a closed inner arrow declares that name', async () => {
+  // Arrange
+  const source = [
+    'const make = (apiKey) => (req) => {',
+    '  const run = () => {',
+    '    const apiKey = 1',
+    '    return apiKey',
+    '  }',
+    '  return req',
+    '}',
+  ].join('\n')
+  const declaredNames = stoppedFunctionDeclaredNamesOf(source, 6, 3)
+  const scopes = [
+    { name: 'Closure', presentationHint: 'arguments', variablesReference: 1 },
+    { name: 'Closure', presentationHint: 'arguments', variablesReference: 2 },
+    { name: 'Closure', presentationHint: 'arguments', variablesReference: 3 },
+    { name: 'Script', variablesReference: 4 },
+    { name: 'Global', variablesReference: 5 },
+  ]
+  const contents: Record<number, string[]> = {
+    1: ['arguments', 'req', 'run'],
+    2: ['apiKey'],
+    3: ['make'],
+  }
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    async (reference) => contents[reference] ?? [],
+    declaredNames,
+    '<anonymous>',
+    100,
+  )
+  // Assert
+  assert.deepEqual([...own], [0])
 })
