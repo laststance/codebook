@@ -2178,6 +2178,8 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
   })
   let configReads = 0
 
+  const trackedOriginal = `at ${copyPath} (it holds the settings of your other servers) and still tracks that copy.`
+
   // Act
   const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
     afterStat: (path) => {
@@ -2200,8 +2202,7 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
         `text that is not valid JSON in Devin Desktop's MCP config at ${configPath}`,
       ),
     )
-    assert.ok(error.message.includes(`at ${copyPath} (`))
-    assert.match(error.message, /still tracks that copy/)
+    assert.ok(error.message.includes(trackedOriginal))
     return true
   })
   assert.equal(await readFile(configPath, 'utf8'), damaged)
@@ -2222,6 +2223,7 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
           `text that is not valid JSON in Devin Desktop's MCP config at ${configPath}`,
         ),
       )
+      assert.ok(error.message.includes(trackedOriginal))
       return true
     },
   )
@@ -2400,8 +2402,9 @@ test('A config moved during handover can be restored from the named original bef
     mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
   })
   await writeConfig(configPath, published)
+  const publishedIno = (await stat(configPath)).ino
   const withdrawn = JSON.stringify(JSON.parse(original), null, 2) + '\n'
-  await writeFile(configPath, withdrawn)
+  swapFile(configPath, withdrawn)
   const copyPath = privateNameOf(configPath, 'codebook-displaced')
   await writeFile(copyPath, original)
   await writeRecordFile(storage, 'pending.json', {
@@ -2412,7 +2415,7 @@ test('A config moved during handover can be restored from the named original bef
     keptName: basename(copyPath),
     keptIno: (await stat(copyPath)).ino,
     keptSha256: sha256(original),
-    stagedIno: (await stat(configPath)).ino,
+    stagedIno: publishedIno,
     stagedSha256: sha256(published),
   })
   const moved = join(home, 'moved-active.json')
@@ -17399,7 +17402,14 @@ test('A completed update record never costs the moved-aside copy after the publi
     }),
     { flag: 'wx', mode: 0o600 },
   )
-  await writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+  const installed = await writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+  assert.equal(installed.status, 'installed')
+  const receipt = await readRecordFile(storage, 'receipt.json')
+  assert.equal(receipt.generation, installed.generation)
+  assert.equal(receipt.entrySha256, sha256(OTHER_CANONICAL))
+  const current = await writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+  assert.equal(current.status, 'current')
+  assert.equal(current.generation, installed.generation)
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
     mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
     activeProfile: 'work',
@@ -33065,13 +33075,16 @@ for (const moment of [
       moment === 'receipt publication'
         ? receiptPath
         : `${pendingPath}.codebook-dropping`
+    let restoredIno: bigint | undefined
     let pendingAtPublication: string | undefined
     const restoring = await loadWithAfterRename((_from, to) => {
       if (to === receiptPath)
         pendingAtPublication = readFileSync(pendingPath, 'utf8')
       // The second case changes the config after the ordinary post-receipt check, while the record moves to its dropping name.
-      if (pendingAtPublication && to === restoreOn)
+      if (pendingAtPublication && to === restoreOn) {
         swapFile(configPath, restored)
+        restoredIno = statSync(configPath, { bigint: true }).ino
+      }
     })
 
     // Act
@@ -33084,6 +33097,7 @@ for (const moment of [
 
     // Assert
     assert.ok(pendingAtPublication)
+    assert.equal((await stat(configPath, { bigint: true })).ino, restoredIno)
     assert.equal(await readFile(configPath, 'utf8'), restored)
     assert.equal(await readFile(pendingPath, 'utf8'), pendingAtPublication)
     const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home)
@@ -33267,6 +33281,7 @@ for (const [changedFile, moment] of [
     const droppingPath = `${pendingPath}.codebook-dropping`
     const restoredRecord = '{"other":"saved record"}\n'
     let placed = false
+    let restoredIno: bigint | undefined
     const restoring = await loadWithAfterRename((from, to) => {
       if (
         !placed &&
@@ -33279,8 +33294,10 @@ for (const [changedFile, moment] of [
         placed = true
         if (existsSync(pendingPath)) swapFile(pendingPath, restoredRecord)
         else writeFileSync(pendingPath, restoredRecord)
-        if (changedFile === 'config') swapFile(configPath, restoredConfig)
-        else unlinkSync(receiptPath)
+        if (changedFile === 'config') {
+          swapFile(configPath, restoredConfig)
+          restoredIno = statSync(configPath, { bigint: true }).ino
+        } else unlinkSync(receiptPath)
       }
     })
 
@@ -33303,9 +33320,10 @@ for (const [changedFile, moment] of [
       outcome.includes(`at ${pendingPath} and another file at ${droppingPath}`),
     )
     assert.match(outcome, /look at both before you use either/)
-    if (changedFile === 'config')
+    if (changedFile === 'config') {
+      assert.equal((await stat(configPath, { bigint: true })).ino, restoredIno)
       assert.equal(await readFile(configPath, 'utf8'), restoredConfig)
-    else {
+    } else {
       assert.equal(existsSync(receiptPath), false)
       assert.deepEqual(
         JSON.parse(await readFile(configPath, 'utf8')).mcpServers,
