@@ -102,6 +102,7 @@ test('a busy host and ready guest report independent absolute counters and only 
     pageSize: 4096,
     swapouts: 18,
     swapoutsObservedAt: at,
+    measurementsObservedAt: at,
   })
   assert.equal(JSON.stringify(sample).includes('fixture-private'), false)
   assert.equal(calls.length, 4)
@@ -146,6 +147,7 @@ test('only an explicit stopped state confirms a stop and skips guest execution',
       pageSize: null,
       swapouts: null,
       swapoutsObservedAt: null,
+      measurementsObservedAt: null,
     })
     assert.equal(
       calls.some(([, args]) => args[0] === 'sb'),
@@ -199,6 +201,15 @@ test('a running guest distinguishes a failed probe, malformed output and an answ
       pageSize,
       swapouts,
       swapoutsObservedAt: swapouts === null ? null : at,
+      measurementsObservedAt: memoryPressure === 'unknown' ? null : at,
+      ...(reachable !== true
+        ? {
+            initialRunningObservation: {
+              stateObservedFrom: at,
+              stateObservedTo: at,
+            },
+          }
+        : {}),
     })
   }
 })
@@ -227,6 +238,7 @@ test('unreadable precheck counters stay unknown while independent measurements s
 
   // Assert
   const unknownHost = {
+    workloadsObservedAt: null,
     memoryPressure: 'unknown',
     usedSwapMb: null,
     workloads: null,
@@ -340,4 +352,156 @@ test('host and guest paging readings keep their own times while slower probes fi
   assert.equal(second.host.swapoutsObservedAt, '2026-11-27T06:00:10.000Z')
   assert.equal(second.guest.swapoutsObservedAt, '2026-11-27T06:00:20.000Z')
   assert.equal(second.at, '2026-11-27T06:00:30.000Z')
+})
+
+test('a failed guest connection uses a fresh inventory state and its own observation interval', async () => {
+  // Arrange
+  const start = Date.parse(at)
+  for (const [info, state, reachable] of [
+    [{ code: 0, stdout: '{"state":"Stopped"}' }, 'stopped', null],
+    [{ code: 0, stdout: '{"state":"Ready"}' }, 'running', false],
+    [{ code: 1, stdout: 'fixture-private' }, 'unknown', null],
+  ]) {
+    const fixture = fixtureRunner()
+    let elapsed = 0,
+      inventories = 0
+    const run = async (program, args) => {
+      if (program === 'cua' && args[0] === 'sandbox') {
+        if (++inventories === 2) {
+          elapsed = 900
+          return info
+        }
+        elapsed = 200
+      }
+      if (program === 'cua' && args[0] === 'sb') {
+        elapsed = 650
+        return { code: 2, stdout: 'fixture-private' }
+      }
+      return fixture.run(program, args)
+    }
+
+    // Act
+    const result = await readNativeTrialSample({
+      run,
+      now: () => new Date(start + elapsed),
+    })
+
+    // Assert
+    assert.equal(inventories, 2)
+    assert.equal(result.guest.state, state)
+    assert.deepEqual(result.guest.initialRunningObservation, {
+      stateObservedFrom: '2026-11-27T06:00:00.000Z',
+      stateObservedTo: '2026-11-27T06:00:00.200Z',
+    })
+    assert.equal(result.guest.reachable, reachable)
+    assert.equal(result.guest.stateObservedFrom, '2026-11-27T06:00:00.650Z')
+    assert.equal(result.guest.stateObservedTo, '2026-11-27T06:00:00.900Z')
+    assert.equal(result.guest.measurementsObservedAt, null)
+    assert.equal(JSON.stringify(result).includes('fixture-private'), false)
+  }
+})
+
+test('observer timeouts and spawn errors leave reachability unknown on a confirmed running guest', async () => {
+  // Arrange
+  for (const [failure, reason] of [
+    [
+      Object.assign(new Error('fixture-private'), {
+        killed: true,
+        signal: 'SIGKILL',
+        code: null,
+      }),
+      'timeout',
+    ],
+    [
+      Object.assign(new Error('fixture-private'), { code: 'ENOENT' }),
+      'execution-error',
+    ],
+  ]) {
+    const fixture = fixtureRunner()
+    const run = async (program, args) => {
+      if (program === 'cua' && args[0] === 'sb') throw failure
+      return fixture.run(program, args)
+    }
+
+    // Act
+    const result = await readNativeTrialSample({ run, now })
+
+    // Assert
+    assert.equal(result.guest.state, 'running')
+    assert.equal(result.guest.reachable, null)
+    assert.equal(result.guest.observerFailure, reason)
+    assert.equal(JSON.stringify(result).includes('fixture-private'), false)
+  }
+})
+
+test('host precheck and guest telemetry keep the time of each command response', async () => {
+  // Arrange
+  const fixture = fixtureRunner(),
+    start = Date.parse(at)
+  const host = Promise.withResolvers(),
+    guest = Promise.withResolvers()
+  let elapsed = 0
+  const run = async (program, args) => {
+    if (program === process.execPath) await host.promise
+    if (program === 'cua' && args[0] === 'sb') await guest.promise
+    return fixture.run(program, args)
+  }
+
+  // Act
+  const reading = readNativeTrialSample({
+    run,
+    now: () => new Date(start + elapsed),
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  elapsed = 1000
+  host.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
+  elapsed = 3000
+  guest.resolve()
+  const result = await reading
+
+  // Assert
+  assert.equal(result.host.workloadsObservedAt, '2026-11-27T06:00:01.000Z')
+  assert.equal(result.guest.measurementsObservedAt, '2026-11-27T06:00:03.000Z')
+})
+
+test('the confirmation shares the original sampling budget and exhausted time cannot establish a stopped or disconnected guest', async () => {
+  // Arrange
+  const fixture = fixtureRunner(),
+    start = Date.parse(at)
+  const commands = []
+  let elapsed = 0
+  const run = async (program, args, timeout) => {
+    if (program === 'cua') {
+      commands.push([args[0], timeout])
+      if (args[0] === 'sandbox') elapsed = 12000
+      else {
+        elapsed = 24000
+        return { code: 2, stdout: '' }
+      }
+    }
+    return fixture.run(program, args)
+  }
+
+  // Act
+  const result = await readNativeTrialSample({
+    run,
+    now: () => new Date(start + elapsed),
+    elapsed: () => elapsed,
+  })
+
+  // Assert
+  assert.deepEqual(commands, [
+    ['sandbox', 12000],
+    ['sb', 12000],
+  ])
+  assert.equal(result.guest.state, 'unknown')
+  assert.equal(result.guest.stateObservedFrom, null)
+  assert.equal(result.guest.stateObservedTo, null)
+  assert.equal(result.guest.reachable, null)
+  assert.equal(result.guest.observerFailure, 'timeout')
+  assert.equal(
+    result.guest.initialRunningObservation.stateObservedTo,
+    '2026-11-27T06:00:12.000Z',
+  )
 })

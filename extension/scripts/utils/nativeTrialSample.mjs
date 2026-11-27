@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { countProcessKinds, parseSwapUsage } from '../native-precheck.mjs'
 
 const execute = promisify(execFile)
+const commandTimeoutMs = 12_000
 const precheckPath = fileURLToPath(
   new URL('../native-precheck.mjs', import.meta.url),
 )
@@ -28,21 +29,38 @@ const guestRead = [
  * @example
  * await readCommand('/usr/bin/vm_stat', [])
  */
-async function readCommand(program, args) {
+async function readCommand(program, args, timeout = commandTimeoutMs) {
   try {
     const { stdout } = await execute(program, args, {
       encoding: 'utf8',
-      timeout: 12_000,
+      timeout,
       killSignal: 'SIGKILL',
       maxBuffer: 64 * 1024,
     })
     return { code: 0, stdout }
   } catch (error) {
-    // Only completed commands can return usable output on a nonzero exit.
-    return {
-      code: Number.isInteger(error.code) ? error.code : null,
-      stdout: typeof error.stdout === 'string' ? error.stdout : '',
-    }
+    return commandFailure(error)
+  }
+}
+
+/**
+ * Keep the exit status of a completed command separate from a local observer failure.
+ * {@link readCommand} and injected runners may report a timeout, signal, output limit or spawn failure.
+ * @example commandFailure({ code: 'ENOENT' }).observerFailure // => 'execution-error'
+ */
+function commandFailure(error) {
+  const code = Number.isInteger(error?.code) ? error.code : null
+  const stdout = typeof error?.stdout === 'string' ? error.stdout : ''
+  if (code !== null) return { code, stdout }
+  const timedOut =
+    error?.code === 'ETIMEDOUT' ||
+    ((error?.code === null || error?.code === undefined) &&
+      error?.killed === true &&
+      error?.signal === 'SIGKILL')
+  return {
+    code,
+    stdout,
+    observerFailure: timedOut ? 'timeout' : 'execution-error',
   }
 }
 
@@ -98,23 +116,58 @@ function workloadRss(readings) {
 }
 
 /**
- * Records the interval in which the provider observed the VM state; a later guest telemetry probe cannot move that interval.
- * @example await readGuest(readCommand, () => new Date())
+ * Associate the reported guest state with the interval of this particular provider inventory query.
+ * {@link readGuest} uses this for both initial discovery and the confirmation after a failed connection.
+ * @example await readInventory(runGuest, () => new Date())
  */
-async function readGuest(run, now) {
-  const stateObservedFrom = now().toISOString()
-  const info = readJson(
-    await run('cua', ['sandbox', 'info', guestName, '--json']),
-    [0],
-  )
-  const observation = {
-    stateObservedFrom,
-    stateObservedTo: now().toISOString(),
-  }
-  const state =
+async function readInventory(runGuest, now) {
+  const from = now().toISOString()
+  const result = await runGuest(['sandbox', 'info', guestName, '--json'])
+  const to = now().toISOString()
+  const info = readJson(result, [0])
+  const reported =
     typeof info?.state === 'string' ? info.state.trim().toLowerCase() : ''
+  const state =
+    reported === 'stopped'
+      ? 'stopped'
+      : ['running', 'ready'].includes(reported)
+        ? 'running'
+        : 'unknown'
+  return {
+    state,
+    stateObservedFrom: result?.attempted === false ? null : from,
+    stateObservedTo: result?.attempted === false ? null : to,
+    ...(!Number.isInteger(result?.code)
+      ? {
+          observerFailure:
+            result?.observerFailure === 'timeout'
+              ? 'timeout'
+              : 'execution-error',
+        }
+      : {}),
+  }
+}
+
+/**
+ * Record guest reachability together with a fresh inventory observation after a failed connection.
+ * The whole guest read shares the two original command time budgets, including a confirmation query.
+ * @example await readGuest(readCommand, () => new Date(), () => performance.now())
+ */
+async function readGuest(run, now, elapsed) {
+  const deadline = elapsed() + 2 * commandTimeoutMs
+  const runGuest = async (args) => {
+    const timeout = Math.min(commandTimeoutMs, Math.floor(deadline - elapsed()))
+    if (timeout <= 0)
+      return {
+        code: null,
+        stdout: '',
+        observerFailure: 'timeout',
+        attempted: false,
+      }
+    return run('cua', args, timeout)
+  }
+  const observation = await readInventory(runGuest, now)
   const unmeasured = {
-    ...observation,
     reachable: null,
     memoryPressure: 'unknown',
     memoryBytes: null,
@@ -122,33 +175,61 @@ async function readGuest(run, now) {
     pageSize: null,
     swapouts: null,
     swapoutsObservedAt: null,
+    measurementsObservedAt: null,
   }
-  if (state === 'stopped') return { state: 'stopped', ...unmeasured }
-  if (state !== 'running' && state !== 'ready')
-    return { state: 'unknown', ...unmeasured }
+  if (observation.state !== 'running') return { ...unmeasured, ...observation }
 
-  const result = await run('cua', ['sb', 'exec', guestName, guestRead])
-  const pagesObservedAt = now().toISOString()
+  const result = await runGuest(['sb', 'exec', guestName, guestRead])
+  const measuredAt = now().toISOString()
   const lines =
     typeof result?.stdout === 'string' ? result.stdout.split(/\r?\n/) : []
-  // The marker distinguishes a guest that answered with missing measurements from a failed connection.
+  // A missing marker needs a fresh VM-state check before a completed failed transport can count as disconnection.
   if (lines[0] !== guestMarker) {
-    const reachable = result?.code === 0 ? null : false
-    return { state: 'running', ...unmeasured, reachable }
+    const confirmed = await readInventory(runGuest, now)
+    const exited = Number.isInteger(result?.code)
+    return {
+      ...unmeasured,
+      ...confirmed,
+      initialRunningObservation: {
+        stateObservedFrom: observation.stateObservedFrom,
+        stateObservedTo: observation.stateObservedTo,
+      },
+      reachable:
+        confirmed.state === 'running' && exited && result.code !== 0
+          ? false
+          : null,
+      ...(!exited
+        ? {
+            observerFailure:
+              result?.observerFailure === 'timeout'
+                ? 'timeout'
+                : 'execution-error',
+          }
+        : {}),
+    }
   }
   const measurements = lines.slice(1).join('\n')
   const ram = Number(/^memoryBytes=(\d+)$/m.exec(measurements)?.[1])
   const swapLine = /^swapUsage=([^\n]*)$/m.exec(measurements)?.[1]
+  const memoryPressure = Object.hasOwn(guestPressure, lines[1])
+    ? guestPressure[lines[1]]
+    : 'unknown'
+  const memoryBytes = Number.isSafeInteger(ram) && ram > 0 ? ram : null
+  const usedSwapMb = parseSwapUsage(swapLine)?.usedMb ?? null
+  const pages = pageFacts(measurements, measuredAt)
   return {
     ...observation,
-    state: 'running',
     reachable: true,
-    memoryPressure: Object.hasOwn(guestPressure, lines[1])
-      ? guestPressure[lines[1]]
-      : 'unknown',
-    memoryBytes: Number.isSafeInteger(ram) && ram > 0 ? ram : null,
-    usedSwapMb: parseSwapUsage(swapLine)?.usedMb ?? null,
-    ...pageFacts(measurements, pagesObservedAt),
+    memoryPressure,
+    memoryBytes,
+    usedSwapMb,
+    ...pages,
+    measurementsObservedAt:
+      memoryPressure !== 'unknown' ||
+      memoryBytes !== null ||
+      usedSwapMb !== null
+        ? measuredAt
+        : null,
   }
 }
 
@@ -162,33 +243,48 @@ async function readGuest(run, now) {
 export async function readNativeTrialSample({
   run = readCommand,
   now = () => new Date(),
+  elapsed = () => performance.now(),
 } = {}) {
   // A missing executable or a failed probe must not discard the independent measurements.
-  const safeRun = async (program, args) => {
+  const safeRun = async (program, args, timeout) => {
     try {
-      return await run(program, args)
-    } catch {
-      return { code: null, stdout: '' }
+      return await run(program, args, timeout)
+    } catch (error) {
+      return commandFailure(error)
     }
   }
   const [precheck, hostPages, guest] = await Promise.all([
-    safeRun(process.execPath, [precheckPath, '--json']),
+    safeRun(process.execPath, [precheckPath, '--json']).then((result) => ({
+      facts: readJson(result, [0, 3]),
+      at: now().toISOString(),
+    })),
     safeRun('/usr/bin/vm_stat', []).then((result) =>
       pageFacts(result.code === 0 ? result.stdout : '', now().toISOString()),
     ),
-    readGuest(safeRun, now),
+    readGuest(safeRun, now, elapsed),
   ])
-  const facts = readJson(precheck, [0, 3])
+  const { facts } = precheck
   const used = facts?.swap?.usedMb
+  const usedSwapMb = Number.isFinite(used) && used >= 0 ? used : null
+  const memoryPressure = pressureLevels.has(facts?.memoryPressure)
+    ? facts.memoryPressure
+    : 'unknown'
+  const workloads = workloadCounts(facts?.processes)
+  const rssMiBByKind = workloadRss(facts?.rssMiBByKind)
   return {
     at: now().toISOString(),
     host: {
-      memoryPressure: pressureLevels.has(facts?.memoryPressure)
-        ? facts.memoryPressure
-        : 'unknown',
-      usedSwapMb: Number.isFinite(used) && used >= 0 ? used : null,
-      workloads: workloadCounts(facts?.processes),
-      rssMiBByKind: workloadRss(facts?.rssMiBByKind),
+      memoryPressure,
+      usedSwapMb,
+      workloads,
+      rssMiBByKind,
+      workloadsObservedAt:
+        memoryPressure !== 'unknown' ||
+        usedSwapMb !== null ||
+        workloads ||
+        rssMiBByKind
+          ? precheck.at
+          : null,
       ...hostPages,
     },
     guest,
