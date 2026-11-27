@@ -897,6 +897,153 @@ test('a failed directory sync after publishing a reservation leaves no stale obs
   assert.equal(retry.outcome, 'healthy')
 })
 
+for (const [recovery, occupiedSlot] of [
+  ['finish', false],
+  ['plan-stop', true],
+]) {
+  test(`a restarted running guest cannot ${recovery} as healthy or planned after a stopped probe failed to publish`, async (t) => {
+    // Arrange: the overlapping watcher's slot is already owned by a different running observation.
+    const { root, dir, start, put } = await startedTrial(t)
+    await put('sample-slot-0.json', sample(start))
+    const handle = await open(dir, 'r')
+    const prototype = Object.getPrototypeOf(handle)
+    const original = prototype.sync
+    await handle.close()
+    let writesBeforeLoss = Infinity
+    t.mock.method(prototype, 'sync', async function () {
+      if ((await this.stat()).isFile() && --writesBeforeLoss === 0)
+        throw new Error('sample staging failed before link')
+      return original.call(this)
+    })
+    let clock = Date.now()
+    t.mock.method(Date, 'now', () => clock)
+
+    // Act: the stopped result never reaches its own scheduled or additional observation file.
+    await assert.rejects(
+      watchTrial(root, options, {
+        now: () => start + 1000,
+        sample: async () => {
+          if (occupiedSlot)
+            await put('sample-slot-1.json', sample(start + 1000))
+          writesBeforeLoss = occupiedSlot ? 2 : 1
+          return sample(start + 1000, 'stopped', null)
+        },
+      }),
+      /sample staging failed before link/,
+    )
+    if (recovery === 'plan-stop')
+      await assert.rejects(
+        controlTrial(
+          root,
+          options.id,
+          'plan-stop',
+          undefined,
+          async () => sample(start + 2000),
+          () => start + 2000,
+        ),
+        /do not stop the VM/i,
+      )
+    // Advancing the host lease also covers recovery from a previously interrupted observer.
+    clock += 31_000
+    const finish = await controlTrial(
+      root,
+      options.id,
+      'finish',
+      'healthy',
+      async () => sample(start + 3000),
+      () => start + 3000,
+    )
+
+    // Assert
+    assert.equal(finish.outcome, 'unknown')
+    assert.equal(finish.reason, 'incomplete-observation')
+    assert.deepEqual(
+      await watchTrial(root, options, {
+        sample: () => assert.fail('terminal recovery cannot resample'),
+      }),
+      finish,
+    )
+    const { groups } = await reportTrials(root)
+    assert.equal(groups[0].counts.unknown, 1)
+    assert.equal(groups[0].counts.healthy, 0)
+    assert.equal(groups[0].counts['planned-stop'], 0)
+  })
+}
+
+test('a stopped observation linked before its directory sync failed recovers its actual stop', async (t) => {
+  // Arrange
+  const { root, dir, start, put } = await startedTrial(t)
+  await put('sample-slot-0.json', sample(start))
+  const handle = await open(dir, 'r')
+  const prototype = Object.getPrototypeOf(handle)
+  const original = prototype.sync
+  await handle.close()
+  let failAfterLink = true
+  t.mock.method(prototype, 'sync', async function () {
+    if (
+      (await this.stat()).isDirectory() &&
+      (await readdir(dir)).includes('sample-slot-1.json') &&
+      failAfterLink
+    ) {
+      failAfterLink = false
+      throw new Error('directory sync after evidence link failed')
+    }
+    return original.call(this)
+  })
+  // Act
+  await assert.rejects(
+    watchTrial(root, options, {
+      now: () => start + 1000,
+      sample: async () => sample(start + 1000, 'stopped', null),
+    }),
+    /directory sync after evidence link failed/,
+  )
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'healthy',
+    () => assert.fail('durable stop must be used'),
+    () => start + 2000,
+  )
+  // Assert
+  assert.equal(end.outcome, 'unexpected-stop')
+  assert.equal(end.reason, undefined)
+  assert.equal(
+    (await readdir(dir)).some((name) => name.startsWith('pending-')),
+    false,
+  )
+})
+
+test('shutdown permission cannot outlive a missing probe that was never published or marked lost', async (t) => {
+  // Arrange: a killed observer left only its pre-collection reservation on disk.
+  const { root, put, start } = await startedTrial(t)
+  await put('sample-slot-0.json', sample(start))
+  await put('pending-abcd.json', { expiresAt: 0 })
+  // Act and Assert
+  await assert.rejects(
+    controlTrial(
+      root,
+      options.id,
+      'plan-stop',
+      undefined,
+      async () => sample(start + 2000),
+      () => start + 2000,
+    ),
+    /do not stop the VM/i,
+  )
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'healthy',
+    async () => sample(start + 3000),
+    () => start + 3000,
+  )
+  assert.equal(end.outcome, 'unknown')
+  assert.equal(end.reason, 'incomplete-observation')
+})
+
 test('a late row reports only states, workloads, memory and page counters observed before the confirmed stop', async (t) => {
   // Arrange
   const { root, put, at, start } = await startedTrial(t)

@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { linkSync, lstatSync, readdirSync, writeFileSync } from 'node:fs'
+import {
+  linkSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { link, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -8,6 +14,8 @@ import { readNativeTrialSample } from './nativeTrialSample.mjs'
 
 const EVIDENCE_FILE =
   /^(sample-(slot-\d+|\d+-[\da-f-]+)|observation-[\da-f-]+)\.json$/
+const PENDING_PROBE = /^pending-[\da-f-]+\.json$/
+const LOST_PROBE = /^lost-[\da-f-]+\.json$/
 const TERMINAL_EVIDENCE = 'terminal-evidence.json'
 const PLAN_AUTHORIZATION = 'plan-stop-authorization.json'
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,71}$/i
@@ -129,9 +137,10 @@ async function withPublicationLock(dir, action) {
 
 /**
  * Publish one complete, synced host record. An existing record wins even if two readers finish together.
+ * @param onLinked - Records when this caller's bytes became visible, before their directory sync.
  * @example await publish(trialDir, 'end.json', { outcome: 'healthy' })
  */
-async function publish(dir, name, record) {
+async function publish(dir, name, record, onLinked) {
   const tmp = join(dir, `.writing-${randomUUID()}`)
   const file = await open(tmp, 'wx', 0o600)
   try {
@@ -153,6 +162,7 @@ async function publish(dir, name, record) {
       } else {
         await link(tmp, destination)
       }
+      onLinked?.()
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
       published = await readRecord(join(dir, name))
@@ -183,6 +193,26 @@ async function stopDecision(dir) {
 }
 
 /**
+ * Check for a failed publication or expired reservation while the planner holds the publication lock.
+ * A live probe may overlap a grant; its later observation remembers which grant it actually saw.
+ * @example hasLostProbe(dir, readdirSync(dir))
+ */
+function hasLostProbe(dir, names) {
+  if (names.some((name) => LOST_PROBE.test(name))) return true
+  for (const name of names) {
+    if (!PENDING_PROBE.test(name)) continue
+    try {
+      const probe = JSON.parse(readFileSync(join(dir, name), 'utf8'))
+      if (!(Date.now() < probe.expiresAt)) return true
+    } catch (error) {
+      // A publisher may release its reservation after its evidence is synced.
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
+  return false
+}
+
+/**
  * Recover any known stop, then compare its append-only evidence set and commit the grant under the same
  * lock that publishes observations. A changed set must be read before granting or reusing permission.
  * @param commit - Links the prepared grant when a new planner wins. A retry only rechecks the earlier grant.
@@ -194,7 +224,8 @@ async function openForStopPlan(dir, deadline, now, commit) {
     if (await recoverRecordedStop(dir, deadline, files)) return false
     const granted = await withPublicationLock(dir, () => {
       const names = readdirSync(dir)
-      if (names.includes('closing.json')) return false
+      if (names.includes('closing.json') || hasLostProbe(dir, names))
+        return false
       if (
         names.filter((name) => EVIDENCE_FILE.test(name)).length !== files.length
       )
@@ -327,8 +358,14 @@ function readingAt(row, side, field) {
 async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
   const id = randomUUID()
   const name = `pending-${id}.json`
+  let started = false
+  let linked = false
+  let releaseReservation = true
+  const onLinked = () => {
+    linked = true
+  }
   try {
-    // A link can stand even if syncing its directory then fails. Release this reservation on either result.
+    // A failure before collection cannot lose a guest reading.
     await publish(dir, name, { expiresAt: Date.now() + PROBE_LEASE_MS })
     if (
       now() >= deadline ||
@@ -342,25 +379,49 @@ async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
     const stopPlanWitness = grant?.status === 'accepted' ? grant.witness : null
     if (stopPlanWitness) await syncDirectory(dir)
     if (now() >= deadline) return null
+    started = true
     const row = { ...(await collect()), stopPlanWitness }
     if (!afterPlanAt) {
       const key =
         slot === undefined ? `${Date.parse(row.at)}-${id}` : `slot-${slot}`
-      const winner = await publish(dir, `sample-${key}.json`, row)
+      const winner = await publish(dir, `sample-${key}.json`, row, onLinked)
       if (winner === row) return row
     }
     // Wait for directory sync before releasing the pending observation to a concurrent finisher.
     const file = `observation-${id}.json`
-    const observation = await publish(dir, file, {
-      ...row,
-      additionalObservation: true,
-      ...(afterPlanAt ? { afterPlanAt } : {}),
-    })
+    const observation = await publish(
+      dir,
+      file,
+      {
+        ...row,
+        additionalObservation: true,
+        ...(afterPlanAt ? { afterPlanAt } : {}),
+      },
+      onLinked,
+    )
     return { ...observation, file }
+  } catch (error) {
+    if (started) {
+      // The durable reservation survives an interruption or second storage failure during recovery.
+      releaseReservation = false
+      if (linked) {
+        // A competing slot winner never calls onLinked for this probe. Sync only our own evidence.
+        await syncDirectory(dir)
+        releaseReservation = true
+      } else {
+        // Keep the reservation. Closers can now see a known gap immediately, and planners cannot issue a later grant.
+        await withPublicationLock(dir, () =>
+          linkSync(join(dir, name), join(dir, `lost-${id}.json`)),
+        )
+        await syncDirectory(dir)
+      }
+    }
+    throw error
   } finally {
-    await unlink(join(dir, name)).catch((error) => {
-      if (error.code !== 'ENOENT') throw error
-    })
+    if (releaseReservation)
+      await unlink(join(dir, name)).catch((error) => {
+        if (error.code !== 'ENOENT') throw error
+      })
   }
 }
 
@@ -516,11 +577,15 @@ async function closeObserver(dir, fallback, at, deadline, sampleAt) {
   while (true) {
     const existing = await durableEnd(dir)
     if (existing) return existing
-    const names = (await readdir(dir)).filter((name) =>
-      /^pending-[\da-f-]+\.json$/.test(name),
-    )
+    const entries = new Set(await readdir(dir))
     let waiting = false
-    for (const name of names) {
+    for (const name of entries) {
+      if (LOST_PROBE.test(name)) incomplete = true
+      if (
+        !PENDING_PROBE.test(name) ||
+        entries.has(name.replace(/^pending-/, 'lost-'))
+      )
+        continue
       const probe = await readRecord(join(dir, name))
       if (!probe) continue
       if (Date.now() < Math.min(probe.expiresAt, limit)) waiting = true
