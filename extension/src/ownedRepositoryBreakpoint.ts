@@ -802,6 +802,7 @@ export class OwnedRepositoryBreakpoint {
    * Both editors answer a breakpoint requested at column 1 without a column once the adapter sent news about it, so the binding is read as {@link ConfiguredBrowserRun} reads it: a missing column is taken from the adapter's own report ({@link reportedPlace}, {@link completeBindingPlace}), and without one the line decides. A verified binding on the declared line refuses nothing here, at any column or with none, and the owner's check of its pause at the declared column remains.
    * @param session - The debug session whose adapter holds the breakpoint.
    * @param signal - The caller's cancellation: an adapter that never answers this read must not hold a run that is being stopped.
+   * @param timeoutMs - The read's own bound; a caller that already runs under a shared deadline passes that deadline's length, so only the signal ends the wait. Defaults to the active bound.
    * @throws When the adapter reports the breakpoint verified on another line than declared ({@link boundElsewhereRefusalText}); the text names both positions, or the bound line when no column is known. Any column of the declared line is accepted. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
    * @example
    * await owned.assertBoundAsDeclared(session, signal) // throws 'Declared breakpoint 20:5 is bound at 21:12; …'
@@ -809,12 +810,14 @@ export class OwnedRepositoryBreakpoint {
   async assertBoundAsDeclared(
     session: vscode.DebugSession,
     signal: AbortSignal,
+    timeoutMs?: number,
   ): Promise<void> {
     const answered = verifiedLineSchema.safeParse(
       await awaitResponse(
         session.getDebugProtocolBreakpoint(this.breakpoint),
         'owned breakpoint binding',
         signal,
+        timeoutMs,
       ),
     ).data
     if (!answered) return

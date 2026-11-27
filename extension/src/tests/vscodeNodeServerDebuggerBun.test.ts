@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
 import type {
   NodeServerDebugger,
@@ -553,11 +553,13 @@ function learnerBreakpointAt(
   editor: Awaited<ReturnType<typeof editorHarness>>,
   line: number,
   column: number,
+  enabled = true,
 ): void {
   const { SourceBreakpoint, Location, Position } = editor.editor
   editor.editorBreakpoints.push(
     new SourceBreakpoint(
       new Location({ fsPath: STOP_FILE }, new Position(line - 1, column - 1)),
+      enabled,
     ),
   )
 }
@@ -611,6 +613,138 @@ test('a Bun pause on a declared stop line without a column and without a learner
   const pause = await nextPause()
   // Assert
   assert.equal(pause.declaredStopIndex, 0)
+  await debug.release()
+})
+
+// Value: protects=a disabled breakpoint of the learner's on a declared stop's line cannot have caused the pause, so the run still captures its own stop; fails_when=a disabled breakpoint at another column makes the run classify its own hit as the learner's and omit the capture; seam=the editor harness with a line-only reply and a disabled editor breakpoint at 14:24; no_claim=js-debug's real column for a paused frame
+test('a Bun pause on a declared stop line is that declared stop when the only other breakpoint there is disabled', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: LINE_ONLY_REPLY,
+    firstStop: {
+      reason: 'breakpoint',
+      frame: { file: STOP_FILE, line: 14, column: 3 },
+    },
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armStopsAt(debug, [{ line: 14, column: 3 }])
+  learnerBreakpointAt(editor, 14, 24, false)
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  const pause = await nextPause()
+  // Assert
+  assert.equal(pause.declaredStopIndex, 0)
+  await debug.release()
+})
+
+// Value: protects=two declared stops on one line (one line-only, one with a column) are no learner breakpoint for each other, so a pause at the line-only stop's column is that stop; fails_when=the other stop's own breakpoint counts as the learner's and the sole match is lost; seam=the editor harness answering the first stop without a column and the second with one; no_claim=js-debug's real column for a paused frame
+test('a Bun pause at the line-only stop of a shared line with a column-bearing stop is the line-only stop', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: (requested, id) =>
+      id === OWNED_IDS[0]
+        ? LINE_ONLY_REPLY(requested, id)
+        : {
+            id,
+            verified: true,
+            line: requested.line,
+            column: requested.column,
+          },
+    firstStop: {
+      reason: 'breakpoint',
+      frame: { file: STOP_FILE, line: 14, column: 10 },
+    },
+  })
+  const { debug } = editor.createDebugger(SAME_LINE_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armStopsAt(debug, SAME_LINE_STOPS)
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  const pause = await nextPause()
+  // Assert
+  assert.equal(pause.declaredStopIndex, 0)
+  await debug.release()
+})
+
+// Value: protects=an ID-less pause that matches two declared stops of one line stays the learner's; fails_when=the pause is assigned to one of the two stops it matches; seam=the editor harness answering the first stop without a column and the second at 14:24, pause at column 24; no_claim=js-debug's real column for a paused frame
+test('a Bun pause matching both stops of a shared line stays the learner pause', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: (requested, id) =>
+      id === OWNED_IDS[0]
+        ? LINE_ONLY_REPLY(requested, id)
+        : {
+            id,
+            verified: true,
+            line: requested.line,
+            column: requested.column,
+          },
+    firstStop: {
+      reason: 'breakpoint',
+      frame: { file: STOP_FILE, line: 14, column: 24 },
+    },
+  })
+  const { debug } = editor.createDebugger(SAME_LINE_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armStopsAt(debug, SAME_LINE_STOPS)
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  const pause = await nextPause()
+  // Assert
+  assert.equal(pause.declaredStopIndex, undefined)
+  await debug.release()
+})
+
+// Value: protects=a Bun stop pending at first that verifies about 25 s in, while the editor answers the binding lookup late, is armed bound within the shared 45 s arming deadline; fails_when=the lookup keeps its own 20 s bound and fails the arming before the shared deadline; seam=the editor harness's pending reply, gated binding lookup and mocked timers; no_claim=the real length of the arming budget
+test('a Bun stop verified 25 seconds in after a delayed editor lookup is armed as bound', async () => {
+  // Arrange
+  let lookupsAsked = 0
+  const lookupGate = defer<void>()
+  const editor = await editorHarness({
+    breakpointReply: (_requested, id) => ({ id, verified: false }),
+    bindingLookupGate: () => {
+      lookupsAsked += 1
+      return lookupGate.promise
+    },
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const arming = armStopsAt(
+      debug,
+      [{ line: 14, column: 3 }],
+      AbortSignal.timeout(45_000),
+    )
+    // Timers are mocked, so the registration poll advances by small ticks while the wait runs on real immediates (bounded by the real clock).
+    const realDeadline = Date.now() + 5_000
+    let tickedMs = 0
+    while (lookupsAsked === 0) {
+      // gstack-timing-ok: the real clock only bounds a failure (the lookup normally starts within a few ticks); the shared waitUntil cannot poll while setTimeout is mocked, and a slower machine only takes longer to pass
+      assert.ok(Date.now() < realDeadline, 'the binding lookup never started')
+      mock.timers.tick(50)
+      tickedMs += 50
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    // Act
+    mock.timers.tick(25_000 - tickedMs)
+    lookupGate.resolve()
+    editor.adapter.breakpointNews({
+      id: OWNED_IDS[0]!,
+      verified: true,
+      line: 14,
+      column: 3,
+    })
+    const armed = await arming
+    // Assert
+    assert.equal(armed[0]?.boundLine, 14)
+  } finally {
+    mock.timers.reset()
+  }
   await debug.release()
 })
 

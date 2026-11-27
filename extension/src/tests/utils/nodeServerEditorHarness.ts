@@ -54,6 +54,8 @@ export async function editorHarness(
       requested: { line: number; column: number },
       id: number,
     ) => DebugProtocol.Breakpoint
+    /** Called for each owned breakpoint's binding lookup (`getDebugProtocolBreakpoint`); the editor's answer waits for the promise it returns, as a slow editor does. */
+    bindingLookupGate?: () => Promise<void>
     /** Runs the real {@link captureReplayDebugSnapshot} over the Local scope offering these variables, instead of the empty snapshot stand-in. */
     localVariables?: DebugProtocol.Variable[]
     /** Scripts the stopped frame's scopes and each scope's variables (by `variablesReference`) and runs the real capture and the real declared inspections over them, as a Bun stop's closures need. */
@@ -110,7 +112,11 @@ export async function editorHarness(
   let nextEditorBreakpointId = 0
   class SourceBreakpoint {
     readonly id = String(++nextEditorBreakpointId)
-    constructor(readonly location: Location) {}
+    constructor(
+      readonly location: Location,
+      /** The editor's checkbox of the breakpoint; a disabled one never pauses. */
+      readonly enabled = true,
+    ) {}
   }
   const editorBreakpoints: SourceBreakpoint[] = []
   const adapterReplies = new Map<SourceBreakpoint, DebugProtocol.Breakpoint>()
@@ -165,9 +171,13 @@ export async function editorHarness(
     name: '',
     workspaceFolder: undefined,
     configuration: { type: 'pwa-node', name: '', request: 'attach' },
-    getDebugProtocolBreakpoint: async (breakpoint: unknown) =>
-      editorBreakpoints.find((candidate) => candidate === breakpoint) &&
-      adapterReplies.get(breakpoint as SourceBreakpoint),
+    getDebugProtocolBreakpoint: async (breakpoint: unknown) => {
+      await options.bindingLookupGate?.()
+      return (
+        editorBreakpoints.find((candidate) => candidate === breakpoint) &&
+        adapterReplies.get(breakpoint as SourceBreakpoint)
+      )
+    },
     async customRequest(
       command: string,
       arguments_?: unknown,

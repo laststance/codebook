@@ -474,8 +474,24 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       return { declaredStopIndex: target.declaredStopIndex }
     }
     // A pending reply names no place yet, so the adapter is asked once more while the server is still paused.
-    if (receipt.status === 'pending')
-      await breakpoint.assertBoundAsDeclared(session, signal)
+    if (receipt.status === 'pending') {
+      try {
+        // A Bun arming runs under one shared deadline (the signal's), so the lookup has no shorter bound of its own.
+        await breakpoint.assertBoundAsDeclared(
+          session,
+          signal,
+          this.runtime === 'bun' ? NODE_TEST_ATTACH_TIMEOUT_MS : undefined,
+        )
+      } catch (error) {
+        // The shared deadline caught the lookup: the stop is unbound like every stop the deadline reaches; any other end belongs to the run.
+        if (
+          this.runtime !== 'bun' ||
+          !(isArmingDeadline(error) || isArmingDeadline(signal.reason))
+        )
+          throw error
+        return { declaredStopIndex: target.declaredStopIndex }
+      }
+    }
     return {
       declaredStopIndex: target.declaredStopIndex,
       breakpointId: receipt.breakpointId,
@@ -714,16 +730,20 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     session: vscode.DebugSession,
     frame: DebugProtocol.StackFrame,
   ): number | undefined {
+    // An enabled breakpoint of the learner on the pause's line could have caused it, so the pause is not told apart: it stays the learner's (fail closed).
+    if (
+      frame.source?.path &&
+      this.learnerHoldsBreakpointAt(frame.source.path, frame.line)
+    )
+      return undefined
     const matches = this.armed.filter(({ target, breakpoint }) => {
       const place = breakpoint.boundPlace(session)
       return (
         place !== undefined &&
         frame.source?.path === target.file &&
         frame.line === place.line &&
-        // A verified place without a column matches any column of its line, unless the learner holds a breakpoint of their own on that line: the pause may be theirs.
-        (place.column === undefined
-          ? !this.learnerHoldsBreakpointAt(target.file, frame.line, breakpoint)
-          : frame.column === place.column)
+        // A verified place without a column matches any column of its line.
+        (place.column === undefined || frame.column === place.column)
       )
     })
     return matches.length === 1
@@ -732,23 +752,22 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Tells whether the editor holds a breakpoint other than a declared stop's own on a file and line.
-   * Why it exists: a line-only bound place matches any column of its line, so an ID-less Bun pause there could be the learner's own breakpoint; the editor's list is the evidence that tells them apart. Called by {@link armedStopAtFrame}.
-   * @param file - The declared stop's file.
+   * Tells whether the editor holds an enabled breakpoint that is none of this run's own on a file and line.
+   * Why it exists: an ID-less Bun pause on a line could be the learner's own breakpoint; the editor's list is the evidence that tells them apart. A disabled breakpoint cannot pause, and the run's own breakpoints (every declared stop's, not only the one being matched) are not the learner's. Called by {@link armedStopAtFrame}.
+   * @param file - The pause's file.
    * @param line - The one-based line of the pause.
-   * @param owned - The declared stop's own breakpoint, which does not count.
-   * @returns `true` when another source breakpoint lies on that file and line.
-   * @example this.learnerHoldsBreakpointAt('/repo/src/a.ts', 14, owned) // => true after the learner set a breakpoint on line 14
+   * @returns `true` when an enabled source breakpoint of the learner lies on that file and line.
+   * @example this.learnerHoldsBreakpointAt('/repo/src/a.ts', 14) // => true after the learner set an enabled breakpoint on line 14
    */
-  private learnerHoldsBreakpointAt(
-    file: string,
-    line: number,
-    owned: OwnedRepositoryBreakpoint,
-  ): boolean {
+  private learnerHoldsBreakpointAt(file: string, line: number): boolean {
+    const ownedIds = new Set(
+      this.armed.map(({ breakpoint }) => breakpoint.breakpoint.id),
+    )
     return vscode.debug.breakpoints.some(
       (candidate) =>
         candidate instanceof vscode.SourceBreakpoint &&
-        candidate.id !== owned.breakpoint.id &&
+        candidate.enabled &&
+        !ownedIds.has(candidate.id) &&
         resolve(candidate.location.uri.fsPath) === resolve(file) &&
         candidate.location.range.start.line + 1 === line,
     )
