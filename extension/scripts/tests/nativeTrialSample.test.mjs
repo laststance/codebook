@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
-import { basename } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { test } from 'node:test'
 
 import { countProcessKinds } from '../native-precheck.mjs'
+import { controlTrial, watchTrial } from '../utils/nativeTrialJournal.mjs'
 import { readNativeTrialSample } from '../utils/nativeTrialSample.mjs'
 
 const at = '2026-11-27T06:00:00.000Z'
@@ -463,6 +466,114 @@ test('host precheck and guest telemetry keep the time of each command response',
   // Assert
   assert.equal(result.host.workloadsObservedAt, '2026-11-27T06:00:01.000Z')
   assert.equal(result.guest.measurementsObservedAt, '2026-11-27T06:00:03.000Z')
+})
+
+test('a guest that prints its marker before the observer times out cannot finish healthy until a fresh probe succeeds', async (t) => {
+  // Arrange
+  const root = await mkdtemp(join(tmpdir(), 'codebook-marker-timeout-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const id = 'partial-marker'
+  const clock = () => Date.parse(at)
+  const ready = fixtureRunner()
+  const sample = () => readNativeTrialSample({ run: ready.run, now })
+  const interrupted = fixtureRunner({
+    exec: {
+      code: null,
+      observerFailure: 'timeout',
+      stdout: 'codebook-qa-sample\n1\nSwapouts: 42.\n',
+    },
+  })
+  const partialSample = () =>
+    readNativeTrialSample({ run: interrupted.run, now })
+  // Act
+  const result = await watchTrial(
+    root,
+    { id, cycle: 151, profile: 'vm-only' },
+    {
+      now: clock,
+      sample,
+      sleep: async () => {
+        // Assert the public command cannot seal the trial using the interrupted response.
+        await assert.rejects(
+          controlTrial(root, id, 'finish', 'healthy', partialSample, clock),
+          /requires a fresh running and reachable guest/,
+        )
+        await controlTrial(root, id, 'finish', 'healthy', sample, clock)
+      },
+    },
+  )
+  // Assert
+  assert.equal(result.outcome, 'healthy')
+  assert.equal(
+    interrupted.calls.filter(([, args]) => args[0] === 'sandbox').length,
+    2,
+  )
+})
+
+test('a marker from an interrupted guest probe preserves the earlier connection but only fresh inventory establishes the final state', async () => {
+  // Arrange
+  const start = Date.parse(at)
+  for (const [consideredStopped, budgetExpired, expectedState] of [
+    [true, false, 'stopped'],
+    [false, false, 'running'],
+    [true, true, 'unknown'],
+  ]) {
+    const fixture = fixtureRunner()
+    let elapsed = 0,
+      inventories = 0
+    const run = async (program, args) => {
+      if (program === 'cua' && args[0] === 'sandbox') {
+        if (++inventories === 2) {
+          elapsed += 5
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              state: consideredStopped ? 'stopped' : 'ready',
+            }),
+          }
+        }
+        elapsed = 12_000
+      }
+      if (program === 'cua' && args[0] === 'sb') {
+        elapsed += budgetExpired ? 12_000 : 500
+        throw Object.assign(new Error('fixture-private'), {
+          killed: true,
+          code: null,
+          signal: 'SIGKILL',
+          stdout: 'codebook-qa-sample\n1\nSwapouts: 18.\nmemoryBytes=4096\n',
+        })
+      }
+      return fixture.run(program, args)
+    }
+    // Act
+    const { guest } = await readNativeTrialSample({
+      run,
+      now: () => new Date(start + elapsed),
+      elapsed: () => elapsed,
+    })
+    // Assert
+    assert.equal(guest.state, expectedState)
+    assert.equal(guest.probeStarted, true)
+    assert.equal(guest.observerFailure, 'timeout')
+    assert.equal(guest.reachable, null)
+    assert.equal(guest.memoryPressure, 'unknown')
+    assert.equal(guest.memoryBytes, null)
+    assert.equal(guest.swapoutsObservedAt, null)
+    assert.equal(guest.measurementsObservedAt, null)
+    assert.equal(
+      guest.initialRunningObservation.stateObservedTo,
+      '2026-11-27T06:00:12.000Z',
+    )
+    assert.equal(
+      guest.stateObservedFrom,
+      budgetExpired ? null : '2026-11-27T06:00:12.500Z',
+    )
+    assert.equal(
+      guest.stateObservedTo,
+      budgetExpired ? null : '2026-11-27T06:00:12.505Z',
+    )
+    assert.equal(inventories, budgetExpired ? 1 : 2)
+  }
 })
 
 test('the confirmation shares the original sampling budget and exhausted time cannot establish a stopped or disconnected guest', async () => {

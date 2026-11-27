@@ -183,10 +183,11 @@ async function readGuest(run, now, elapsed) {
   const measuredAt = now().toISOString()
   const lines =
     typeof result?.stdout === 'string' ? result.stdout.split(/\r?\n/) : []
-  // A missing marker needs a fresh VM-state check before a completed failed transport can count as disconnection.
-  if (lines[0] !== guestMarker) {
+  const probeStarted = lines[0] === guestMarker
+  const exited = Number.isInteger(result?.code)
+  // A start marker in partial stdout proves earlier contact. Recheck the VM if the observer never saw the command exit.
+  if (!probeStarted || !exited) {
     const confirmed = await readInventory(runGuest, now)
-    const exited = Number.isInteger(result?.code)
     return {
       ...unmeasured,
       ...confirmed,
@@ -194,6 +195,7 @@ async function readGuest(run, now, elapsed) {
         stateObservedFrom: observation.stateObservedFrom,
         stateObservedTo: observation.stateObservedTo,
       },
+      ...(probeStarted ? { probeStarted: true } : {}),
       reachable:
         confirmed.state === 'running' && exited && result.code !== 0
           ? false
