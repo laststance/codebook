@@ -1,3 +1,5 @@
+import { BUN_CLOSURE_CLASSIFICATION_MAX_SOURCE_CHARS } from '../constants'
+
 import {
   bindingNamesAt,
   identifierAt,
@@ -9,9 +11,11 @@ import { blankCommentsAndTemplates } from './blankCommentsAndTemplates'
 import { blankRegexLiterals } from './blankRegexLiterals'
 import { blankStringContents } from './blankStringContents'
 
-/** A function as found in the source: where its head starts (the `=>` or the `function` keyword), where its body starts and ends (exclusive), and the names its parameters bind. */
+/** A function as found in the source: where its head starts (the `=>` or the `function` keyword), where its parameter list starts (`-1` when unreadable), where its body starts and ends (exclusive), the names its parameters bind, and whether its body boundary could be read with confidence. */
 type StoppedFunction = {
   headIndex: number
+  parametersStart: number
+  isBoundaryReadable: boolean
   bodyStart: number
   bodyEnd: number
   parameterNames: string[]
@@ -150,6 +154,25 @@ function parameterNamesOf(code: string, from: number, to: number): string[] {
 }
 
 /**
+ * Finds where an arrow's parameters start: the `(` of its group or its single parameter name.
+ * Called by {@link arrowAt} and {@link siblingSpansOf}.
+ * @param code - Blanked source.
+ * @param arrowIndex - The index of the `=>`.
+ * @returns The start index, or `-1` when the text before `=>` is not a plain parameter group or a single name (for example a TypeScript return type).
+ * @example arrowParametersStartOf('(a) => 1', 4) // => 0
+ */
+function arrowParametersStartOf(code: string, arrowIndex: number): number {
+  const last = lastNonWhitespaceBefore(code, arrowIndex)
+  if (code[last] === ')') return matchingOpenIndexOf(code, last)
+  if (!isIdentifierCharacter(code[last])) return -1
+  let start = last
+  while (isIdentifierCharacter(code[start - 1])) start -= 1
+  const before = lastNonWhitespaceBefore(code, start)
+  // `): Type =>` is a return type, not a parameter.
+  return code[before] === ':' || code[before] === '.' ? -1 : start
+}
+
+/**
  * Checks whether an arrow whose `=>` is at `arrowIndex` holds the stop in its body.
  * Called by {@link stoppedFunctionAt}.
  * @param code - Blanked source.
@@ -173,11 +196,16 @@ function arrowAt(
   if (stop < bodyStart || stop >= bodyEnd) return undefined
   return {
     headIndex: arrowIndex,
+    parametersStart: arrowParametersStartOf(code, arrowIndex),
+    isBoundaryReadable: true,
     bodyStart,
     bodyEnd,
     parameterNames: arrowParameterNamesOf(code, arrowIndex),
   }
 }
+
+/** Characters that, right before a `{` after a function's parameters, make that brace a type literal of the return type, not the body. */
+const TYPE_LITERAL_PREDECESSORS = ':<|&,(['
 
 /**
  * Skips what sits between the `function` keyword and its parameter list: `*`, the function's name and generics.
@@ -203,6 +231,32 @@ function parameterListStartOf(code: string, keywordIndex: number): number {
 }
 
 /**
+ * Finds where a function whose return type opens with a type literal (`): { ok: boolean } {`) ends, since the first `{` after its parameters is then the type, not the body.
+ * Called by {@link functionAt}.
+ * @param code - Blanked source.
+ * @param parametersEnd - The index of the `)` closing the parameter list.
+ * @param firstBrace - The index of the first `{` after it.
+ * @returns The end (exclusive) of the stretch whose boundary cannot be read, or `undefined` when the first brace is the body.
+ * @example unreadableReturnTypeEndOf('function f(): { a: 1 } { b }', 10, 14) // => 28
+ */
+function unreadableReturnTypeEndOf(
+  code: string,
+  parametersEnd: number,
+  firstBrace: number,
+): number | undefined {
+  const beforeBrace = lastNonWhitespaceBefore(code, firstBrace)
+  if (
+    beforeBrace <= parametersEnd ||
+    !TYPE_LITERAL_PREDECESSORS.includes(code[beforeBrace]!)
+  )
+    return undefined
+  const typeClose = matchingCloseIndexOf(code, firstBrace)
+  const realBody = typeClose === -1 ? -1 : code.indexOf('{', typeClose)
+  const realClose = realBody === -1 ? -1 : matchingCloseIndexOf(code, realBody)
+  return realClose === -1 ? code.length : realClose + 1
+}
+
+/**
  * Checks whether a `function` keyword at `keywordIndex` starts a function whose body holds the stop.
  * Called by {@link stoppedFunctionAt}.
  * @param code - Blanked source.
@@ -224,16 +278,36 @@ function functionAt(
   const cursor = parameterListStartOf(code, keywordIndex)
   if (code[cursor] !== '(') return undefined
   const parametersEnd = matchingCloseIndexOf(code, cursor)
-  const bodyStart = parametersEnd === -1 ? -1 : code.indexOf('{', parametersEnd)
-  if (bodyStart === -1) return undefined
-  const closeIndex = matchingCloseIndexOf(code, bodyStart)
+  const firstBrace =
+    parametersEnd === -1 ? -1 : code.indexOf('{', parametersEnd)
+  if (firstBrace === -1) return undefined
+  const parameterNames = parameterNamesOf(code, cursor + 1, parametersEnd)
+  const unreadableEnd = unreadableReturnTypeEndOf(
+    code,
+    parametersEnd,
+    firstBrace,
+  )
+  if (unreadableEnd !== undefined) {
+    if (stop <= parametersEnd || stop >= unreadableEnd) return undefined
+    return {
+      headIndex: keywordIndex,
+      parametersStart: cursor,
+      isBoundaryReadable: false,
+      bodyStart: firstBrace,
+      bodyEnd: unreadableEnd,
+      parameterNames,
+    }
+  }
+  const closeIndex = matchingCloseIndexOf(code, firstBrace)
   const bodyEnd = closeIndex === -1 ? code.length : closeIndex + 1
-  if (stop < bodyStart || stop >= bodyEnd) return undefined
+  if (stop < firstBrace || stop >= bodyEnd) return undefined
   return {
     headIndex: keywordIndex,
-    bodyStart,
+    parametersStart: cursor,
+    isBoundaryReadable: true,
+    bodyStart: firstBrace,
     bodyEnd,
-    parameterNames: parameterNamesOf(code, cursor + 1, parametersEnd),
+    parameterNames,
   }
 }
 
@@ -560,42 +634,212 @@ function declaredNamesIn(
     .flatMap((declaration) => declaration.names)
 }
 
+/** Keywords whose `(…)` head is followed by a block statement. */
+const BLOCK_HEAD_KEYWORDS: ReadonlySet<string> = new Set([
+  'if',
+  'for',
+  'while',
+  'switch',
+  'catch',
+  'with',
+])
+
+/** Keywords after which a `{` is a block statement or an object literal. */
+const SAFE_BRACE_KEYWORDS: ReadonlySet<string> = new Set([
+  'else',
+  'try',
+  'finally',
+  'do',
+  'return',
+  'yield',
+  'throw',
+])
+
+/** Characters after which a `{` is a block statement or an object literal. */
+const SAFE_BRACE_PREDECESSORS = ';{=(,[:?'
+
 /**
- * Collects the names every function around the stopped one, and the module's top level, declare in a scope that holds the stopped function: their parameters, own-depth declarations, and catch, `for`-head and block bindings whose scope holds it.
- * Why it exists: a name both the stopped function and an enclosing scope declare cannot tell whose value a closure holds, so {@link stoppedFunctionDeclaredNamesOf} drops it (fail closed).
+ * Reads the word that ends at `end`.
+ * Called by {@link braceOpeningIsSafe}.
+ * @param code - Blanked source.
+ * @param end - The index of the word's last character.
+ * @returns The word, or an empty string when no identifier ends there.
+ * @example wordEndingAt('else {', 3) // => 'else'
+ */
+function wordEndingAt(code: string, end: number): string {
+  let start = end
+  while (isIdentifierCharacter(code[start - 1])) start -= 1
+  return isIdentifierCharacter(code[end]) ? code.slice(start, end + 1) : ''
+}
+
+/**
+ * Checks that a `{` opens a block statement or an object literal, never a method, class, static block, namespace, enum, arrow body or JSX container (fail closed).
+ * Called by {@link openBracesAreSafe}.
+ * @param code - Blanked source.
+ * @param braceIndex - The index of the `{`.
+ * @returns `true` only for a known safe opening.
+ * @example braceOpeningIsSafe('if (a) { b }', 7) // => true
+ */
+function braceOpeningIsSafe(code: string, braceIndex: number): boolean {
+  const previous = lastNonWhitespaceBefore(code, braceIndex)
+  if (previous < 0) return false
+  const character = code[previous]!
+  if (SAFE_BRACE_PREDECESSORS.includes(character)) return true
+  if (isIdentifierCharacter(character))
+    return SAFE_BRACE_KEYWORDS.has(wordEndingAt(code, previous))
+  if (character !== ')') return false
+  // `)` opens a block only after `if`, `for`, `for await`, `while`, `switch`, `catch` or `with`.
+  const open = matchingOpenIndexOf(code, previous)
+  if (open === -1) return false
+  const headEnd = lastNonWhitespaceBefore(code, open)
+  const word = wordEndingAt(code, headEnd)
+  if (word !== 'await') return BLOCK_HEAD_KEYWORDS.has(word)
+  const forEnd = lastNonWhitespaceBefore(code, headEnd - word.length + 1)
+  return wordEndingAt(code, forEnd) === 'for'
+}
+
+/**
+ * Checks every `{` still open at the stop between the stopped function's body start and the stop: each must be a known safe opening.
+ * Why it exists: a method, getter, class body or static block has no `function` or `=>` head, so the scanner would attribute a stop inside it to the enclosing function and could copy that function's private values.
  * Called by {@link stoppedFunctionDeclaredNamesOf}.
  * @param code - Blanked source.
  * @param stopped - The stopped function.
- * @returns The outer names; names only a sibling function declares are not outer.
- * @example outerDeclaredNamesOf('const make = (tenant) => (req) => req', stoppedFunctionAt(code, 36)!) // => Set { 'make', 'tenant' }
+ * @param stop - The stop's index.
+ * @returns `true` when every open brace is a safe block or object literal.
+ * @example openBracesAreSafe('function get(t) { return { get() { return t } } }', stoppedFunctionAt(code, 43)!, 43) // => false
  */
-function outerDeclaredNamesOf(
+function openBracesAreSafe(
   code: string,
   stopped: StoppedFunction,
-): ReadonlySet<string> {
-  const names = new Set<string>()
-  let inner = stopped
-  // Walk outwards: each enclosing function must hold the head of the function inside it.
-  for (
-    let enclosing = stoppedFunctionAt(code, inner.headIndex);
-    enclosing;
-    enclosing = stoppedFunctionAt(code, inner.headIndex)
-  ) {
-    for (const name of [
-      ...enclosing.parameterNames,
-      ...declaredNamesIn(
-        code,
-        enclosing.bodyStart,
-        enclosing.bodyEnd,
-        inner.headIndex,
-      ),
-    ])
-      names.add(name)
-    inner = enclosing
+  stop: number,
+): boolean {
+  // A braced body's own brace is the function itself; an expression body starts right at its text.
+  const from =
+    code[stopped.bodyStart] === '{' ? stopped.bodyStart + 1 : stopped.bodyStart
+  const openBrackets: number[] = []
+  for (let index = from; index < stop; index += 1) {
+    const character = code[index]!
+    if ('([{'.includes(character)) openBrackets.push(index)
+    else if (')]}'.includes(character)) openBrackets.pop()
   }
-  // The module's top level is the outermost scope.
-  for (const name of declaredNamesIn(code, 0, code.length, inner.headIndex))
-    names.add(name)
+  return openBrackets
+    .filter((index) => code[index] === '{')
+    .every((index) => braceOpeningIsSafe(code, index))
+}
+
+/**
+ * Finds the span of an arrow whose `=>` is at `arrowIndex` when its body is a certain brace block that does not hold the stop.
+ * Called by {@link siblingSpansOf}.
+ * @param code - Blanked source.
+ * @param arrowIndex - The index of the `=>`.
+ * @param stop - The stop's index.
+ * @returns The span from its parameters to its body end, or `undefined` when it is not certain or holds the stop.
+ * @example siblingArrowSpanAt('const a = (x) => { x }', 16, 99) // => { start: 10, end: 22 }
+ */
+function siblingArrowSpanAt(
+  code: string,
+  arrowIndex: number,
+  stop: number,
+): Region | undefined {
+  const bodyStart = skipWhitespace(code, arrowIndex + 2)
+  const start = arrowParametersStartOf(code, arrowIndex)
+  if (code[bodyStart] !== '{' || start === -1) return undefined
+  const closeIndex = matchingCloseIndexOf(code, bodyStart)
+  if (closeIndex === -1 || (stop >= start && stop <= closeIndex))
+    return undefined
+  return { start, end: closeIndex + 1 }
+}
+
+/**
+ * Finds the span of a `function` whose parameter list is followed directly by a brace body that does not hold the stop.
+ * Called by {@link siblingSpansOf}.
+ * @param code - Blanked source.
+ * @param keywordIndex - The index of `function`.
+ * @param stop - The stop's index.
+ * @returns The span from its parameter list to its body end, or `undefined` when it is not certain or holds the stop.
+ * @example siblingFunctionSpanAt('function f(x) { x }', 0, 99) // => { start: 10, end: 19 }
+ */
+function siblingFunctionSpanAt(
+  code: string,
+  keywordIndex: number,
+  stop: number,
+): Region | undefined {
+  const start = parameterListStartOf(code, keywordIndex)
+  if (code[start] !== '(') return undefined
+  const parametersEnd = matchingCloseIndexOf(code, start)
+  const bodyStart =
+    parametersEnd === -1 ? -1 : skipWhitespace(code, parametersEnd + 1)
+  if (bodyStart === -1 || code[bodyStart] !== '{') return undefined
+  const closeIndex = matchingCloseIndexOf(code, bodyStart)
+  if (closeIndex === -1 || (stop >= start && stop <= closeIndex))
+    return undefined
+  return { start, end: closeIndex + 1 }
+}
+
+/**
+ * Finds the spans of other functions that certainly do not hold the stop: an arrow whose `=>` is followed by `{`, and a `function` whose parameter list is followed directly by `{`; each from its parameters to its body end.
+ * Called by {@link outerNamesOf}.
+ * @param code - Blanked source.
+ * @param stop - The stop's index.
+ * @returns The spans, possibly nested.
+ * @example siblingSpansOf('const a = (x) => { x }', 99) // => [{ start: 10, end: 22 }]
+ */
+function siblingSpansOf(code: string, stop: number): Region[] {
+  return [
+    ...[...code.matchAll(/=>/g)].map((match) =>
+      siblingArrowSpanAt(code, match.index, stop),
+    ),
+    ...[...code.matchAll(/(?<![\w$.])function(?![\w$])/g)].map((match) =>
+      siblingFunctionSpanAt(code, match.index, stop),
+    ),
+  ].filter((span) => span !== undefined)
+}
+
+/**
+ * Collects every identifier of the file that could be an enclosing scope's name: all identifier tokens outside the stopped function's own span and outside the certain spans of other functions, except property names after a single `.`.
+ * Why it exists: a name an enclosing function or the module also declares cannot tell whose value a closure holds, so {@link stoppedFunctionDeclaredNamesOf} drops it. An over-approximation cannot miss a destructured, comma-separated, catch, imported or parameter name of an enclosing scope; a surplus name only withholds a closure.
+ * Called by {@link stoppedFunctionDeclaredNamesOf}.
+ * @param tokenCode - Source with comments, templates and strings blanked, regex literals kept.
+ * @param code - The same source with regex literals blanked too (finds the spans).
+ * @param stopped - The stopped function.
+ * @param ownEnd - Where the stopped function's own span ends (exclusive).
+ * @param stop - The stop's index.
+ * @returns The outer names.
+ * @example outerNamesOf(tokenCode, code, stoppedFunctionAt(code, 36)!, 38, 36) // => Set { 'const', 'make', 'tenant' }
+ */
+function outerNamesOf(
+  tokenCode: string,
+  code: string,
+  stopped: StoppedFunction,
+  ownEnd: number,
+  stop: number,
+): ReadonlySet<string> {
+  const isExcluded = new Uint8Array(tokenCode.length)
+  const exclude = ({ start, end }: Region): void => {
+    isExcluded.fill(1, Math.max(0, start), Math.min(end, tokenCode.length))
+  }
+  // The own span starts at the parameter list; an unreadable list starts at the head.
+  exclude({
+    start:
+      stopped.parametersStart === -1
+        ? stopped.headIndex
+        : stopped.parametersStart,
+    end: ownEnd,
+  })
+  // A sibling span counts only when both readings of the text agree on it (a misread regex literal cannot stretch it over an enclosing name).
+  const confirmed = new Set(
+    siblingSpansOf(tokenCode, stop).map(({ start, end }) => `${start}:${end}`),
+  )
+  for (const span of siblingSpansOf(code, stop))
+    if (confirmed.has(`${span.start}:${span.end}`)) exclude(span)
+  const names = new Set<string>()
+  for (const match of tokenCode.matchAll(/[A-Za-z_$][\w$]*/g)) {
+    if (isExcluded[match.index] === 1) continue
+    // A property name directly after a single `.` is no binding; `...rest` is.
+    const before = match.index - 1
+    if (tokenCode[before] === '.' && tokenCode[before - 1] !== '.') continue
+    names.add(match[0])
+  }
   return names
 }
 
@@ -605,12 +849,12 @@ function outerDeclaredNamesOf(
  * Why it exists: Bun reports a function's own scopes and its enclosing functions' scopes alike as closures, and an enclosing factory's closure may hold a client or a key; positive evidence from the stopped function's source keeps those out.
  * When it runs: once per Bun stop capture; called by {@link captureReplayDebugSnapshot} for {@link ownClosureScopePositionsOf}.
  *
- * The span is the innermost function whose body holds the stop (comments, template literals, strings and regex literals blanked first), from its body start to the end of the stop line or of its own body when that comes first, plus its own parameters. A name an enclosing function or the module also declares ({@link outerDeclaredNamesOf}) is ambiguous and left out, so the closure holding it is not copied. Only declarations whose scope holds the stop count (see {@link declaredNamesIn}), so a name from a closed inner function or block cannot make an enclosing factory's closure look like the stopped function's own. A parameter list that cannot be read with confidence counts as declaring nothing.
+ * The span is the innermost function whose body holds the stop (comments, template literals, strings and regex literals blanked first), from its body start to the end of the stop line or of its own body when that comes first, plus its own parameters. A name that appears anywhere in the enclosing functions' or the module's own code ({@link outerNamesOf}) is ambiguous and left out, so the closure holding it is not copied. Only declarations whose scope holds the stop count (see {@link declaredNamesIn}), so a name from a closed inner function or block cannot make an enclosing factory's closure look like the stopped function's own. A parameter list that cannot be read with confidence counts as declaring nothing.
  *
  * @param sourceText - The stopped file's text.
  * @param line - The stop's 1-based line.
  * @param column - The stop's 1-based column; the end of the line when unknown.
- * @returns The declared names, or `undefined` when the stop position is outside the text or no function holds it.
+ * @returns The declared names, or `undefined` when the stop position is outside the text, no function holds it, the function's boundary cannot be read (a method, class body, static block, return type with a type literal, or an unknown brace around the stop), or the source is above {@link BUN_CLOSURE_CLASSIFICATION_MAX_SOURCE_CHARS}.
  * @example
  * stoppedFunctionDeclaredNamesOf('const h = ({ query }) => {\n  const name = 1\n  return name\n}', 3, 3) // => Set { 'query', 'name' }
  */
@@ -619,9 +863,11 @@ export function stoppedFunctionDeclaredNamesOf(
   line: number,
   column?: number,
 ): ReadonlySet<string> | undefined {
-  const code = blankRegexLiterals(
-    blankStringContents(blankCommentsAndTemplates(sourceText)),
-  )
+  // Above the cap the scans could stall the stop capture: copy nothing.
+  if (sourceText.length > BUN_CLOSURE_CLASSIFICATION_MAX_SOURCE_CHARS)
+    return undefined
+  const tokenCode = blankStringContents(blankCommentsAndTemplates(sourceText))
+  const code = blankRegexLiterals(tokenCode)
   const lineStarts = [0]
   for (let index = 0; index < code.length; index += 1)
     if (code[index] === '\n') lineStarts.push(index + 1)
@@ -635,8 +881,14 @@ export function stoppedFunctionDeclaredNamesOf(
       ? Math.min(lineStart + column - 1, lineEnd)
       : lineEnd
   const stopped = stoppedFunctionAt(code, stop)
-  if (!stopped) return undefined
-  const outerNames = outerDeclaredNamesOf(code, stopped)
+  // A boundary that cannot be read, or a stop inside a method, class body or other unknown brace, withholds every closure.
+  if (!stopped || !stopped.isBoundaryReadable) return undefined
+  if (!openBracesAreSafe(code, stopped, stop)) return undefined
+  const ownEnd =
+    code[stopped.bodyStart] === '{'
+      ? stopped.bodyEnd
+      : Math.min(lineEnd, stopped.bodyEnd)
+  const outerNames = outerNamesOf(tokenCode, code, stopped, ownEnd, stop)
   const ownNames = [
     ...stopped.parameterNames,
     ...declaredNamesIn(
@@ -646,6 +898,6 @@ export function stoppedFunctionDeclaredNamesOf(
       stop,
     ),
   ]
-  // A name an enclosing scope also declares never authorizes a closure.
+  // A name that appears anywhere in the enclosing code never authorizes a closure.
   return new Set(ownNames.filter((name) => !outerNames.has(name)))
 }

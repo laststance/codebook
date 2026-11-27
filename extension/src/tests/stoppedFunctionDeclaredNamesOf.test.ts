@@ -500,3 +500,195 @@ test('a function beside a sibling function keeps its own names', () => {
   // Assert
   assert.deepEqual(sorted(names), ['greeting', 'name'])
 })
+
+// Value: protects=a stop inside an object-literal method named like its enclosing function is not attributed to that function, so the factory's private `tenant` is never declared; fails_when=method syntax is skipped and `get(tenant)` is read as the stopped function; seam=`function get(tenant) { return { get() { … } } }`; no_claim=values the method held
+test('a stop inside a same-named object method withholds every declared name', () => {
+  // Arrange
+  const source = [
+    'function get(tenant) {',
+    '  return {',
+    '    get() {',
+    '      return tenant',
+    '    },',
+    '  }',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 4, 7)
+  // Assert
+  assert.equal(names, undefined)
+})
+
+// Value: protects=bodies without a function or arrow head (class method, getter, static block, object method) and a return type that opens with a type literal withhold every declared name; fails_when=a stop in one of them is attributed to the enclosing function; seam=five source shapes; no_claim=values those bodies held
+test('a stop in a class method, getter, static block or typed-return body withholds every declared name', () => {
+  // Arrange
+  const classMethod = [
+    'const make = (tenant) => {',
+    '  class Box {',
+    '    run(input) {',
+    '      return tenant',
+    '    }',
+    '  }',
+    '}',
+  ].join('\n')
+  const getter = [
+    'const make = (tenant) => {',
+    '  return {',
+    '    get value() {',
+    '      return tenant',
+    '    },',
+    '  }',
+    '}',
+  ].join('\n')
+  const staticBlock = [
+    'const make = (tenant) => {',
+    '  class Box {',
+    '    static {',
+    '      tenant.start()',
+    '    }',
+    '  }',
+    '}',
+  ].join('\n')
+  const objectMethod = [
+    'const make = (tenant) => ({',
+    '  run(input) {',
+    '    return tenant',
+    '  },',
+    '})',
+  ].join('\n')
+  const typedReturn = [
+    'const make = (tenant) => {',
+    '  return function (req): { ok: boolean } {',
+    '    return tenant',
+    '  }',
+    '}',
+  ].join('\n')
+  // Act
+  const results = [
+    stoppedFunctionDeclaredNamesOf(classMethod, 4, 7),
+    stoppedFunctionDeclaredNamesOf(getter, 4, 7),
+    stoppedFunctionDeclaredNamesOf(staticBlock, 4, 7),
+    stoppedFunctionDeclaredNamesOf(objectMethod, 3, 5),
+    stoppedFunctionDeclaredNamesOf(typedReturn, 3, 5),
+  ]
+  // Assert
+  assert.deepEqual(results, [
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ])
+})
+
+// Value: protects=an enclosing `const index = 0, tenant = …` keeps `tenant` out of an inner handler that declares its own `tenant`; fails_when=only the first declarator of an enclosing declaration counts; seam=comma-separated enclosing declaration; no_claim=values
+test('an enclosing comma-separated declaration keeps its later names out of the handler names', () => {
+  // Arrange
+  const source = [
+    'function make() {',
+    '  const index = 0, tenant = loadTenant()',
+    '  return (request) => {',
+    '    const tenant = request.tenant',
+    '    return tenant',
+    '  }',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 5, 5)
+  // Assert
+  assert.deepEqual(sorted(names), ['request'])
+})
+
+// Value: protects=an enclosing destructured `const { tenant } = config` keeps `tenant` out of an inner handler declaring its own; fails_when=destructured enclosing names are missed; seam=enclosing object pattern; no_claim=values
+test('an enclosing destructured declaration keeps its names out of the handler names', () => {
+  // Arrange
+  const source = [
+    'function make(config) {',
+    '  const { tenant } = config',
+    '  return (request) => {',
+    '    const tenant = request.tenant',
+    '    return tenant',
+    '  }',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 5, 5)
+  // Assert
+  assert.deepEqual(sorted(names), ['request'])
+})
+
+// Value: protects=a division on an enclosing declaration line cannot hide the enclosing `client` from the guard; fails_when=the text between the two slashes is blanked as a regex literal and `client` disappears; seam=`const ratio = a / b, client = make() / c`; no_claim=values
+test('an enclosing declaration after a division keeps its name out of the handler names', () => {
+  // Arrange
+  const source = [
+    'function make(a, b, c) {',
+    '  const ratio = a / b, client = make() / c',
+    '  return (request) => {',
+    '    const client = request.client',
+    '    return client',
+    '  }',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 5, 5)
+  // Assert
+  assert.deepEqual(sorted(names), ['request'])
+})
+
+// Value: protects=two sibling braced handlers that both take `({ body })` keep `body` for the stopped one; fails_when=the sibling's own parameter excludes the stopped handler's; seam=sibling braced arrows; no_claim=expression-bodied siblings
+test('two sibling braced handlers with one parameter name each keep their own name', () => {
+  // Arrange
+  const source = [
+    "app.post('/a', ({ body }) => {",
+    '  return body',
+    '})',
+    "app.post('/b', ({ body }) => {",
+    '  return body',
+    '})',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 5, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['body'])
+})
+
+// Value: protects=the Cycle 0152 trial shapes keep their own names: the Elysia handler gives query and name, a typed `greet` gives name and greeting; fails_when=the guards drop a name only the stopped function declares; seam=both trial sources; no_claim=other frameworks
+test('the Elysia handler and the typed greet function keep their own names', () => {
+  // Arrange
+  const handler = [
+    "import { Elysia } from 'elysia'",
+    'new Elysia()',
+    '  .get("/greet", ({ query }) => {',
+    '    const name = query.name ?? "Elysia"',
+    '    return greet(name)',
+    '  })',
+  ].join('\n')
+  const typed = [
+    'export function greet(name: string): string {',
+    '  const greeting = `Hello ${name}`',
+    '  return greeting',
+    '}',
+  ].join('\n')
+  // Act
+  const handlerNames = stoppedFunctionDeclaredNamesOf(handler, 5, 5)
+  const typedNames = stoppedFunctionDeclaredNamesOf(typed, 3, 3)
+  // Assert
+  assert.deepEqual(sorted(handlerNames), ['name', 'query'])
+  assert.deepEqual(sorted(typedNames), ['greeting', 'name'])
+})
+
+// Value: protects=a stopped file above the length cap copies no closure scope; fails_when=an oversized or minified file is scanned; seam=a handler padded past 512,000 characters; no_claim=the exact cap
+test('a stopped file above the length cap declares no names', () => {
+  // Arrange
+  const padding = `// ${'x'.repeat(512_001)}`
+  const source = [
+    padding,
+    'const run = (value) => {',
+    '  return value',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 3, 3)
+  // Assert
+  assert.equal(names, undefined)
+})
