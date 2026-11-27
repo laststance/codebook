@@ -151,6 +151,8 @@ export type NodeServerRunDependencies = NodeProcessRunDependencies & {
       localPort: number
       remotePort: number
     }) => Promise<void>
+    /** Called synchronously after the peer check and right before the first byte is written; throws to refuse, and nothing is sent. */
+    beforeWrite?: () => void
     signal: AbortSignal
     /** Hides private roots in the response body before it is cut for display. */
     sanitize?: (text: string) => string
@@ -613,6 +615,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       runId: this.input.runId,
       verifyPeer: (connection): Promise<void> =>
         this.verifyPeer(connection, server, port),
+      beforeWrite: (): void => this.beforeRequestWrite(),
       signal: this.requestAbort.signal,
       // The body is the server's own text: only private roots are hidden, its spacing and lines stay.
       sanitize:
@@ -921,7 +924,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       () => this.timeOutRequest('wall-time'),
       NODE_SERVER_REQUEST_WALL_LIMIT_MS,
     )
-    this.core.requireDebugger().setRequestWindow(true)
+    // The debugger's attribution window opens later, in {@link beforeRequestWrite}, when the first byte is about to be written.
     // With sign-in the history opens the declared request after the sign-in entry.
     if (window.openHistory)
       this.input.history?.openRequest(this.elapsedSinceLaunchMs(), {
@@ -967,6 +970,20 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.cancelWall?.()
     this.core.requireDebugger().setRequestWindow(false)
     this.notify()
+  }
+
+  /**
+   * Rechecks the declared stops and opens the debugger's request-attribution window, synchronously, right before a sender writes its first byte.
+   *
+   * Why it exists: the sender awaits a process lookup between connecting and writing, and a stop withdrawn during it would otherwise let a mutating request go out unobserved; a pause that arrives before the bytes are written is no effect of the request, so the attribution window must not open earlier.
+   * When it runs: passed to every sender as `beforeWrite` ({@link senderInput}); the sign-in request and the declared request after it included.
+   * @throws `RUN_NOT_READY` with the refusal sentence ({@link NodeProcessRun.requestRefusalNow}); the sender then writes nothing.
+   * @example this.beforeRequestWrite() // throws StudyError('RUN_NOT_READY', 'Declared stop 1 … did not bind on Bun: …')
+   */
+  private beforeRequestWrite(): void {
+    const refusal = this.core.requestRefusalNow()
+    if (refusal) throw new StudyError('RUN_NOT_READY', refusal)
+    this.core.requireDebugger().setRequestWindow(true)
   }
 
   /** Reads which process the connected socket reaches and refuses unless it is the launched server. */
@@ -1027,10 +1044,13 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (
       this.input.configuration.signIn &&
       this.requestPhase === 'request' &&
-      isRefusalBeforeAnyByte(error) &&
-      error.code !== 'RUN_NOT_READY'
+      isRefusalBeforeAnyByte(error)
     ) {
-      this.failRequest(error.code, error.message)
+      // A stop withdrawn during the peer check refuses with `RUN_NOT_READY`: the request ends as the earlier refusal after the sign-in does.
+      this.failRequest(
+        error.code === 'RUN_NOT_READY' ? 'REQUEST_FAILED' : error.code,
+        error.message,
+      )
       return
     }
     this.failRequest(

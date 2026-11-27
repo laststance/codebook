@@ -390,6 +390,14 @@ export function fakeRequestSender(order: string[]) {
       void verified.then(
         () => {
           if (input.signal.aborted) return
+          // As the real sender: the run's last synchronous check, then the write; a refusal writes nothing.
+          try {
+            input.beforeWrite?.()
+          } catch (error) {
+            answers.written.reject(error)
+            answers.response.reject(error)
+            return
+          }
           this.bytesWritten += 1
           answers.written.resolve()
         },

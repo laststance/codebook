@@ -687,6 +687,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       reason: stop.reason,
       declaredStopIndex,
       location: this.locationOf(frame),
+      // The window as it stood when the stop arrived (Bun only), the same state the ledger verdict above used.
+      ...(stop.inRequestWindowAtStop === undefined
+        ? {}
+        : { inRequestWindowAtStop: stop.inRequestWindowAtStop }),
     })
   }
 

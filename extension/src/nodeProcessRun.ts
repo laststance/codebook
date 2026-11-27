@@ -953,13 +953,15 @@ export class NodeProcessRun {
    * - `start-hit` for a declared stop hit before the run was prepared
    * - `sign-in-hit` for one hit while the owner's sign-in request is out
    * - `request-hit` for one hit inside the owner's window
-   * - `unattributed` for one hit outside it
+   * - `unattributed` for one hit outside it, or one that arrived before the request's first byte was written (a Bun pause: the attribution of the arrival moment, never re-derived from the later request state)
    */
   private classify(
     pause: NodeServerDebuggerPause,
   ): 'learner' | 'start-hit' | 'sign-in-hit' | 'request-hit' | 'unattributed' {
     if (pause.declaredStopIndex === undefined) return 'learner'
     if (!this.prepared) return 'start-hit'
+    // The debugger judged the window when the stop arrived: a stop outside it is not the request's, however long the classification took.
+    if (pause.inRequestWindowAtStop === false) return 'unattributed'
     if (this.hooks.inSignIn?.()) return 'sign-in-hit'
     return this.hooks.inWindow() ? 'request-hit' : 'unattributed'
   }

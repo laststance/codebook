@@ -6,6 +6,7 @@ import { StudyError } from '../errors'
 import { defer } from './utils/defer'
 import {
   createHarness,
+  type HarnessOptions,
   RESPONSE_200,
   sendRequest,
   until,
@@ -294,4 +295,93 @@ test('a Bun run with sign-in writes no declared request when a stop was withdraw
     JSON.stringify(harness.run.view()),
     /Declared stop 1 at src\/routes\/users\.ts:14 did not bind on Bun/,
   )
+})
+
+// Value: protects=a Bun stop withdrawn while the sender's peer check is still reading the connection's holder is refused before the first byte, and the request leaves nothing on the wire; fails_when=the binding check runs only before the sender connects and the POST is written after the stop is gone; seam=the harness's peer check held open by a gate while the debugger withdraws stop 0; no_claim=how js-debug withdraws a binding
+test('a Bun run writes no request byte when a declared stop is withdrawn while the connection is being verified', async () => {
+  // Arrange
+  const peerCheck = defer<void>()
+  const harness = createHarness({
+    launchLoader: BUN_LOADER,
+    peerCheckGate: peerCheck.promise,
+  })
+  await harness.run.prepare()
+  const outcome = harness.run.sendRequest('key-1').then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Act
+  harness.debug.withdrawnAfterArming.add(0)
+  peerCheck.resolve()
+  const error = await outcome
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'RUN_NOT_READY')
+  assert.match(
+    error.message,
+    /^Declared stop 1 at src\/routes\/users\.ts:14 did not bind on Bun/,
+  )
+  assert.equal(harness.sender.bytesWritten, 0)
+  assert.equal(harness.run.view().state, 'ready')
+  assert.equal(harness.run.view().request, undefined)
+  assert.equal(harness.order.includes('window:true'), false)
+})
+
+// Value: protects=the declared request after a sign-in writes no byte when a stop is withdrawn while its own connection is being verified, and the request ends with the unbound-stop sentence; fails_when=the recheck runs before the declared sender connects and the withdrawal during its peer check is ignored; seam=the harness's peer check held open for the declared request only; no_claim=the sign-in's server behaviour
+test('a Bun run with sign-in writes no declared request byte when a stop is withdrawn while its connection is being verified', async () => {
+  // Arrange
+  const options: HarnessOptions = {
+    launchLoader: BUN_LOADER,
+    signIn: {
+      path: '/login',
+      fields: { email: 'learner@example.test' },
+      secretField: 'password',
+      secret: 'ask-learner',
+    },
+  }
+  const harness = createHarness(options)
+  await harness.run.prepare()
+  await harness.run.sendRequest('key-1', { secret: 'hunter2-correct-horse' })
+  const bytesAfterSignIn = harness.sender.bytesWritten
+  // The declared request's peer check stays open until the stop is withdrawn.
+  const peerCheck = defer<void>()
+  options.peerCheckGate = peerCheck.promise
+  const [signInExchange] = harness.sender.exchanges
+  signInExchange?.onSetCookie?.(['sid=s%3Aabc123def456; Path=/; HttpOnly'])
+  signInExchange?.response.resolve(RESPONSE_200)
+  await until(harness, () => harness.sender.exchanges.length === 2)
+  // Act
+  harness.debug.withdrawnAfterArming.add(0)
+  peerCheck.resolve()
+  await until(harness, (view) => view.state === 'request-failed')
+  // Assert
+  assert.equal(bytesAfterSignIn, 1)
+  assert.equal(harness.sender.bytesWritten, 1)
+  assert.match(
+    JSON.stringify(harness.run.view()),
+    /Declared stop 1 at src\/routes\/users\.ts:14 did not bind on Bun/,
+  )
+})
+
+// Value: protects=a Bun pause that arrived before the request's bytes were written (the learner's Pause) and is then reported as a breakpoint at a declared line is held for the learner and records no capture, whatever the request state is when its stack has been read; fails_when=the run re-derives the attribution from the request in flight and saves a replay entry for the learner's pause; seam=the harness debugger reporting the arrival-time window as closed; no_claim=the real adapter's event order
+test('a Bun pause that arrived before the request was written is left to the learner and recorded as no capture', async () => {
+  // Arrange
+  const harness = createHarness({ launchLoader: BUN_LOADER })
+  await harness.run.prepare()
+  await sendRequest(harness)
+  // Act
+  harness.debug.pause({
+    declaredStopIndex: 0,
+    location: { path: 'src/routes/users.ts', line: 14 },
+    inRequestWindowAtStop: false,
+  })
+  // Assert
+  const view = harness.run.view()
+  assert.equal(view.captures.length, 0)
+  assert.equal(view.heldPause?.kind, 'unattributed')
+  assert.equal(
+    harness.order.some((step) => step.startsWith('capture:')),
+    false,
+  )
+  assert.deepEqual(harness.debug.resumed, [])
 })

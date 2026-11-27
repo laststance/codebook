@@ -36,6 +36,10 @@ export type NodeServerDebuggerPause = {
   declaredStopIndex?: number
   /** The top frame, repository-relative when inside the repository, else the file name alone. */
   location?: { path: string; line: number }
+  /**
+   * A Bun run: whether the request-attribution window was open when the adapter's `stopped` arrived. The run takes it as the pause's attribution and never re-derives it from the request state at classification time, so a pause that arrived before the request's bytes (the learner's Pause) is never read as a hit the request caused. Absent for a node run, whose declared stops cannot be hit before the request.
+   */
+  inRequestWindowAtStop?: boolean
 }
 
 /** What a captured owned pause reads, already redacted. */
