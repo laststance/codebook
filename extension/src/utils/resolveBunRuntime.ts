@@ -86,7 +86,7 @@ function endProbeTree(child: ChildProcess): void {
  *
  * The probe gets the same restricted environment as the server launch ({@link buildNodeServerEnvironment}) and a fresh private empty folder (mode 0700, made inside the OS temp folder by `mkdtemp` and removed after the read, also when the read fails or times out) as its working folder. A wrapper on the PATH or a `bunfig.toml` preload therefore never sees the editor's credentials or the opened repository's configuration, and no other local user can plant a `bunfig.toml` or `.env` there first, as they could in a shared `/tmp`, even when the version check refuses the run. A failed removal never replaces the read's own answer or error: a leftover empty private folder is harmless.
  *
- * The probe leads its own process group (POSIX) and the deadline ends the whole tree ({@link endProbeTree}), so a `bun` wrapper that starts the real Bun as a child and waits leaves nothing running when it times out.
+ * The probe leads its own process group (POSIX) and the deadline ends the whole tree ({@link endProbeTree}), so a `bun` wrapper that starts the real Bun as a child and waits leaves nothing running when it times out. The deadline and the output cap also close the parent's stdout pipe and reject at once, never waiting for `close`, so a helper that left the group and keeps the pipe open cannot hold the start or the folder removal.
  *
  * Called by {@link resolveBunRuntime} when a `loader: "bun"` run resolves its Bun.
  * @param program - `bun` (looked up on the PATH) or an absolute path.
@@ -119,11 +119,14 @@ export async function runBunProgram(
       const chunks: Buffer[] = []
       let outputBytes = 0
       let failure: Error | undefined
-      // The first failure wins; the whole tree ends with it.
+      // The first failure wins; the whole tree ends with it, and the probe is rejected at once.
       const fail = (error: Error): void => {
         if (failure) return
         failure = error
         endProbeTree(child)
+        // A descendant that left the group (setsid) or survived taskkill can keep the pipe open and `close` may never come; closing our end and rejecting here ends the wait without it.
+        child.stdout.destroy()
+        reject(error)
       }
       timer = setTimeout(
         () =>

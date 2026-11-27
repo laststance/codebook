@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   resolveBunRuntime,
   runBunProgram,
@@ -386,10 +387,16 @@ test('the identity probe ends a wrapper and the child it started at the deadline
   let childPid = 0
   try {
     // Act
-    const failure = runBunProgram(fakeBun, [], 500)
+    const failure = runBunProgram(fakeBun, [], 2_000)
+    // The wrapper must have started its child before the deadline can mean anything.
+    childPid = await waitUntil(
+      async () =>
+        Number((await readFile(childPidFile, 'utf8').catch(() => '')).trim()),
+      'the wrapper to record its child pid',
+      10_000,
+    )
     // Assert
     await assert.rejects(failure, { code: 'ETIMEDOUT' })
-    childPid = Number((await readFile(childPidFile, 'utf8')).trim())
     assert.ok(childPid > 1)
     const waitDeadline = Date.now() + 5_000
     let alive = true
@@ -406,6 +413,65 @@ test('the identity probe ends a wrapper and the child it started at the deadline
     if (childPid > 1) {
       try {
         process.kill(childPid, 'SIGKILL')
+      } catch {
+        // Already gone.
+      }
+    }
+    await removeTestFolder(folder)
+  }
+})
+
+// Value: protects=a bun wrapper whose helper leaves the process group and keeps stdout open cannot hang the identity check past its deadline, and the private folder is still removed; fails_when=the probe waits for the pipe to close after the deadline, so the start never settles and the folder stays; seam=the default reader against a fake wrapper that starts a setsid helper holding stdout and exits; no_claim=Windows taskkill
+test('the identity probe rejects at the deadline and removes its folder although a helper outside the group keeps stdout open', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') {
+    context.skip('process groups and setsid do not apply on Windows')
+    return
+  }
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-bun-probe-'))
+  const fakeBun = join(folder, 'fake-bun')
+  const helper = join(folder, 'helper')
+  const helperPidFile = join(folder, 'helper-pid')
+  const recordedFolder = join(folder, 'recorded-folder')
+  // The helper records its pid, then becomes a long sleep that inherits stdout.
+  await writeFile(
+    helper,
+    `#!/bin/sh\necho $$ > "${helperPidFile}"\nexec sleep 30\n`,
+  )
+  await chmod(helper, 0o755)
+  // setsid where it exists, else perl's POSIX::setsid (macOS has no setsid command); the wrapper then exits.
+  await writeFile(
+    fakeBun,
+    `#!/bin/sh\npwd -P > "${recordedFolder}"\nif command -v setsid >/dev/null 2>&1; then setsid "${helper}" &\nelse perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "${helper}" &\nfi\nexit 0\n`,
+  )
+  await chmod(fakeBun, 0o755)
+  let helperPid = 0
+  try {
+    // Act
+    const outcome = await Promise.race([
+      runBunProgram(fakeBun, [], 1_000).then(
+        () => 'resolved',
+        (error: unknown) => error,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 6_000)),
+    ])
+    helperPid = Number(
+      (await readFile(helperPidFile, 'utf8').catch(() => '')).trim(),
+    )
+    // Assert
+    assert.ok(
+      outcome instanceof Error && 'code' in outcome,
+      `expected a timeout error, got ${String(outcome)}`,
+    )
+    assert.equal(outcome.code, 'ETIMEDOUT')
+    const probeFolder = (await readFile(recordedFolder, 'utf8')).trim()
+    assert.notEqual(probeFolder, '')
+    await assert.rejects(stat(probeFolder), { code: 'ENOENT' })
+  } finally {
+    // The helper is ended by the pid it recorded, never by pattern.
+    if (helperPid > 1) {
+      try {
+        process.kill(helperPid, 'SIGKILL')
       } catch {
         // Already gone.
       }
