@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { linkSync, readdirSync } from 'node:fs'
+import { linkSync, lstatSync, readdirSync, writeFileSync } from 'node:fs'
 import { link, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -89,6 +89,45 @@ async function durableEnd(dir) {
 }
 
 /**
+ * Order observation, closure and grant links across independent Node processes. SQLite owns the OS lock
+ * until the synchronous filesystem operation finishes or the process exits. No journal data lives in the database.
+ * @param action - A synchronous directory check or link. Collection, durable sync and terminal recovery run outside the lock.
+ * @example await withPublicationLock(dir, () => linkSync(prepared, destination))
+ */
+async function withPublicationLock(dir, action) {
+  const { DatabaseSync } = await import('node:sqlite')
+  const lockFile = join(dir, '.publication.sqlite')
+  // Only the first publisher creates the private file. SQLite manages every descriptor of an existing lock.
+  if (!lstatSync(lockFile, { throwIfNoEntry: false })) {
+    try {
+      writeFileSync(lockFile, '', { flag: 'wx', mode: 0o600 })
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+    }
+  }
+  if (!lstatSync(lockFile).isFile())
+    throw new Error('The trial publication lock must be a regular file')
+  const database = new DatabaseSync(lockFile)
+  try {
+    const limit = performance.now() + PROBE_LEASE_MS
+    // BEGIN IMMEDIATE takes SQLite's process-owned write lock. Its default busy timeout is zero.
+    for (;;) {
+      try {
+        database.exec('BEGIN IMMEDIATE')
+        break
+      } catch (error) {
+        if (error.errcode !== 5 || performance.now() >= limit) throw error
+        // SQLITE_BUSY means another publisher holds the lock. Other work in this process can still finish.
+        await delay(10)
+      }
+    }
+    return action()
+  } finally {
+    database.close()
+  }
+}
+
+/**
  * Publish one complete, synced host record. An existing record wins even if two readers finish together.
  * @example await publish(trialDir, 'end.json', { outcome: 'healthy' })
  */
@@ -104,7 +143,16 @@ async function publish(dir, name, record) {
     }
     let published = record
     try {
-      await link(tmp, join(dir, name))
+      const destination = join(dir, name)
+      if (
+        EVIDENCE_FILE.test(name) ||
+        name === PLAN_AUTHORIZATION ||
+        name === 'closing.json'
+      ) {
+        await withPublicationLock(dir, () => linkSync(tmp, destination))
+      } else {
+        await link(tmp, destination)
+      }
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
       published = await readRecord(join(dir, name))
@@ -135,20 +183,27 @@ async function stopDecision(dir) {
 }
 
 /**
- * Verify the trial still has an observable next stop before committing or reusing permission.
- * Evidence files are append-only. A probe that finished while its peers' records were read must also be checked.
- * @example await openForStopPlan(dir, deadline, now)
+ * Recover any known stop, then compare its append-only evidence set and commit the grant under the same
+ * lock that publishes observations. A changed set must be read before granting or reusing permission.
+ * @param commit - Links the prepared grant when a new planner wins. A retry only rechecks the earlier grant.
+ * @example await openForStopPlan(dir, deadline, now, () => linkSync(prepared, destination))
  */
-async function openForStopPlan(dir, deadline, now) {
+async function openForStopPlan(dir, deadline, now, commit) {
   do {
     const files = await evidenceFiles(dir)
     if (await recoverRecordedStop(dir, deadline, files)) return false
-    // The old format used only closing.json. New closers also compete for the final grant link.
-    if (await readRecord(join(dir, 'closing.json'))) return false
-    const count = readdirSync(dir).filter((name) =>
-      EVIDENCE_FILE.test(name),
-    ).length
-    if (count === files.length) return now() < deadline
+    const granted = await withPublicationLock(dir, () => {
+      const names = readdirSync(dir)
+      if (names.includes('closing.json')) return false
+      if (
+        names.filter((name) => EVIDENCE_FILE.test(name)).length !== files.length
+      )
+        return null
+      if (now() >= deadline) return false
+      commit?.()
+      return true
+    })
+    if (granted !== null) return granted
   } while (now() < deadline)
   return false
 }
@@ -167,10 +222,11 @@ async function commitStopPlan(dir, row, decisionAt, deadline, now) {
     preparedAt: new Date(decisionAt).toISOString(),
   })
   // Recover any stop published during preparation before racing closure for the final link.
-  if (!(await openForStopPlan(dir, deadline, now)) || now() >= deadline)
-    return false
   try {
-    linkSync(join(dir, name), join(dir, PLAN_AUTHORIZATION))
+    const won = await openForStopPlan(dir, deadline, now, () =>
+      linkSync(join(dir, name), join(dir, PLAN_AUTHORIZATION)),
+    )
+    if (!won) return false
   } catch (error) {
     if (error.code !== 'EEXIST') throw error
     // An earlier successful planner may also be retried, but a new caller must still find an open trial.

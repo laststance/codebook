@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { on } from 'node:events'
-import { watch } from 'node:fs'
+import { watch, writeFileSync } from 'node:fs'
 import {
   link,
   mkdir,
@@ -2057,3 +2057,125 @@ test('a past stopped-only reading, transport failure and pending probe allow a f
   // Assert
   assert.equal(plan.at, at(3))
 })
+
+for (const plannerExits of [false, true]) {
+  test(`a second process cannot publish a stop inside the grant decision, including when the planner ${plannerExits ? 'exits' : 'commits'}`, async (t) => {
+    // Arrange: the watcher has already entered the stopped-state probe while the planner sees a running VM.
+    const { root, put, at, start } = await startedTrial(t)
+    await put('sample-slot-0.json', sample(start))
+    const { DatabaseSync } = await import('node:sqlite')
+    const probing = Promise.withResolvers(),
+      deliverStop = Promise.withResolvers()
+    const releasePath = join(root, 'release-grant')
+    let child
+    const releasePlanner = () => {
+      if (plannerExits) child.kill('SIGKILL')
+      else writeFileSync(releasePath, '')
+    }
+    const exec = DatabaseSync.prototype.exec
+    let sawLockOwner = false
+    t.mock.method(DatabaseSync.prototype, 'exec', function (sql) {
+      try {
+        return exec.call(this, sql)
+      } catch (error) {
+        // The observation attempted its publication while the other PID was about to link the grant.
+        if (error.errcode === 5 && !sawLockOwner) {
+          sawLockOwner = true
+          releasePlanner()
+        }
+        throw error
+      }
+    })
+    const watcher = assert.rejects(
+      watchTrial(root, options, {
+        now: () => start + 3000,
+        sample: async () => {
+          probing.resolve()
+          await deliverStop.promise
+          return sample(start + 3000, 'stopped', null)
+        },
+        note: () => {
+          if (!sawLockOwner) releasePlanner()
+          throw new Error('watcher exited after durable publication')
+        },
+      }),
+      /watcher exited after durable publication/,
+    )
+    await probing.promise
+    // The child stops just before the actual link syscall. Its own bounded wait also terminates if the parent exits.
+    const source = `
+      import fs from 'node:fs'
+      import {syncBuiltinESMExports} from 'node:module'
+      import {join} from 'node:path'
+      const [module, root, id, time, running] = process.argv.slice(1)
+      const link = fs.linkSync
+      fs.linkSync = function (from, to) {
+        if (to === join(root, id, 'plan-stop-authorization.json')) {
+          fs.writeSync(1, 'at-grant-link\\n')
+          const sleeper = new Int32Array(new SharedArrayBuffer(4))
+          const deadline = Date.now() + 15000
+          while (!fs.existsSync(join(root, 'release-grant'))) {
+            if (Date.now() >= deadline) throw new Error('parent did not observe publication')
+            Atomics.wait(sleeper, 0, 0, 10)
+          }
+          fs.writeSync(1, JSON.stringify({pid:process.pid, stoppedBeforeGrant:fs.existsSync(join(root, id, 'sample-slot-3.json'))})+'\\n')
+        }
+        return link(from, to)
+      }
+      syncBuiltinESMExports()
+      const {controlTrial} = await import(module)
+      await controlTrial(root, id, 'plan-stop', undefined, async () => JSON.parse(running), () => Number(time))
+    `
+    const planner = promisify(execFile)(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        source,
+        new URL('../utils/nativeTrialJournal.mjs', import.meta.url).href,
+        root,
+        options.id,
+        String(start + 1000),
+        JSON.stringify(sample(start + 1000)),
+      ],
+      { timeout: 20000 },
+    )
+    child = planner.child
+    child.stdout.on('data', (chunk) => {
+      if (String(chunk).includes('at-grant-link')) deliverStop.resolve()
+    })
+
+    // Act
+    let output
+    try {
+      if (plannerExits) await assert.rejects(planner, { signal: 'SIGKILL' })
+      else output = (await planner).stdout
+    } finally {
+      deliverStop.resolve()
+      await watcher
+    }
+    const finish = await controlTrial(
+      root,
+      options.id,
+      'finish',
+      'unknown',
+      () => assert.fail('the stop was already recorded'),
+      () => start + 4000,
+    )
+
+    // Assert
+    if (!plannerExits) {
+      const order = JSON.parse(output.trim().split('\n').at(-1))
+      assert.notEqual(order.pid, process.pid)
+      assert.equal(
+        order.stoppedBeforeGrant,
+        false,
+        'an already published stop must prevent the planner from granting shutdown',
+      )
+    }
+    assert.equal(sawLockOwner, true)
+    assert.equal(finish.outcome, plannerExits ? 'unexpected-stop' : 'unknown')
+    assert.deepEqual(finish.stopEvidence.stopped, { from: at(3), to: at(3) })
+    assert.equal((await reportTrials(root)).groups[0].counts['planned-stop'], 0)
+  })
+}
