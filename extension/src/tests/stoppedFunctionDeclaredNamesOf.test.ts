@@ -378,3 +378,125 @@ test('a generator function head with generics declares its parameter', () => {
   // Assert
   assert.deepEqual(sorted(names), ['start'])
 })
+
+// Value: protects=the replay privacy outcome: an anonymous factory and its anonymous handler both binding `tenant` never copy the factory's closure, and neither copies the ambiguous name; fails_when=both unlabelled closures pass the declared-name test and the factory's `tenant` reaches replay history; seam=the names this source yields at `return tenant` fed to the replay policy with JavaScriptCore-shaped scopes; no_claim=other engines' scope shapes
+test('a factory closure sharing a name with its anonymous handler is not copied', async () => {
+  // Arrange
+  const source = [
+    'const make = (tenant) => (request) => {',
+    '  const tenant = request.tenant',
+    '  return tenant',
+    '}',
+  ].join('\n')
+  const declaredNames = stoppedFunctionDeclaredNamesOf(source, 3, 3)
+  const scopes = [
+    { name: 'Closure', presentationHint: 'arguments', variablesReference: 1 },
+    { name: 'Closure', presentationHint: 'arguments', variablesReference: 2 },
+    { name: 'Closure', presentationHint: 'arguments', variablesReference: 3 },
+    { name: 'Script', variablesReference: 4 },
+  ]
+  const contents: Record<number, string[]> = {
+    1: ['request', 'tenant'],
+    2: ['tenant'],
+    3: ['make'],
+  }
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    async (reference) => contents[reference] ?? [],
+    declaredNames,
+    '<anonymous>',
+    100,
+  )
+  // Assert
+  assert.deepEqual([...own], [])
+})
+
+// Value: protects=a local that shadows an enclosing function's parameter is not authorized, so the enclosing value cannot pass under the shared name; fails_when=`context` stays declared although the factory also binds it; seam=a named factory around a handler declaring `const context`; no_claim=values the shadowing local held
+test('a stopped function local that shadows an enclosing parameter declares only its other names', () => {
+  // Arrange
+  const source = [
+    'function makeHandler(context) {',
+    '  return function (request) {',
+    '    const context = request.body',
+    '    return context',
+    '  }',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 4, 5)
+  // Assert
+  assert.deepEqual(sorted(names), ['request'])
+})
+
+// Value: protects=a one-line handler's declared names end at the handler's own closing brace; fails_when=`after`, declared after the handler on the same line, counts as the handler's; seam=a stop on a line holding the handler and a following const; no_claim=multi-line spans
+test('a name declared after the handler on the same line is not the handler own', () => {
+  // Arrange
+  const source = 'function handle(request) { return request } const after = 7'
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 1, 28)
+  // Assert
+  assert.deepEqual(sorted(names), ['request'])
+})
+
+// Value: protects=a named function expression passed as an argument does not declare its name in the handler; fails_when=`tenant` in `register(function tenant() {})` counts as the handler's declaration; seam=a handler body that registers a named function expression; no_claim=names bound inside that expression
+test('a named function expression inside the handler does not declare its name', () => {
+  // Arrange
+  const source = [
+    'const handler = (request) => {',
+    '  register(function tenant() {})',
+    '  return request',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 3, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['request'])
+})
+
+// Value: protects=a class expression does not declare its name while a class declaration does; fails_when=`Box` in `const make = class Box {}` counts, or the statement-position `class Item` is missed; seam=both forms in one handler body; no_claim=class members
+test('a class expression does not declare its name but a class declaration does', () => {
+  // Arrange
+  const source = [
+    'const handler = (request) => {',
+    '  const make = class Box {}',
+    '  class Item {}',
+    '  return request',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 4, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['Item', 'make', 'request'])
+})
+
+// Value: protects=words inside a regular expression literal declare nothing; fails_when=`label` in `/const label/` counts as a declared name; seam=a handler body holding a regex literal; no_claim=a full JavaScript lexer
+test('text inside a regular expression literal declares nothing', () => {
+  // Arrange
+  const source = [
+    'const handler = (request) => {',
+    '  const pattern = /const label/',
+    '  return request',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 3, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['pattern', 'request'])
+})
+
+// Value: protects=the Cycle 0152 trial shapes still copy their own values next to enclosing code: a `greet(name)` function declares `name` and `greeting`; fails_when=the ambiguity rule drops a name only the stopped function declares; seam=`function greet` beside a sibling function with other names; no_claim=names two functions share
+test('a function beside a sibling function keeps its own names', () => {
+  // Arrange
+  const source = [
+    'function other(value) { return value }',
+    'function greet(name) {',
+    '  const greeting = `Hello ${name}`',
+    '  return greeting',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 4, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['greeting', 'name'])
+})

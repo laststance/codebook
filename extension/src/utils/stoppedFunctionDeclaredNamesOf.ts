@@ -6,10 +6,16 @@ import {
   topLevelPartStartsOf,
 } from './bindingNamesAt'
 import { blankCommentsAndTemplates } from './blankCommentsAndTemplates'
+import { blankRegexLiterals } from './blankRegexLiterals'
 import { blankStringContents } from './blankStringContents'
 
-/** The stopped function as found in the source: where its body starts and the names its parameters bind. */
-type StoppedFunction = { bodyStart: number; parameterNames: string[] }
+/** A function as found in the source: where its head starts (the `=>` or the `function` keyword), where its body starts and ends (exclusive), and the names its parameters bind. */
+type StoppedFunction = {
+  headIndex: number
+  bodyStart: number
+  bodyEnd: number
+  parameterNames: string[]
+}
 
 /** `const`, `let` or `var` followed by whitespace: the binding after it is declared. */
 const VARIABLE_DECLARATION = /(?<![\w$.])(?:const|let|var)\s+/g
@@ -150,7 +156,7 @@ function parameterNamesOf(code: string, from: number, to: number): string[] {
  * @param arrowIndex - The index of the `=>`.
  * @param stop - The stop's index.
  * @returns The arrow as a {@link StoppedFunction}, or `undefined` when its body ends before the stop.
- * @example arrowAt('(a) => { x }', 4, 10) // => { bodyStart: 7, parameterNames: ['a'] }
+ * @example arrowAt('(a) => { x }', 4, 10)?.bodyStart // => 7
  */
 function arrowAt(
   code: string,
@@ -165,7 +171,12 @@ function arrowAt(
   } else bodyEnd = expressionBodyEndOf(code, bodyStart)
   // A closed arrow before the stop is not the stopped function.
   if (stop < bodyStart || stop >= bodyEnd) return undefined
-  return { bodyStart, parameterNames: arrowParameterNamesOf(code, arrowIndex) }
+  return {
+    headIndex: arrowIndex,
+    bodyStart,
+    bodyEnd,
+    parameterNames: arrowParameterNamesOf(code, arrowIndex),
+  }
 }
 
 /**
@@ -198,7 +209,7 @@ function parameterListStartOf(code: string, keywordIndex: number): number {
  * @param keywordIndex - The index of `function`.
  * @param stop - The stop's index.
  * @returns The function as a {@link StoppedFunction}, or `undefined` when it is not a function head or its body ends before the stop.
- * @example functionAt('function f(a) { x }', 0, 16) // => { bodyStart: 14, parameterNames: ['a'] }
+ * @example functionAt('function f(a) { x }', 0, 16)?.bodyStart // => 14
  */
 function functionAt(
   code: string,
@@ -219,7 +230,9 @@ function functionAt(
   const bodyEnd = closeIndex === -1 ? code.length : closeIndex + 1
   if (stop < bodyStart || stop >= bodyEnd) return undefined
   return {
+    headIndex: keywordIndex,
     bodyStart,
+    bodyEnd,
     parameterNames: parameterNamesOf(code, cursor + 1, parametersEnd),
   }
 }
@@ -397,6 +410,50 @@ function variableDeclarationsIn(
   })
 }
 
+/** Characters that, before a `function` or `class`, make it part of an expression, never a declaration. */
+const EXPRESSION_PREDECESSORS = '(,=:?[+-*/%&|^<>!~'
+
+/**
+ * Checks whether a `function` or `class` keyword at `index` stands where a statement can start, so its name is declared; in an expression (`register(function tenant() {})`) the name is bound only inside that function.
+ * A statement starts at the beginning of the text, after `{`, `}` or `;`, after `export`, `default` or `async`, or on a new line unless the line before ends in an operator or `return`.
+ * Called by {@link namedDeclarationsIn}.
+ * @param code - Blanked source.
+ * @param index - The index of the keyword.
+ * @returns `true` when the keyword is in statement position.
+ * @example
+ * isStatementPosition('{ function f() {} }', 2) // => true
+ * isStatementPosition('register(function f() {})', 9) // => false
+ */
+function isStatementPosition(code: string, index: number): boolean {
+  const last = lastNonWhitespaceBefore(code, index)
+  if (last < 0 || '{};'.includes(code[last]!)) return true
+  const hasLineBreak = code.slice(last + 1, index).includes('\n')
+  if (EXPRESSION_PREDECESSORS.includes(code[last]!)) return false
+  let wordStart = last
+  while (isIdentifierCharacter(code[wordStart - 1])) wordStart -= 1
+  const word = code.slice(wordStart, last + 1)
+  if (['export', 'default', 'async'].includes(word)) return true
+  // A new line starts a statement, except after keywords that take an expression.
+  return hasLineBreak && !EXPRESSION_KEYWORDS.has(word)
+}
+
+/** Keywords that take an expression, so a `function` after them (even on the next line) is an expression. */
+const EXPRESSION_KEYWORDS: ReadonlySet<string> = new Set([
+  'return',
+  'typeof',
+  'void',
+  'new',
+  'await',
+  'yield',
+  'throw',
+  'extends',
+  'in',
+  'of',
+  'case',
+  'delete',
+  'instanceof',
+])
+
 /**
  * Collects `function NAME` and `class NAME` declarations of a span.
  * Called by {@link declaredNamesIn}.
@@ -411,10 +468,12 @@ function namedDeclarationsIn(
   from: number,
   to: number,
 ): Declaration[] {
-  return [...code.slice(from, to).matchAll(NAMED_DECLARATION)].map((match) => ({
-    names: [match[1]!],
-    position: from + match.index,
-  }))
+  return [...code.slice(from, to).matchAll(NAMED_DECLARATION)]
+    .filter((match) => isStatementPosition(code, from + match.index))
+    .map((match) => ({
+      names: [match[1]!],
+      position: from + match.index,
+    }))
 }
 
 /**
@@ -502,12 +561,51 @@ function declaredNamesIn(
 }
 
 /**
+ * Collects the names every function around the stopped one, and the module's top level, declare in a scope that holds the stopped function: their parameters, own-depth declarations, and catch, `for`-head and block bindings whose scope holds it.
+ * Why it exists: a name both the stopped function and an enclosing scope declare cannot tell whose value a closure holds, so {@link stoppedFunctionDeclaredNamesOf} drops it (fail closed).
+ * Called by {@link stoppedFunctionDeclaredNamesOf}.
+ * @param code - Blanked source.
+ * @param stopped - The stopped function.
+ * @returns The outer names; names only a sibling function declares are not outer.
+ * @example outerDeclaredNamesOf('const make = (tenant) => (req) => req', stoppedFunctionAt(code, 36)!) // => Set { 'make', 'tenant' }
+ */
+function outerDeclaredNamesOf(
+  code: string,
+  stopped: StoppedFunction,
+): ReadonlySet<string> {
+  const names = new Set<string>()
+  let inner = stopped
+  // Walk outwards: each enclosing function must hold the head of the function inside it.
+  for (
+    let enclosing = stoppedFunctionAt(code, inner.headIndex);
+    enclosing;
+    enclosing = stoppedFunctionAt(code, inner.headIndex)
+  ) {
+    for (const name of [
+      ...enclosing.parameterNames,
+      ...declaredNamesIn(
+        code,
+        enclosing.bodyStart,
+        enclosing.bodyEnd,
+        inner.headIndex,
+      ),
+    ])
+      names.add(name)
+    inner = enclosing
+  }
+  // The module's top level is the outermost scope.
+  for (const name of declaredNamesIn(code, 0, code.length, inner.headIndex))
+    names.add(name)
+  return names
+}
+
+/**
  * Names the variables the stopped function declares in its own source, so a replay copies a closure scope only when every name it holds is the stopped function's own.
  *
  * Why it exists: Bun reports a function's own scopes and its enclosing functions' scopes alike as closures, and an enclosing factory's closure may hold a client or a key; positive evidence from the stopped function's source keeps those out.
  * When it runs: once per Bun stop capture; called by {@link captureReplayDebugSnapshot} for {@link ownClosureScopePositionsOf}.
  *
- * The span is the innermost function whose body holds the stop (comments, template literals and strings blanked first), from its body start to the end of the stop line, plus its own parameters. Only declarations whose scope holds the stop count (see {@link declaredNamesIn}), so a name from a closed inner function or block cannot make an enclosing factory's closure look like the stopped function's own. A parameter list that cannot be read with confidence counts as declaring nothing.
+ * The span is the innermost function whose body holds the stop (comments, template literals, strings and regex literals blanked first), from its body start to the end of the stop line or of its own body when that comes first, plus its own parameters. A name an enclosing function or the module also declares ({@link outerDeclaredNamesOf}) is ambiguous and left out, so the closure holding it is not copied. Only declarations whose scope holds the stop count (see {@link declaredNamesIn}), so a name from a closed inner function or block cannot make an enclosing factory's closure look like the stopped function's own. A parameter list that cannot be read with confidence counts as declaring nothing.
  *
  * @param sourceText - The stopped file's text.
  * @param line - The stop's 1-based line.
@@ -521,7 +619,9 @@ export function stoppedFunctionDeclaredNamesOf(
   line: number,
   column?: number,
 ): ReadonlySet<string> | undefined {
-  const code = blankStringContents(blankCommentsAndTemplates(sourceText))
+  const code = blankRegexLiterals(
+    blankStringContents(blankCommentsAndTemplates(sourceText)),
+  )
   const lineStarts = [0]
   for (let index = 0; index < code.length; index += 1)
     if (code[index] === '\n') lineStarts.push(index + 1)
@@ -536,8 +636,16 @@ export function stoppedFunctionDeclaredNamesOf(
       : lineEnd
   const stopped = stoppedFunctionAt(code, stop)
   if (!stopped) return undefined
-  return new Set([
+  const outerNames = outerDeclaredNamesOf(code, stopped)
+  const ownNames = [
     ...stopped.parameterNames,
-    ...declaredNamesIn(code, stopped.bodyStart, lineEnd, stop),
-  ])
+    ...declaredNamesIn(
+      code,
+      stopped.bodyStart,
+      Math.min(lineEnd, stopped.bodyEnd),
+      stop,
+    ),
+  ]
+  // A name an enclosing scope also declares never authorizes a closure.
+  return new Set(ownNames.filter((name) => !outerNames.has(name)))
 }

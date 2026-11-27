@@ -281,3 +281,23 @@ test('a named function stop ends the copy at an unlabelled closure', async () =>
   // Assert
   assert.deepEqual([...own], [0])
 })
+
+// Value: protects=a page of limit+1 names that includes `arguments` is an overflow: an unread name may remain; fails_when=`arguments` is filtered before the size check so a full page of declared names is copied; seam=a limit of 2 and the names arguments, a, b; no_claim=paging
+test('a full page that includes arguments is not copied', async () => {
+  // Arrange
+  const scopes = [
+    closure('Closure', 1),
+    closure('Closure', 2),
+    { name: 'Script', variablesReference: 3 },
+  ]
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    variablesOf({ 1: ['arguments', 'a', 'b'] }),
+    new Set(['a', 'b']),
+    '<anonymous>',
+    2,
+  )
+  // Assert
+  assert.deepEqual([...own], [])
+})
