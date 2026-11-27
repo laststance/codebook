@@ -101,6 +101,7 @@ test('a busy host and ready guest report independent absolute counters and only 
     usedSwapMb: 768.5,
     pageSize: 4096,
     swapouts: 18,
+    swapoutsObservedAt: at,
   })
   assert.equal(JSON.stringify(sample).includes('fixture-private'), false)
   assert.equal(calls.length, 4)
@@ -144,6 +145,7 @@ test('only an explicit stopped state confirms a stop and skips guest execution',
       usedSwapMb: null,
       pageSize: null,
       swapouts: null,
+      swapoutsObservedAt: null,
     })
     assert.equal(
       calls.some(([, args]) => args[0] === 'sb'),
@@ -196,6 +198,7 @@ test('a running guest distinguishes a failed probe, malformed output and an answ
       usedSwapMb: null,
       pageSize,
       swapouts,
+      swapoutsObservedAt: swapouts === null ? null : at,
     })
   }
 })
@@ -230,6 +233,7 @@ test('unreadable precheck counters stay unknown while independent measurements s
     rssMiBByKind: null,
     pageSize: null,
     swapouts: null,
+    swapoutsObservedAt: null,
   }
   assert.deepEqual(malformed.host, unknownHost)
   assert.equal(malformed.guest.reachable, true)
@@ -299,4 +303,41 @@ test('the state evidence brackets only its provider query and the sample timesta
   assert.equal(sample.guest.stateObservedFrom, '2026-11-27T06:00:01.000Z')
   assert.equal(sample.guest.stateObservedTo, '2026-11-27T06:00:03.700Z')
   assert.equal(sample.at, '2026-11-27T06:00:06.400Z')
+})
+
+test('host and guest paging readings keep their own times while slower probes finish', async () => {
+  // Arrange
+  const start = Date.parse(at)
+  let elapsed = 0
+  const guestGate = Promise.withResolvers()
+  const hostPrecheckGate = Promise.withResolvers()
+  const fixture = fixtureRunner()
+  const run = async (program, args) => {
+    if (program === 'cua' && args[0] === 'sb') await guestGate.promise
+    if (program === process.execPath) await hostPrecheckGate.promise
+    return fixture.run(program, args)
+  }
+
+  // Act
+  const first = await readNativeTrialSample({ run: fixture.run, now })
+  elapsed = 10_000
+  const secondReading = readNativeTrialSample({
+    run,
+    now: () => new Date(start + elapsed),
+  })
+  // Let the unblocked host page query finish at ten seconds before releasing the guest.
+  await new Promise((resolve) => setImmediate(resolve))
+  elapsed = 20_000
+  guestGate.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
+  elapsed = 30_000
+  hostPrecheckGate.resolve()
+  const second = await secondReading
+
+  // Assert
+  assert.equal(first.host.swapoutsObservedAt, '2026-11-27T06:00:00.000Z')
+  assert.equal(first.guest.swapoutsObservedAt, '2026-11-27T06:00:00.000Z')
+  assert.equal(second.host.swapoutsObservedAt, '2026-11-27T06:00:10.000Z')
+  assert.equal(second.guest.swapoutsObservedAt, '2026-11-27T06:00:20.000Z')
+  assert.equal(second.at, '2026-11-27T06:00:30.000Z')
 })

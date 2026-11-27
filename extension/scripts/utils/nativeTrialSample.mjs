@@ -56,13 +56,17 @@ function readJson(result, accepted) {
   }
 }
 
-/** Reads an absolute page counter and its unit independently. @example pageFacts('Swapouts: 312.') */
-function pageFacts(text) {
+/**
+ * Associates a page counter with the completion of its own probe, so slower parallel probes cannot change its rate.
+ * @example pageFacts('Swapouts: 312.', '2026-11-27T06:00:10.000Z')
+ */
+function pageFacts(text, observedAt) {
   const pageSize = Number(/\(page size of (\d+) bytes\)/.exec(text)?.[1])
   const swapouts = Number(/^Swapouts:[ \t]*(\d+)\.?[ \t]*\r?$/m.exec(text)?.[1])
   return {
     pageSize: Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : null,
     swapouts: Number.isSafeInteger(swapouts) ? swapouts : null,
+    swapoutsObservedAt: Number.isSafeInteger(swapouts) ? observedAt : null,
   }
 }
 
@@ -117,12 +121,14 @@ async function readGuest(run, now) {
     usedSwapMb: null,
     pageSize: null,
     swapouts: null,
+    swapoutsObservedAt: null,
   }
   if (state === 'stopped') return { state: 'stopped', ...unmeasured }
   if (state !== 'running' && state !== 'ready')
     return { state: 'unknown', ...unmeasured }
 
   const result = await run('cua', ['sb', 'exec', guestName, guestRead])
+  const pagesObservedAt = now().toISOString()
   const lines =
     typeof result?.stdout === 'string' ? result.stdout.split(/\r?\n/) : []
   // The marker distinguishes a guest that answered with missing measurements from a failed connection.
@@ -142,7 +148,7 @@ async function readGuest(run, now) {
       : 'unknown',
     memoryBytes: Number.isSafeInteger(ram) && ram > 0 ? ram : null,
     usedSwapMb: parseSwapUsage(swapLine)?.usedMb ?? null,
-    ...pageFacts(measurements),
+    ...pageFacts(measurements, pagesObservedAt),
   }
 }
 
@@ -167,7 +173,9 @@ export async function readNativeTrialSample({
   }
   const [precheck, hostPages, guest] = await Promise.all([
     safeRun(process.execPath, [precheckPath, '--json']),
-    safeRun('/usr/bin/vm_stat', []),
+    safeRun('/usr/bin/vm_stat', []).then((result) =>
+      pageFacts(result.code === 0 ? result.stdout : '', now().toISOString()),
+    ),
     readGuest(safeRun, now),
   ])
   const facts = readJson(precheck, [0, 3])
@@ -181,7 +189,7 @@ export async function readNativeTrialSample({
       usedSwapMb: Number.isFinite(used) && used >= 0 ? used : null,
       workloads: workloadCounts(facts?.processes),
       rssMiBByKind: workloadRss(facts?.rssMiBByKind),
-      ...pageFacts(hostPages?.code === 0 ? hostPages.stdout : ''),
+      ...hostPages,
     },
     guest,
   }
