@@ -145,7 +145,7 @@ test('planned stop evidence precedes the stopped sample and remains stable acros
 test('an already stopped guest times out and a running guest with lost transport is recorded as disconnected', async (t) => {
   // Arrange
   const root = await fixture(t)
-  const clock = { at: Date.now() }
+  const clock = { at: Date.parse('2020-01-01T00:00:00Z') }
   // Act
   const ended = await watchTrial(
     root,
@@ -160,8 +160,13 @@ test('an already stopped guest times out and a running guest with lost transport
       clock,
       (at) => sample(at, 'running', false),
       () =>
-        controlTrial(root, other.id, 'finish', 'disconnected', async () =>
-          sample(clock.at, 'running', false),
+        controlTrial(
+          root,
+          other.id,
+          'finish',
+          'disconnected',
+          async () => sample(clock.at, 'running', false),
+          () => clock.at,
         ),
     ),
   )
@@ -173,7 +178,7 @@ test('an already stopped guest times out and a running guest with lost transport
 test('only a fresh running and reachable guest can confirm the operator’s healthy completion', async (t) => {
   // Arrange
   const root = await fixture(t)
-  const clock = { at: Date.now() }
+  const clock = { at: Date.parse('2020-01-01T00:00:00Z') }
   let attempts = 0
   // Act
   const ended = await watchTrial(
@@ -185,8 +190,13 @@ test('only a fresh running and reachable guest can confirm the operator’s heal
       async () => {
         if (attempts++ === 0) {
           await assert.rejects(
-            controlTrial(root, options.id, 'finish', 'healthy', async () =>
-              sample(clock.at, 'unknown', null),
+            controlTrial(
+              root,
+              options.id,
+              'finish',
+              'healthy',
+              async () => sample(clock.at, 'unknown', null),
+              () => clock.at,
             ),
             /running and reachable/,
           )
@@ -195,8 +205,13 @@ test('only a fresh running and reachable guest can confirm the operator’s heal
             'incomplete',
           )
         } else
-          await controlTrial(root, options.id, 'finish', 'healthy', async () =>
-            sample(clock.at),
+          await controlTrial(
+            root,
+            options.id,
+            'finish',
+            'healthy',
+            async () => sample(clock.at),
+            () => clock.at,
           )
       },
     ),
@@ -243,7 +258,7 @@ test('concurrent observers share durable samples and the report counts repeated 
   const root = await fixture(t)
   const run = async (id, state) => {
     const cfg = { ...options, id }
-    const start = Date.now()
+    const start = Date.parse('2020-01-01T00:00:00Z')
     const single = () => {
       const c = { at: start }
       return watchTrial(
@@ -255,8 +270,13 @@ test('concurrent observers share durable samples and the report counts repeated 
             at === start ? sample(at) : sample(at, state, state === 'running'),
           async () => {
             if (state === 'running')
-              await controlTrial(root, id, 'finish', 'healthy', async () =>
-                sample(c.at),
+              await controlTrial(
+                root,
+                id,
+                'finish',
+                'healthy',
+                async () => sample(c.at),
+                () => c.at,
               )
           },
         ),
@@ -397,13 +417,16 @@ test('a stop plan created inside the inventory query leaves stop order unknown',
       return row
     },
     () =>
-      controlTrial(
-        root,
-        options.id,
-        'plan-stop',
-        undefined,
-        async () => sample(start + 1200, 'unknown', null),
-        () => start + 1200,
+      assert.rejects(
+        controlTrial(
+          root,
+          options.id,
+          'plan-stop',
+          undefined,
+          async () => sample(start + 1200, 'unknown', null),
+          () => start + 1200,
+        ),
+        /do not stop/i,
       ),
   )
 
@@ -633,13 +656,16 @@ test('an intent filed after the last running observation cannot classify an alre
     clock,
     (at) => (at === start ? sample(at) : sample(at, 'stopped', null)),
     () =>
-      controlTrial(
-        root,
-        options.id,
-        'plan-stop',
-        undefined,
-        async () => sample(start + 300, 'stopped', null),
-        () => start + 200,
+      assert.rejects(
+        controlTrial(
+          root,
+          options.id,
+          'plan-stop',
+          undefined,
+          async () => sample(start + 300, 'stopped', null),
+          () => start + 200,
+        ),
+        /do not stop/i,
       ),
   )
 
@@ -961,4 +987,178 @@ test('a single probe that confirms running then stopped leaves both provider rea
     running: { from: at(0), to: at(50) },
     stopped: { from: at(200), to: at(250) },
   })
+})
+
+test('a missing workload reading in a confirmed trial sample separates its denominator from fully observed builds', async (t) => {
+  // Arrange
+  const { root, dir, at, start } = await startedTrial(t)
+  const declaration = JSON.parse(
+    await readFile(join(dir, 'trial.json'), 'utf8'),
+  )
+  for (const id of ['complete-build', 'partial-build']) {
+    const folder = join(root, id)
+    await mkdir(folder)
+    await writeFile(
+      join(folder, 'trial.json'),
+      JSON.stringify({ ...declaration, id }),
+    )
+    const first = sample(start + 1000),
+      second = sample(start + 2000)
+    first.host.workloadsObservedAt = at(1)
+    second.host.workloadsObservedAt = at(2)
+    if (id === 'partial-build') {
+      second.host.workloads = null
+      second.host.workloadsObservedAt = null
+    }
+    const afterEnd = sample(start + 7000)
+    afterEnd.host.workloads = null
+    afterEnd.host.workloadsObservedAt = null
+    for (const [i, row] of [first, second, afterEnd].entries())
+      await writeFile(
+        join(folder, `sample-slot-${i}.json`),
+        JSON.stringify(row),
+      )
+    await writeFile(
+      join(folder, 'end.json'),
+      JSON.stringify({ at: at(5), outcome: 'healthy' }),
+    )
+  }
+
+  // Act
+  const { groups, trials } = await reportTrials(root)
+
+  // Assert
+  assert.deepEqual(
+    groups
+      .filter((g) => g.counts.healthy)
+      .map((g) => [g.observedCombinations, g.total, g.ids]),
+    [
+      [['build'], 1, ['complete-build']],
+      [['build', 'unknown'], 1, ['partial-build']],
+    ],
+  )
+  assert.equal(trials.find((trial) => trial.id === 'partial-build').samples, 2)
+})
+
+test('finish and watch retry the directory sync before accepting a terminal record left by failed publication', async (t) => {
+  // Arrange
+  const { root, dir, start } = await startedTrial(t)
+  const directory = await open(dir, 'r'),
+    handle = Object.getPrototypeOf(directory),
+    original = handle.sync
+  const identity = await directory.stat()
+  await directory.close()
+  let unavailable = true,
+    synced = 0
+  t.mock.method(handle, 'sync', async function () {
+    const current = await this.stat()
+    if (
+      current.dev === identity.dev &&
+      current.ino === identity.ino &&
+      (await readdir(dir)).includes('end.json')
+    ) {
+      if (unavailable)
+        throw Object.assign(new Error('terminal directory sync failed'), {
+          code: 'EIO',
+        })
+      await original.call(this)
+      synced++
+      return
+    }
+    return original.call(this)
+  })
+  const now = () => start + 1000
+  const finish = () =>
+    controlTrial(
+      root,
+      options.id,
+      'finish',
+      'healthy',
+      async () => sample(now()),
+      now,
+    )
+  const watch = () =>
+    watchTrial(root, options, {
+      sample: () => assert.fail('terminal trial cannot start a probe'),
+      now,
+    })
+
+  // Act and Assert
+  await assert.rejects(finish(), /terminal directory sync failed/)
+  const terminal = await readFile(join(dir, 'end.json'), 'utf8')
+  await assert.rejects(finish(), /terminal directory sync failed/)
+  await assert.rejects(watch(), /terminal directory sync failed/)
+  unavailable = false
+  assert.deepEqual(await finish(), JSON.parse(terminal))
+  assert.ok(synced > 0)
+  assert.deepEqual(await watch(), JSON.parse(terminal))
+  assert.equal(await readFile(join(dir, 'end.json'), 'utf8'), terminal)
+})
+
+test('a stop plan keeps an overtime inventory reading but never reports it as a timely running witness', async (t) => {
+  // Arrange
+  const { root, dir, at, start } = await startedTrial(t)
+  let clock = start + 9000
+  const late = sample(start + 12000)
+  late.guest.stateObservedFrom = at(9)
+  late.guest.stateObservedTo = at(11)
+
+  // Act
+  const plan = controlTrial(
+    root,
+    options.id,
+    'plan-stop',
+    undefined,
+    async () => {
+      clock = start + 12000
+      return late
+    },
+    () => clock,
+  )
+
+  // Assert
+  await assert.rejects(plan, /do not stop/i)
+  const observation = (await readdir(dir)).find((name) =>
+    name.startsWith('observation-'),
+  )
+  assert.ok(observation)
+  const row = JSON.parse(await readFile(join(dir, observation), 'utf8'))
+  assert.equal(row.guest.stateObservedTo, at(11))
+  const ended = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('expired probe'),
+    () => clock,
+  )
+  assert.equal(ended.outcome, 'observer-timeout')
+})
+
+test('a stop plan refuses when the recorder closes while its running probe is still in flight', async (t) => {
+  // Arrange
+  const { root, dir, put, at, start } = await startedTrial(t)
+
+  // Act and Assert
+  await assert.rejects(
+    controlTrial(
+      root,
+      options.id,
+      'plan-stop',
+      undefined,
+      async () => {
+        await put('closing.json', {
+          outcome: 'unknown',
+          at: at(2),
+          sampleAt: null,
+        })
+        return sample(start + 2000)
+      },
+      () => start + 1000,
+    ),
+    /do not stop/i,
+  )
+  assert.ok(
+    (await readdir(dir)).some((name) => name.startsWith('observation-')),
+  )
 })

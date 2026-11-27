@@ -47,6 +47,23 @@ async function readRecord(path) {
   }
 }
 
+/** Confirms the directory entry of a linked record, including when the original publisher's sync failed. */
+async function syncDirectory(dir) {
+  const directory = await open(dir, 'r')
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
+  }
+}
+
+/** Watch and finish may return an existing terminal record only after its directory entry is synced. */
+async function durableEnd(dir) {
+  const ended = await readRecord(join(dir, 'end.json'))
+  if (ended) await syncDirectory(dir)
+  return ended
+}
+
 /**
  * Publish one complete, synced host record. An existing record wins even if two readers finish together.
  * @example await publish(trialDir, 'end.json', { outcome: 'healthy' })
@@ -61,19 +78,16 @@ async function publish(dir, name, record) {
     } finally {
       await file.close()
     }
+    let published = record
     try {
       await link(tmp, join(dir, name))
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
-      return readRecord(join(dir, name))
+      published = await readRecord(join(dir, name))
     }
-    const directory = await open(dir, 'r')
-    try {
-      await directory.sync()
-    } finally {
-      await directory.close()
-    }
-    return record
+    // A winner's link can be visible before its sync succeeds.
+    await syncDirectory(dir)
+    return published
   } finally {
     await unlink(tmp)
   }
@@ -204,12 +218,17 @@ async function recordedStop(dir, rows, deadline) {
         undefined,
         deadline,
       )
-      if (initial) running.push({ ...initial, afterPlanAt: row.afterPlanAt })
+      // If rechecking the guest no longer confirmed it running, the earlier read cannot authorize the operator's shutdown.
+      if (initial) running.push(initial)
     }
     const observed = stateWindow(row.guest, row.at, deadline)
     if (!observed) continue
     if (state === 'running')
-      running.push({ ...observed, afterPlanAt: row.afterPlanAt })
+      running.push({
+        ...observed,
+        afterPlanAt:
+          Date.parse(row.at) < deadline ? row.afterPlanAt : undefined,
+      })
     else if (state === 'stopped') stopped.push({ row, ...observed })
   }
   const earliestRunning = running.reduce(
@@ -261,7 +280,7 @@ async function closeObserver(dir, fallback, at, deadline, sampleAt) {
   let incomplete = false
   const limit = Date.now() + PROBE_LEASE_MS
   while (true) {
-    const existing = await readRecord(join(dir, 'end.json'))
+    const existing = await durableEnd(dir)
     if (existing) return existing
     const names = (await readdir(dir)).filter((name) =>
       /^pending-[\da-f-]+\.json$/.test(name),
@@ -327,7 +346,7 @@ export async function watchTrial(
         `Trial ID already records another ${key}. Use its original arguments or a fresh ID.`,
       )
   }
-  const alreadyEnded = await readRecord(join(dir, 'end.json'))
+  const alreadyEnded = await durableEnd(dir)
   if (alreadyEnded) return alreadyEnded
   const rows = await history(dir)
   let sawRunning = rows.some(
@@ -347,7 +366,7 @@ export async function watchTrial(
       recovered.sampleAt,
     )
   while (true) {
-    const existing = await readRecord(join(dir, 'end.json'))
+    const existing = await durableEnd(dir)
     if (existing) return existing
     if (await readRecord(join(dir, 'closing.json')))
       return closeObserver(dir, 'unknown', clock(), deadline)
@@ -413,7 +432,7 @@ export async function controlTrial(
   const dir = join(root, slug(id, 'trial id'))
   const trial = await readRecord(join(dir, 'trial.json'))
   if (!trial) throw new Error('No trial with that ID. Start watch first.')
-  const ended = await readRecord(join(dir, 'end.json'))
+  const ended = await durableEnd(dir)
   const at = new Date(now()).toISOString()
   const deadline = Date.parse(trial.deadline)
   if (command === 'plan-stop') {
@@ -424,7 +443,23 @@ export async function controlTrial(
     ) {
       const intent = await publish(dir, 'plan-stop.json', { at })
       // Admission can close between the intent and its observation.
-      if (await observe(dir, sample, { afterPlanAt: intent.at }, deadline, now))
+      const row = await observe(
+        dir,
+        sample,
+        { afterPlanAt: intent.at },
+        deadline,
+        now,
+      )
+      const running =
+        row?.guest.state === 'running' &&
+        stateWindow(row.guest, row.at, deadline)
+      if (
+        running &&
+        Date.parse(intent.at) <= running.from &&
+        Date.parse(row.at) < deadline &&
+        !(await readRecord(join(dir, 'closing.json'))) &&
+        now() < deadline
+      )
         return intent
     }
     throw new Error(
@@ -562,6 +597,7 @@ export async function reportTrials(root) {
     const counted = new Set([...hostSamples, ...guestSamples])
     for (const row of regular) {
       if (
+        within(row.at) ||
         stateWindow(row.guest, row.at, cutoff) ||
         (row.guest.initialRunningObservation &&
           stateWindow(
@@ -593,7 +629,18 @@ export async function reportTrials(root) {
       }
       combinations.add(active.sort().join('+') || 'none')
     }
-    if (!hostSamples.length) combinations.add('unknown')
+    // A confirmed slot can lack a precheck clock even when another slot measured a workload.
+    // A known post-stop measurement remains outside the trial.
+    if (
+      !hostSamples.length ||
+      [...counted].some(
+        (row) =>
+          !Number.isFinite(
+            Date.parse(readingAt(row, 'host', 'workloadsObservedAt')),
+          ),
+      )
+    )
+      combinations.add('unknown')
     const observedCombinations = [...combinations].sort()
     const observed = observedCombinations.join(' | ')
     const pressures = [
