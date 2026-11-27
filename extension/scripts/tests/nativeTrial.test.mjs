@@ -1921,3 +1921,139 @@ test('a legacy grant with a refusal for its own witness cannot attribute an obse
   assert.deepEqual(end.stopEvidence.stopped, { from: at(3), to: at(3) })
   assert.equal((await reportTrials(root)).groups[0].counts['planned-stop'], 0)
 })
+
+for (const [previousGrant, restartAt] of [
+  [false, 4],
+  [true, 4],
+  [false, 11],
+]) {
+  test(`a restarted guest cannot get another stop plan at ${restartAt} seconds after the watcher recorded ${previousGrant ? 'a planned' : 'an unexpected'} stop and exited`, async (t) => {
+    // Arrange
+    const { root, dir, at, start } = await startedTrial(t)
+    const runningPlan = (seconds, sampleRunning) =>
+      controlTrial(
+        root,
+        options.id,
+        'plan-stop',
+        undefined,
+        sampleRunning,
+        () => start + seconds * 1000,
+      )
+    if (previousGrant) await runningPlan(1, async () => sample(start + 1000))
+    const clock = { at: start + 2000 }
+    await assert.rejects(
+      watchTrial(root, options, {
+        ...clocked(clock, (time) =>
+          time === start + 2000 ? sample(time) : sample(time, 'stopped', null),
+        ),
+        note: (row) => {
+          if (row.guest === 'stopped')
+            throw new Error('watcher exited after sample publication')
+        },
+      }),
+      /watcher exited after sample publication/,
+    )
+    assert.ok(!(await readdir(dir)).includes('end.json'))
+    let newProbes = 0
+    const restartedGuest = async () => {
+      newProbes++
+      return sample(start + restartAt * 1000)
+    }
+
+    // Act
+    await assert.rejects(
+      runningPlan(restartAt, restartedGuest),
+      /Do not stop the VM/,
+    )
+    const terminal = JSON.parse(await readFile(join(dir, 'end.json'), 'utf8'))
+    await assert.rejects(
+      runningPlan(restartAt, restartedGuest),
+      /Do not stop the VM/,
+    )
+    const refusedProbe = () =>
+      assert.fail('a recovered trial cannot probe again')
+
+    // Assert
+    assert.equal(newProbes, 0)
+    assert.equal(
+      terminal.outcome,
+      previousGrant ? 'planned-stop' : 'unexpected-stop',
+    )
+    assert.deepEqual(terminal.stopEvidence.stopped, { from: at(3), to: at(3) })
+    assert.deepEqual(
+      await watchTrial(root, options, { sample: refusedProbe }),
+      terminal,
+    )
+    assert.deepEqual(
+      await controlTrial(root, options.id, 'finish', 'healthy', refusedProbe),
+      terminal,
+    )
+    const report = await reportTrials(root)
+    assert.equal(report.trials[0].outcome, terminal.outcome)
+  })
+}
+
+test('a stop recorded while the planner prepares its grant survives a watcher exit and prevents approval', async (t) => {
+  // Arrange
+  const { root, dir, start, at } = await startedTrial(t)
+  let clock = start + 1000
+  const now = () => clock
+  const checkPreparation = await interruptJournalSync(
+    t,
+    dir,
+    (files) => files.some((name) => name.startsWith('prepared-observation-')),
+    async () => {
+      clock = start + 3000
+      await assert.rejects(
+        watchTrial(root, options, {
+          now,
+          sample: async () => sample(clock, 'stopped', null),
+          note: () => {
+            throw new Error('watcher exited with a durable stop')
+          },
+        }),
+        /watcher exited with a durable stop/,
+      )
+      assert.ok(!(await readdir(dir)).includes('closing.json'))
+    },
+  )
+
+  // Act
+  const plan = controlTrial(
+    root,
+    options.id,
+    'plan-stop',
+    undefined,
+    async () => sample(clock),
+    now,
+  )
+  await assert.rejects(plan, /Do not stop the VM/)
+
+  // Assert
+  checkPreparation()
+  const end = JSON.parse(await readFile(join(dir, 'end.json'), 'utf8'))
+  assert.equal(end.outcome, 'unexpected-stop')
+  assert.deepEqual(end.stopEvidence.stopped, { from: at(3), to: at(3) })
+  assert.equal((await reportTrials(root)).trials[0].outcome, 'unexpected-stop')
+})
+
+test('a past stopped-only reading, transport failure and pending probe allow a fresh stop plan after the guest starts', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  await put('sample-slot-1.json', sample(start + 1000, 'stopped', null))
+  await put('sample-slot-2.json', sample(start + 2000, 'running', false))
+  await put('pending-abcd.json', { expiresAt: Date.now() + 30_000 })
+
+  // Act
+  const plan = await controlTrial(
+    root,
+    options.id,
+    'plan-stop',
+    undefined,
+    async () => sample(start + 3000),
+    () => start + 3000,
+  )
+
+  // Assert
+  assert.equal(plan.at, at(3))
+})

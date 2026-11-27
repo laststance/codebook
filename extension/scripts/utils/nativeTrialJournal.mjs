@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { linkSync } from 'node:fs'
+import { linkSync, readdirSync } from 'node:fs'
 import { link, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -135,6 +135,25 @@ async function stopDecision(dir) {
 }
 
 /**
+ * Verify the trial still has an observable next stop before committing or reusing permission.
+ * Evidence files are append-only. A probe that finished while its peers' records were read must also be checked.
+ * @example await openForStopPlan(dir, deadline, now)
+ */
+async function openForStopPlan(dir, deadline, now) {
+  do {
+    const files = await evidenceFiles(dir)
+    if (await recoverRecordedStop(dir, deadline, files)) return false
+    // The old format used only closing.json. New closers also compete for the final grant link.
+    if (await readRecord(join(dir, 'closing.json'))) return false
+    const count = readdirSync(dir).filter((name) =>
+      EVIDENCE_FILE.test(name),
+    ).length
+    if (count === files.length) return now() < deadline
+  } while (now() < deadline)
+  return false
+}
+
+/**
  * Prepare a durable candidate, then compete with closure for one final link. Only that link grants permission.
  * A later close cannot revoke a winning decision. A failed sync of its link leaves the caller's result uncertain.
  * @example await commitStopPlan(dir, row, decisionAt, deadline, now)
@@ -147,8 +166,8 @@ async function commitStopPlan(dir, row, decisionAt, deadline, now) {
     witness: row.file,
     preparedAt: new Date(decisionAt).toISOString(),
   })
-  // Check legacy closing records too. Make the final link without queuing more asynchronous work after the clock check.
-  if ((await readRecord(join(dir, 'closing.json'))) || now() >= deadline)
+  // Recover any stop published during preparation before racing closure for the final link.
+  if (!(await openForStopPlan(dir, deadline, now)) || now() >= deadline)
     return false
   try {
     linkSync(join(dir, name), join(dir, PLAN_AUTHORIZATION))
@@ -157,7 +176,7 @@ async function commitStopPlan(dir, row, decisionAt, deadline, now) {
     // An earlier successful planner may also be retried, but a new caller must still find an open trial.
     if ((await stopDecision(dir))?.status !== 'accepted') return false
     await syncDirectory(dir)
-    return !(await readRecord(join(dir, 'closing.json'))) && now() < deadline
+    return openForStopPlan(dir, deadline, now)
   }
   await syncDirectory(dir)
   return true
@@ -402,6 +421,23 @@ async function recordedStop(dir, rows, deadline) {
 }
 
 /**
+ * Resume closure when the trial already contains a confirmed transition, even if the guest has restarted.
+ * Watch, finish and stop planning must all use the same first durable stop and terminal outcome.
+ * @example await recoverRecordedStop(dir, deadline)
+ */
+async function recoverRecordedStop(dir, deadline, files) {
+  const stopped = await recordedStop(dir, await history(dir, files), deadline)
+  if (!stopped) return null
+  return closeObserver(
+    dir,
+    stopped.outcome,
+    stopped.at,
+    deadline,
+    stopped.sampleAt,
+  )
+}
+
+/**
  * Seal admission, wait for previously admitted probes, then derive the terminal record from all durable evidence.
  * Every finisher uses the same immutable claim, including anyone resuming after the first closer was interrupted.
  * A missing observer has a bounded lease. Its incomplete evidence cannot prove a healthy completion or a timeout.
@@ -494,18 +530,10 @@ export async function watchTrial(
   const alreadyEnded = await durableEnd(dir)
   if (alreadyEnded) return alreadyEnded
   const deadline = trialDeadline(dir, trial)
-  const rows = await history(dir)
   const started = Date.parse(trial.started)
   const clock = () => new Date(now()).toISOString()
-  const recovered = await recordedStop(dir, rows, deadline)
-  if (recovered)
-    return closeObserver(
-      dir,
-      recovered.outcome,
-      recovered.at,
-      deadline,
-      recovered.sampleAt,
-    )
+  const recovered = await recoverRecordedStop(dir, deadline)
+  if (recovered) return recovered
   while (true) {
     const existing = await durableEnd(dir)
     if (existing) return existing
@@ -530,15 +558,8 @@ export async function watchTrial(
     })
     // A competing watcher or stop planner may have supplied the only running witness.
     if (row.guest.state === 'stopped') {
-      const stopped = await recordedStop(dir, await history(dir), deadline)
-      if (stopped)
-        return closeObserver(
-          dir,
-          stopped.outcome,
-          stopped.at,
-          deadline,
-          stopped.sampleAt,
-        )
+      const stopped = await recoverRecordedStop(dir, deadline)
+      if (stopped) return stopped
     }
     // The signal and deadline bound the observer without changing or interrupting the workload it watches.
     try {
@@ -574,7 +595,8 @@ export async function controlTrial(
   if (command === 'plan-stop') {
     if (
       !ended &&
-      Date.parse(at) < deadline &&
+      !(await recoverRecordedStop(dir, deadline)) &&
+      now() < deadline &&
       !(await readRecord(join(dir, 'closing.json')))
     ) {
       const intent = await publish(dir, 'plan-stop.json', {
@@ -617,30 +639,15 @@ export async function controlTrial(
   if (ended) return ended
   if (!['healthy', 'disconnected', 'unknown'].includes(outcome))
     throw new Error('Expected outcome healthy, disconnected or unknown.')
-  const rows = await history(dir)
-  const recovered = await recordedStop(dir, rows, deadline)
-  if (recovered)
-    return closeObserver(
-      dir,
-      recovered.outcome,
-      recovered.at,
-      deadline,
-      recovered.sampleAt,
-    )
+  const recovered = await recoverRecordedStop(dir, deadline)
+  if (recovered) return recovered
   if (Date.parse(at) >= deadline)
     return closeObserver(dir, 'observer-timeout', at, deadline)
   const row = await observe(dir, sample, {}, deadline, now)
   if (!row) return closeObserver(dir, 'observer-timeout', at, deadline)
   // Finishing must also honor a stop another observer committed while this fresh probe was in flight.
-  const stopped = await recordedStop(dir, await history(dir), deadline)
-  if (stopped)
-    return closeObserver(
-      dir,
-      stopped.outcome,
-      stopped.at,
-      deadline,
-      stopped.sampleAt,
-    )
+  const stopped = await recoverRecordedStop(dir, deadline)
+  if (stopped) return stopped
   if (Date.parse(row.at) > deadline)
     return closeObserver(dir, 'observer-timeout', row.at, deadline, row.at)
   if (
