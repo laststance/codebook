@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { on } from 'node:events'
+import { watch } from 'node:fs'
 import {
   link,
   mkdir,
@@ -676,6 +678,18 @@ test('an intent filed after the last running observation cannot classify an alre
   assert.equal(ended.outcome, 'unknown')
 })
 
+async function waitForClosing(dir) {
+  // Subscribe before checking the directory so the finisher's link cannot be missed.
+  const watcher = watch(dir)
+  const changes = on(watcher, 'change', { signal: AbortSignal.timeout(5000) })
+  try {
+    while (!(await readdir(dir)).includes('closing.json')) await changes.next()
+  } finally {
+    await changes.return()
+    watcher.close()
+  }
+}
+
 test('timeout waits for an inventory-confirmed stop observed on time while other measurements are still completing', async (t) => {
   // Arrange
   const root = await fixture(t),
@@ -708,19 +722,7 @@ test('timeout waits for an inventory-confirmed stop observed on time while other
     () => start + 4500,
   )
   try {
-    // Observe either durable closing claim; on the old implementation end.json commits prematurely.
-    for (let n = 0; n < 200; n++) {
-      const ready = await Promise.all(
-        ['closing.json', 'end.json'].map(async (name) =>
-          readFile(join(root, options.id, name)).then(
-            () => true,
-            () => false,
-          ),
-        ),
-      )
-      if (ready.some(Boolean)) break
-      await new Promise((resolve) => setTimeout(resolve, 5))
-    }
+    await waitForClosing(join(root, options.id))
   } finally {
     release.resolve()
   }
@@ -1048,8 +1050,8 @@ test('finish and watch retry the directory sync before accepting a terminal reco
     original = handle.sync
   const identity = await directory.stat()
   await directory.close()
-  let unavailable = true,
-    synced = 0
+  let allowedSyncs = 0,
+    attempts = 0
   t.mock.method(handle, 'sync', async function () {
     const current = await this.stat()
     if (
@@ -1057,12 +1059,12 @@ test('finish and watch retry the directory sync before accepting a terminal reco
       current.ino === identity.ino &&
       (await readdir(dir)).includes('end.json')
     ) {
-      if (unavailable)
+      attempts++
+      if (allowedSyncs-- <= 0)
         throw Object.assign(new Error('terminal directory sync failed'), {
           code: 'EIO',
         })
       await original.call(this)
-      synced++
       return
     }
     return original.call(this)
@@ -1087,11 +1089,16 @@ test('finish and watch retry the directory sync before accepting a terminal reco
   await assert.rejects(finish(), /terminal directory sync failed/)
   const terminal = await readFile(join(dir, 'end.json'), 'utf8')
   await assert.rejects(finish(), /terminal directory sync failed/)
+  // Watch syncs trial.json on startup. Only its second directory sync should fail.
+  allowedSyncs = 1
+  attempts = 0
   await assert.rejects(watch(), /terminal directory sync failed/)
-  unavailable = false
+  assert.equal(attempts, 2)
+  await assert.rejects(reportTrials(root), /terminal directory sync failed/)
+  allowedSyncs = Infinity
   assert.deepEqual(await finish(), JSON.parse(terminal))
-  assert.ok(synced > 0)
   assert.deepEqual(await watch(), JSON.parse(terminal))
+  assert.equal((await reportTrials(root)).trials[0].outcome, 'healthy')
   assert.equal(await readFile(join(dir, 'end.json'), 'utf8'), terminal)
 })
 
@@ -1161,4 +1168,263 @@ test('a stop plan refuses when the recorder closes while its running probe is st
   assert.ok(
     (await readdir(dir)).some((name) => name.startsWith('observation-')),
   )
+})
+
+test('a recorder resuming an expired probe retains its raw measurement without changing the closed CLI report', async (t) => {
+  // Arrange
+  const { root, dir, start } = await startedTrial(t)
+  let wall = start
+  t.mock.method(Date, 'now', () => wall)
+  const captured = Promise.withResolvers(),
+    resume = Promise.withResolvers()
+  let watchAt = start + 1000
+  const watch = watchTrial(root, options, {
+    now: () => watchAt,
+    sample: async () => {
+      const row = sample(start + 1000)
+      captured.resolve()
+      await resume.promise
+      return row
+    },
+    sleep: async () => {
+      watchAt = start + 11000
+    },
+  })
+  const script = fileURLToPath(new URL('../native-trial.mjs', import.meta.url))
+  const report = async () =>
+    (
+      await promisify(execFile)(process.execPath, [
+        script,
+        'report',
+        '--root',
+        root,
+        '--json',
+      ])
+    ).stdout
+  await captured.promise
+  wall += 31_000
+
+  // Act
+  let before
+  try {
+    const end = await controlTrial(
+      root,
+      options.id,
+      'finish',
+      'unknown',
+      () => assert.fail('past deadline'),
+      () => start + 11000,
+    )
+    assert.equal(end.reason, 'incomplete-observation')
+    before = await report()
+  } finally {
+    resume.resolve()
+    await watch
+  }
+
+  // Assert
+  assert.equal(JSON.parse(before).trials[0].samples, 0)
+  assert.ok((await readdir(dir)).includes('sample-slot-1.json'))
+  assert.equal(await report(), before)
+})
+
+test('a refused stop plan during closing cannot authorize a subsequent confirmed stop', async (t) => {
+  // Arrange
+  const { root, dir, start } = await startedTrial(t)
+  const sampling = Promise.withResolvers(),
+    release = Promise.withResolvers()
+  const watching = Promise.withResolvers(),
+    stopped = Promise.withResolvers()
+  let watchAt = start
+  const watch = watchTrial(root, options, {
+    now: () => watchAt,
+    sample: async () => {
+      watching.resolve()
+      await stopped.promise
+      return sample(start + 4000, 'stopped', null)
+    },
+    sleep: async () => {
+      watchAt = start + 11000
+    },
+  })
+  await watching.promise
+  const plan = controlTrial(
+    root,
+    options.id,
+    'plan-stop',
+    undefined,
+    async () => {
+      sampling.resolve()
+      await release.promise
+      return sample(start + 2000)
+    },
+    () => start + 1000,
+  )
+  await sampling.promise
+
+  // Act
+  const finish = controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('past deadline'),
+    () => start + 11000,
+  )
+  try {
+    await waitForClosing(dir)
+    release.resolve()
+    await assert.rejects(plan, /do not stop/i)
+  } finally {
+    release.resolve()
+    stopped.resolve()
+  }
+  const [end, repeated] = await Promise.all([finish, watch])
+
+  // Assert
+  assert.equal(end.outcome, 'unexpected-stop')
+  assert.deepEqual(repeated, end)
+  const files = await readdir(dir)
+  const refusal = files.find((name) => name.startsWith('refused-observation-'))
+  assert.ok(refusal)
+  const decision = JSON.parse(await readFile(join(dir, refusal), 'utf8'))
+  assert.equal(decision.status, 'rejected')
+  assert.ok(files.includes(decision.witness))
+  const report = await reportTrials(root)
+  assert.equal(report.groups[0].counts['planned-stop'], 0)
+  assert.equal(
+    report.trials[0].stopEvidence.running.to,
+    new Date(start + 2000).toISOString(),
+  )
+})
+
+test('legacy plan observations cannot establish an unrecorded approval on recovery', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  await put('plan-stop.json', { at: at(1) })
+  await put('observation-abcd.json', {
+    ...sample(start + 2000),
+    additionalObservation: true,
+    afterPlanAt: at(1),
+  })
+  await put('sample-slot-3.json', sample(start + 3000, 'stopped', null))
+
+  // Act
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('already stopped'),
+    () => start + 4000,
+  )
+
+  // Assert
+  assert.equal(end.outcome, 'unknown')
+  assert.equal(end.stopEvidence.running.to, at(2))
+})
+
+test('an invalid terminal record reports its file and never restarts the observer', async (t) => {
+  // Arrange
+  const { root, dir, put, start } = await startedTrial(t)
+  for (const invalid of [null, 0, false, '', []]) {
+    await put('end.json', invalid)
+
+    // Act and Assert
+    const invalidRecord = { message: new RegExp('end\\.json') }
+    await assert.rejects(reportTrials(root), invalidRecord)
+    await assert.rejects(
+      watchTrial(root, options, {
+        now: () => start,
+        sample: () => assert.fail('corrupt trial'),
+      }),
+      invalidRecord,
+    )
+    await assert.rejects(
+      controlTrial(root, options.id, 'finish', 'unknown'),
+      invalidRecord,
+    )
+    assert.equal(
+      await readFile(join(dir, 'end.json'), 'utf8'),
+      JSON.stringify(invalid),
+    )
+  }
+})
+
+test('the CLI preserves a legacy terminal outcome and freezes its surviving samples on first recovery', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  const oldEnd = { at: at(3), sampleAt: at(3), outcome: 'planned-stop' }
+  await put('sample-slot-0.json', sample(start))
+  await put('sample-slot-3.json', sample(start + 3000, 'stopped', null))
+  await put('end.json', oldEnd)
+  const script = fileURLToPath(new URL('../native-trial.mjs', import.meta.url))
+  const cli = async (...args) =>
+    (
+      await promisify(execFile)(process.execPath, [
+        script,
+        ...args,
+        '--root',
+        root,
+      ])
+    ).stdout
+
+  // Act
+  const first = await cli('report', '--json')
+  await put('sample-slot-1.json', sample(start + 1000))
+  const finished = await cli(
+    'finish',
+    '--id',
+    options.id,
+    '--outcome',
+    'unknown',
+  )
+  await assert.rejects(
+    cli('plan-stop', '--id', options.id),
+    /Do not stop the VM/,
+  )
+  const second = await cli('report', '--json')
+
+  // Assert
+  assert.equal(JSON.parse(first).trials[0].samples, 2)
+  assert.equal(JSON.parse(first).groups[0].counts['planned-stop'], 1)
+  assert.deepEqual(JSON.parse(finished), oldEnd)
+  assert.equal(first, second)
+})
+
+test('an active trial can approve a fresh stop plan after a prior observation was refused', async (t) => {
+  // Arrange
+  const { root, dir, put, at, start } = await startedTrial(t)
+  const plan = (seconds, state) =>
+    controlTrial(
+      root,
+      options.id,
+      'plan-stop',
+      undefined,
+      async () => sample(start + seconds * 1000, state, state === 'running'),
+      () => start + seconds * 1000,
+    )
+
+  // Act
+  await assert.rejects(plan(1, 'unknown'), /do not stop/i)
+  await plan(2, 'running')
+  await put('sample-slot-3.json', sample(start + 3000, 'stopped', null))
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('already stopped'),
+    () => start + 4000,
+  )
+
+  // Assert
+  const grant = JSON.parse(
+    await readFile(join(dir, 'plan-stop-authorization.json'), 'utf8'),
+  )
+  assert.equal(grant.status, 'accepted')
+  const witness = JSON.parse(await readFile(join(dir, grant.witness), 'utf8'))
+  assert.equal(witness.at, at(2))
+  assert.equal(end.outcome, 'planned-stop')
+  assert.equal(end.stopEvidence.running.to, at(2))
 })

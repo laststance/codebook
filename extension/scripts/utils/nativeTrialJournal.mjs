@@ -5,6 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { readNativeTrialSample } from './nativeTrialSample.mjs'
 
+const EVIDENCE_FILE =
+  /^(sample-(slot-\d+|\d+-[\da-f-]+)|observation-[\da-f-]+)\.json$/
+const TERMINAL_EVIDENCE = 'terminal-evidence.json'
+const PLAN_AUTHORIZATION = 'plan-stop-authorization.json'
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,71}$/i
 // Guest inventory and guest measurements each allow up to 12 seconds. Leave time to publish their evidence.
 const PROBE_LEASE_MS = 30_000
@@ -40,7 +44,10 @@ function integer(value, low, high, label) {
 
 async function readRecord(path) {
   try {
-    return JSON.parse(await readFile(path, 'utf8'))
+    const record = JSON.parse(await readFile(path, 'utf8'))
+    if (!record || typeof record !== 'object' || Array.isArray(record))
+      throw new Error(`Expected a JSON object in ${path}`)
+    return record
   } catch (error) {
     if (error.code === 'ENOENT') return null
     throw error
@@ -93,16 +100,41 @@ async function publish(dir, name, record) {
   }
 }
 
-async function history(dir) {
-  const names = (await readdir(dir))
-    .filter((n) =>
-      /^(sample-(slot-\d+|\d+-[\da-f-]+)|observation-[\da-f-]+)\.json$/.test(n),
+async function evidenceFiles(dir) {
+  return (await readdir(dir)).filter((name) => EVIDENCE_FILE.test(name)).sort()
+}
+
+/** Reads an immutable filename set in order without opening an entire long trial at once. */
+async function history(dir, files) {
+  const names = files === undefined ? await evidenceFiles(dir) : files
+  if (!Array.isArray(names))
+    throw new Error(
+      `Invalid observation list in ${join(dir, TERMINAL_EVIDENCE)}`,
     )
-    .sort()
-  // The maximum trial has 7,200 slots. Keep one file open at a time, independent of trial length.
   const records = []
-  for (const name of names) records.push(await readRecord(join(dir, name)))
+  for (const name of names) {
+    if (typeof name !== 'string' || !EVIDENCE_FILE.test(name))
+      throw new Error(
+        `Invalid observation filename in ${join(dir, TERMINAL_EVIDENCE)}`,
+      )
+    const row = await readRecord(join(dir, name))
+    if (!row) throw new Error(`Missing observation ${join(dir, name)}`)
+    records.push({ ...row, file: name })
+  }
   return records.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+}
+
+/** Freeze the same evidence set for concurrent closers and a restart after the first closer exits. */
+async function sealEvidence(dir, incomplete) {
+  const existing = await readRecord(join(dir, TERMINAL_EVIDENCE))
+  if (existing) {
+    await syncDirectory(dir)
+    return existing
+  }
+  return publish(dir, TERMINAL_EVIDENCE, {
+    files: await evidenceFiles(dir),
+    incomplete,
+  })
 }
 
 /**
@@ -174,11 +206,13 @@ async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
       if (winner === row) return row
     }
     // Wait for directory sync before releasing the pending observation to a concurrent finisher.
-    return await publish(dir, `observation-${id}.json`, {
+    const file = `observation-${id}.json`
+    const observation = await publish(dir, file, {
       ...row,
       additionalObservation: true,
       ...(afterPlanAt ? { afterPlanAt } : {}),
     })
+    return { ...observation, file }
   } finally {
     await unlink(join(dir, name)).catch((error) => {
       if (error.code !== 'ENOENT') throw error
@@ -226,6 +260,7 @@ async function recordedStop(dir, rows, deadline) {
     if (state === 'running')
       running.push({
         ...observed,
+        file: row.file,
         afterPlanAt:
           Date.parse(row.at) < deadline ? row.afterPlanAt : undefined,
       })
@@ -248,14 +283,27 @@ async function recordedStop(dir, rows, deadline) {
   let outcome = 'unexpected-stop'
   if (intent) {
     const plannedAt = Date.parse(intent.at)
-    // Only this plan's own post-publication observation establishes that the VM was still running after the intent stood.
-    const afterPlan = beforeStop.find(
+    const authorization = await readRecord(join(dir, PLAN_AUTHORIZATION))
+    const afterPlan = beforeStop.filter(
       (r) => r.afterPlanAt === intent.at && plannedAt <= r.from,
     )
-    if (afterPlan) {
-      witness = afterPlan
+    const authorized = afterPlan.find((r) => r.file === authorization?.witness)
+    if (
+      authorization?.status === 'accepted' &&
+      authorized &&
+      Date.parse(authorization.acceptedAt) <= first.from
+    ) {
+      witness = authorized
       outcome = 'planned-stop'
-    } else if (!(plannedAt > first.to)) outcome = 'unknown'
+    } else if (!(plannedAt > first.to)) {
+      // A later stop is unplanned when closure won against a confirmed running probe.
+      // A legacy intent or overlapping readings cannot establish that order.
+      const closedWithoutGrant =
+        intent.requiresAuthorization &&
+        authorization?.status === 'closed' &&
+        afterPlan.length > 0
+      if (!closedWithoutGrant) outcome = 'unknown'
+    }
   }
   return {
     outcome,
@@ -277,6 +325,8 @@ async function closeObserver(dir, fallback, at, deadline, sampleAt) {
     at,
     sampleAt: sampleAt ?? null,
   })
+  // Competes on the same immutable link as plan-stop. Only one command can win authorization.
+  await publish(dir, PLAN_AUTHORIZATION, { status: 'closed' })
   let incomplete = false
   const limit = Date.now() + PROBE_LEASE_MS
   while (true) {
@@ -295,16 +345,17 @@ async function closeObserver(dir, fallback, at, deadline, sampleAt) {
     if (!waiting) break
     await delay(20)
   }
-  const rows = await history(dir)
+  const evidence = await sealEvidence(dir, incomplete)
+  const rows = await history(dir, evidence.files ?? null)
   const stopped = await recordedStop(dir, rows, deadline)
   const final = stopped ?? {
     ...claim,
-    ...(incomplete
+    ...(evidence.incomplete
       ? { outcome: 'unknown', reason: 'incomplete-observation' }
       : {}),
     sampleAt: claim.sampleAt ?? rows.at(-1)?.at ?? null,
   }
-  return publish(dir, 'end.json', final)
+  return publish(dir, 'end.json', { ...final, evidence: TERMINAL_EVIDENCE })
 }
 
 /**
@@ -441,7 +492,10 @@ export async function controlTrial(
       Date.parse(at) < deadline &&
       !(await readRecord(join(dir, 'closing.json')))
     ) {
-      const intent = await publish(dir, 'plan-stop.json', { at })
+      const intent = await publish(dir, 'plan-stop.json', {
+        at,
+        requiresAuthorization: true,
+      })
       // Admission can close between the intent and its observation.
       const row = await observe(
         dir,
@@ -453,14 +507,28 @@ export async function controlTrial(
       const running =
         row?.guest.state === 'running' &&
         stateWindow(row.guest, row.at, deadline)
+      const closing = await readRecord(join(dir, 'closing.json'))
+      const decisionAt = now()
       if (
         running &&
+        !closing &&
         Date.parse(intent.at) <= running.from &&
         Date.parse(row.at) < deadline &&
-        !(await readRecord(join(dir, 'closing.json'))) &&
-        now() < deadline
-      )
-        return intent
+        decisionAt < deadline
+      ) {
+        // The evidence is durable before competing with closure. A retry sees the same grant.
+        const authorization = await publish(dir, PLAN_AUTHORIZATION, {
+          status: 'accepted',
+          witness: row.file,
+          acceptedAt: new Date(decisionAt).toISOString(),
+        })
+        if (authorization.status === 'accepted') return intent
+      }
+      if (row)
+        await publish(dir, `refused-${row.file}`, {
+          status: 'rejected',
+          witness: row.file,
+        })
     }
     throw new Error(
       'The trial can no longer observe this stop plan. Do not stop the VM under this trial.',
@@ -570,8 +638,18 @@ export async function reportTrials(root) {
     const dir = join(root, entry.name)
     const trial = await readRecord(join(dir, 'trial.json'))
     if (!trial) continue
-    const ended = await readRecord(join(dir, 'end.json'))
-    const rows = await history(dir)
+    const ended = await durableEnd(dir)
+    let evidence
+    if (ended) {
+      // Older terminals have no historical manifest. Freeze their surviving evidence on first recovery.
+      evidence = ended.evidence
+        ? await readRecord(join(dir, TERMINAL_EVIDENCE))
+        : await sealEvidence(dir, false)
+    }
+    const rows = await history(
+      dir,
+      ended ? (evidence?.files ?? null) : undefined,
+    )
     // Older terminal files named their stopped sample without storing its inventory interval.
     let stopEvidence = ended?.stopEvidence
     if (
