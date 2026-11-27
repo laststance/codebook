@@ -2299,6 +2299,57 @@ test('A completed record kept by an earlier retry releases the compact original 
   assert.equal(await readFile(configPath, 'utf8'), withdrawn)
 })
 
+test('Two further removal attempts leave the withdrawn settings and their compact original intact', async (context) => {
+  // Value: protects=retrying the removal command after handover of the original config; fails_when=removal loops on formatting or changes either retained file; no_claim=a real storage failure or editor interaction.
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"mcpServers":{"notes":{"command":"notes"}}}\n'
+  const withdrawn =
+    '{\n  "mcpServers": {\n    "notes": {\n      "command": "notes"\n    }\n  }\n}\n'
+  await writeConfig(configPath, original)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let copyPath = ''
+  let keptOriginal = false
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: (displacedPath) => {
+        copyPath ||= displacedPath ?? ''
+      },
+      beforeLeftoverCheck: (path) => {
+        if (path === copyPath && !keptOriginal) {
+          keptOriginal = true
+          throw new Error('test: copy temporarily unavailable')
+        }
+      },
+      beforeRecordWrite: ({ path }) => {
+        if (path === receiptPath) throw noSpaceLeft()
+      },
+    }),
+    /took that entry out again/,
+  )
+
+  // Act
+  const removal = () =>
+    removeManagedDevinMcpEntry(storage, home).then(
+      (result) => result.status,
+      (error: Error) => error.message,
+    )
+  const handover = await removal()
+  const firstRetry = await removal()
+  const liveAfterFirst = await readFile(configPath, 'utf8')
+  const originalAfterFirst = await readFile(copyPath, 'utf8')
+  const secondRetry = await removal()
+
+  // Assert
+  assert.deepEqual([firstRetry, secondRetry], ['not-managed', 'not-managed'])
+  assert.match(handover, /kept the original formatting/)
+  assert.ok(handover.includes(copyPath))
+  assert.equal(liveAfterFirst, withdrawn)
+  assert.equal(originalAfterFirst, original)
+  assert.equal(await readFile(configPath, 'utf8'), withdrawn)
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+})
+
 test('A removal whose completed record cannot be written puts the config back, keeps the receipt and refuses', async (context) => {
   // Value: protects=a removed config never comes back from a later recovery after its receipt was dropped; fails_when=the removal reports file-removed or drops the receipt while the record could not say completed; why_new=the failed write of the completed record was swallowed; seam=seam.afterPublish puts a folder where pending.json was so the record write fails
   // Arrange
