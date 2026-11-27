@@ -9,6 +9,7 @@ import {
   HELP_TEXT,
   parseProcessRows,
   parseSwapUsage,
+  readProcessSample,
   runNativePrecheck,
 } from '../native-precheck.mjs'
 import { runCommandLine } from '../utils/commandContract.mjs'
@@ -694,6 +695,103 @@ test('active CLI reviews are counted without admitting editor sessions as review
   }
 })
 
+// Value: protects=per-workload RSS sums the exact process IDs that were counted; fails_when=shared classification, duplicate rows, or unclassified children inflate the total; no_claim=unique physical memory or unobserved children
+test('workload RSS sums sampled resident sizes once per classified PID in MiB', async () => {
+  // Arrange
+  const rows = parseProcessRows(
+    [
+      ' 1536 101 node --test scripts/gate.mjs',
+      '  512 102 node scripts/gate.mjs',
+      ' 2048 101 tsc --build',
+      '  256 103 codex review --base private-name',
+      ' 8192 104 esbuild --service',
+      '    - 105 editor app',
+      '  100 4242 node --test',
+    ].join('\n'),
+    true,
+  )
+
+  // Act
+  const result = await runWithReadings(['--experiment', '--json'], {
+    loadAverages: [1, 1, 1],
+    cores: 8,
+    processRows: rows,
+  })
+
+  // Assert
+  const report = JSON.parse(result.out[0])
+  assert.equal(result.exitCode, 0)
+  assert.deepEqual(report.processes, {
+    ...NOTHING_RUNS,
+    gate: 2,
+    codexReview: 1,
+  })
+  assert.deepEqual(report.rssMiBByKind, {
+    ...NOTHING_RUNS,
+    gate: 2,
+    codexReview: 0.25,
+  })
+  assert.ok(!result.out[0].includes('private-name'))
+})
+
+// Value: protects=missing RSS is explicit and never drops a busy PID or changes admission; fails_when=a restricted RSS reading becomes zero, hides a build, or blocks an experiment; no_claim=why RSS is unavailable
+test('unavailable or malformed RSS keeps workload counts and makes the RSS total unknown', async () => {
+  // Arrange
+  const samples = [
+    parseProcessRows('101 tsc --build\n102 node app.js'),
+    ...['-', '', 'bad', '-1', '9'.repeat(320)].map((rss) =>
+      parseProcessRows(`${rss} 101 tsc --build\n20 102 node app.js`, true),
+    ),
+  ]
+
+  // Act
+  for (const processRows of samples) {
+    const readings = { loadAverages: [1, 1, 1], cores: 8, processRows }
+    const ordinary = await runWithReadings(['--json'], readings)
+    const experiment = await runWithReadings(
+      ['--json', '--experiment'],
+      readings,
+    )
+
+    // Assert
+    assert.equal(ordinary.exitCode, 3)
+    assert.equal(experiment.exitCode, 0)
+    for (const result of [ordinary, experiment]) {
+      const report = JSON.parse(result.out[0])
+      assert.equal(report.rssMiBByKind, null)
+      assert.equal(report.processes.tsc, 1)
+    }
+  }
+})
+
+// Value: protects=the production ps reader retains process occupancy when the host denies the RSS column; fails_when=RSS denial hides the running build or invents memory; no_claim=host-specific permissions
+test('a host rejecting the RSS column still reports a busy build from the counts-only process list', async () => {
+  // Arrange
+  for (const restricted of [undefined, '']) {
+    const columns = []
+    const read = (_command, args) => {
+      columns.push(args.at(-1))
+      return args.at(-1) === 'rss=,pid=,args='
+        ? restricted
+        : '101 node scripts/qa-build.mjs'
+    }
+
+    // Act
+    const result = await runWithReadings(['--json'], {
+      loadAverages: [1, 1, 1],
+      cores: 8,
+      processRows: readProcessSample(read),
+    })
+
+    // Assert
+    assert.deepEqual(columns, ['rss=,pid=,args=', 'pid=,args='])
+    assert.equal(result.exitCode, 3)
+    const report = JSON.parse(result.out[0])
+    assert.equal(report.rssMiBByKind, null)
+    assert.equal(report.processes.inProcessBuild, 1)
+  }
+})
+
 // Value: protects=actual critical pressure stops ordinary and controlled trials even with zero swap; fails_when=experiment waives real pressure or masks the heavy process; no_claim=elapsed time until recovery
 test('critical memory pressure stops a controlled trial while its workload remains visible', async () => {
   // Arrange
@@ -869,6 +967,7 @@ test('--json preserves the former swap setting as a diagnostic field', async () 
     memoryPressure: 'normal',
     experiment: false,
     processes: NOTHING_RUNS,
+    rssMiBByKind: null,
     maxUsedSwapMb: 1024,
     verdict: 'clear',
     reasons: [],

@@ -226,14 +226,17 @@ a script that node runs from a path holding a space still counts, but node itsel
 a native binary (pnpm's, Fallow's) installed under such a path is read as two words
 and is not counted. esbuild is not counted by itself: other projects' dev servers
 keep its service process open for hours. CodeRabbit and Codex CLI review counts
-are observational in both modes.
+are observational in both modes. JSON also includes rssMiBByKind, the sum of the
+sampled resident sizes of counted processes in MiB (null if incomplete). Each PID
+is assigned once by the same classifier as the count. Shared pages can appear in
+multiple processes' RSS, and unclassified subprocesses contribute no measurements.
 
 Options:
   --experiment            admit and report known overlapping work on the local QA
                           Space while macOS pressure is normal or warning
   --max-used-swap-mb <n>  legacy diagnostic setting in MB (default ${DEFAULT_MAX_USED_SWAP_MB});
                           accepted for compatibility and does not affect admission
-  --json                  print the same facts as one JSON object instead of lines
+  --json                  print one JSON object with the process RSS measurements
   --help                  print this text
 
 Prerequisites: Node on PATH; ps (and sysctl on macOS).
@@ -327,25 +330,34 @@ export function parseSwapUsage(text) {
 }
 
 /**
- * Reads the text of `ps -A -ww -o pid=,args=` as rows of pid, command and arguments.
+ * Reads the process list as PID, command and arguments, with optional leading RSS in KiB.
  *
  * Why: the classification works on rows, so the reading of the machine stays apart from the judgement. Called by {@link productionSeams}' reader; tests call it with hard-coded text.
  * A command line is split at whitespace, so a path that holds a space becomes several words; {@link scriptEndIndexOf} finds the end of node's script path again, and a command path cut so stays unknown (`--help` says so).
  *
  * @param {string | undefined} text - What `ps` printed, or `undefined` when it could not run.
- * @returns {Array<{ pid: number, command: string, args: string[] }> | undefined} One row per line with a pid; `undefined` when there is no text.
+ * @param {boolean} withRss - The caller requested the leading RSS column from ps.
+ * @returns {Array<{ pid: number, command: string, args: string[], rssKiB?: number }> | undefined} One row per line with a pid; `undefined` when there is no text.
  * @example
  * parseProcessRows(' 5101 node --test a.test.js\n') // => [{ pid: 5101, command: 'node', args: ['--test', 'a.test.js'] }]
  */
-export function parseProcessRows(text) {
+export function parseProcessRows(text, withRss = false) {
   if (text === undefined) return undefined
   const rows = []
   for (const line of text.split('\n')) {
-    const match = /^\s*(\d+)\s+(\S.*)$/.exec(line)
+    // RSS comes first so a denied or blank value still leaves the complete PID and command columns.
+    const prefix = withRss ? /^\s*(\S+)\s+(?=\d+\s+\S)/.exec(line) : null
+    const processLine = prefix ? line.slice(prefix[0].length) : line
+    const match = /^\s*(\d+)\s+(\S.*)$/.exec(processLine)
     // A blank line, or one without a pid, is no process.
     if (match === null) continue
     const [command, ...args] = match[2].trim().split(/\s+/)
-    rows.push({ pid: Number(match[1]), command, args })
+    const row = { pid: Number(match[1]), command, args }
+    if (prefix && /^\d+$/.test(prefix[1])) {
+      const rssKiB = Number(prefix[1])
+      if (Number.isSafeInteger(rssKiB)) row.rssKiB = rssKiB
+    }
+    rows.push(row)
   }
   return rows
 }
@@ -452,25 +464,44 @@ function kindOf(row) {
 }
 
 /**
- * Counts the build and test processes per kind.
- *
- * Why: a native check in the Space starts only while no build, suite, package test or measured health runs on the Mac (Discussion 359). Called by {@link gatherFacts}; tests call it with hard-coded rows.
- * Only kinds and counts leave this function: no argument of any row does.
- *
- * @param {Array<{ pid: number, command: string, args: string[] }>} rows - The machine's processes.
- * @param {number} ownPid - This precheck's process id; its row is never counted (it may run inside a `node --test` run).
- * @returns {Record<string, number>} One count per {@link PROCESS_KINDS} id, in report order.
- * @example
- * countProcessKinds([{ pid: 7, command: 'node', args: ['scripts/gate.mjs'] }], 1).gate // => 1
+ * Summarize the PIDs in a single workload sample for {@link gatherFacts}.
+ * The first classified row for a PID wins. {@link kindOf} prefers a named program over the generic Node test runner.
+ * Missing RSS on any counted process makes the sum unknown while preserving every count.
+ * @param {Array<{ pid: number, command: string, args: string[], rssKiB?: number }>} rows - One process table.
+ * @param {number} ownPid - Exclude the precheck itself.
+ * @example summarizeWorkloads([{pid: 5, command: 'tsc', args: [], rssKiB: 2048}], 1).rssMiBByKind.tsc // => 2
+ */
+function summarizeWorkloads(rows, ownPid) {
+  const processes = Object.fromEntries(
+    PROCESS_KINDS.map((kind) => [kind.id, 0]),
+  )
+  const rssMiBByKind = { ...processes }
+  const counted = new Set()
+  // A counts-only ps fallback has no RSS samples, even on an otherwise quiet host.
+  let rssAvailable = rows.some(
+    (row) => Number.isSafeInteger(row.rssKiB) && row.rssKiB >= 0,
+  )
+  for (const row of rows) {
+    if (row.pid === ownPid || counted.has(row.pid)) continue
+    const kind = kindOf(row)
+    if (kind === undefined) continue
+    counted.add(row.pid)
+    processes[kind] += 1
+    if (Number.isSafeInteger(row.rssKiB) && row.rssKiB >= 0)
+      rssMiBByKind[kind] += row.rssKiB / 1024
+    else rssAvailable = false
+  }
+  return { processes, rssMiBByKind: rssAvailable ? rssMiBByKind : null }
+}
+
+/**
+ * Count the classified processes for callers that need only the totals.
+ * @param {Parameters<typeof summarizeWorkloads>[0]} rows - The sampled process table.
+ * @param {number} ownPid - The excluded precheck PID.
+ * @example countProcessKinds([{ pid: 7, command: 'node', args: ['scripts/gate.mjs'] }], 1).gate // => 1
  */
 export function countProcessKinds(rows, ownPid) {
-  const counts = Object.fromEntries(PROCESS_KINDS.map((kind) => [kind.id, 0]))
-  for (const row of rows) {
-    if (row.pid === ownPid) continue
-    const kind = kindOf(row)
-    if (kind !== undefined) counts[kind] += 1
-  }
-  return counts
+  return summarizeWorkloads(rows, ownPid).processes
 }
 
 /**
@@ -534,7 +565,7 @@ function roundLoad(value) {
  * Turns the raw readings into the facts the report and the verdict use.
  * @param {{ loadAverages: number[], cores: number, platform: string, pressureText?: string, swapText?: string, processRows?: Array<{ pid: number, command: string, args: string[] }> }} readings - What the machine reader answered.
  * @param {number} ownPid - This precheck's process id.
- * @returns {{ load: { oneMinute: number, fiveMinutes: number, fifteenMinutes: number, cores: number }, memoryPressure: string, swap?: object, processes?: Record<string, number> }} The facts; `swap` and `processes` are `undefined` when unreadable.
+ * @returns {{ load: { oneMinute: number, fiveMinutes: number, fifteenMinutes: number, cores: number }, memoryPressure: string, swap?: object, processes?: Record<string, number>, rssMiBByKind: Record<string, number> | null }} The facts; `swap` and `processes` are `undefined` when unreadable.
  * @example gatherFacts({ platform: 'darwin', loadAverages: [1, 2, 3], cores: 8, processRows: [] }, 1).swap // => undefined
  */
 export function gatherFacts(readings, ownPid) {
@@ -544,10 +575,9 @@ export function gatherFacts(readings, ownPid) {
     load: { oneMinute, fiveMinutes, fifteenMinutes, cores: readings.cores },
     swap: parseSwapUsage(readings.swapText),
     memoryPressure: memoryPressureOf(readings.platform, readings.pressureText),
-    processes:
-      readings.processRows === undefined || readings.processRows.length === 0
-        ? undefined
-        : countProcessKinds(readings.processRows, ownPid),
+    ...(readings.processRows?.length
+      ? summarizeWorkloads(readings.processRows, ownPid)
+      : { processes: undefined, rssMiBByKind: null }),
   }
 }
 
@@ -614,10 +644,25 @@ function readCommandOutput(command, args) {
 }
 
 /**
+ * Collect the classification and RSS from one ps invocation so the memory belongs to the same PID sample.
+ * {@link productionSeams} falls back to counts alone when the host rejects the resident-size column.
+ * @param {typeof readCommandOutput} read - The process-table reader, injectable for a denied RSS column.
+ * @example readProcessSample()?.length // => number of process rows sampled
+ */
+export function readProcessSample(read = readCommandOutput) {
+  const rows = parseProcessRows(
+    read('ps', ['-A', '-ww', '-o', 'rss=,pid=,args=']),
+    true,
+  )
+  if (rows?.length) return rows
+  return parseProcessRows(read('ps', ['-A', '-ww', '-o', 'pid=,args=']))
+}
+
+/**
  * The production seams: this process's id, the real machine reader and stdout.
  *
  * Why: the reading of the machine is the one thin part the tests replace; everything it answers goes through {@link gatherFacts} and {@link decideVerdict}. Called by {@link main}.
- * The reader reads swap and current pressure through `sysctl` on macOS only and `ps -A -ww -o pid=,args=` on POSIX systems; it signals nothing.
+ * The reader uses sysctl for macOS pressure and swap, and ps for POSIX process classification and RSS.
  *
  * @returns {{ ownPid: number, readMachine: () => object, print: (line: string) => void }} The seams.
  * @example productionSeams().readMachine().cores // => 16
@@ -641,11 +686,7 @@ export function productionSeams() {
           ? readCommandOutput('sysctl', ['-n', 'vm.swapusage'])
           : undefined,
       processRows:
-        process.platform === 'win32'
-          ? undefined
-          : parseProcessRows(
-              readCommandOutput('ps', ['-A', '-ww', '-o', 'pid=,args=']),
-            ),
+        process.platform === 'win32' ? undefined : readProcessSample(),
     }),
     print: (line) => console.log(line),
   }
@@ -683,6 +724,7 @@ export async function runNativePrecheck(argv, seams, progress) {
         memoryPressure: facts.memoryPressure,
         experiment: parsed.experiment,
         processes: facts.processes ?? null,
+        rssMiBByKind: facts.rssMiBByKind,
         maxUsedSwapMb: parsed.maxUsedSwapMb,
         ...judgement,
       }),
