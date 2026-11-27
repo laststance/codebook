@@ -121,3 +121,37 @@ test('a Bun run whose debug session ends during the late arming fails with the s
   )
   assert.equal(harness.sender.calls.length, 0)
 })
+
+// Value: protects=a Bun run whose declared stop the debugger leaves unverified after the late arming fails before its request, naming the stop and how to recover, and closes the server; fails_when=the run sends the request with an unbound stop, so the stop is silently never reached (Cycle 0152 Task 6 in Cursor: a stop on the first statement of a module that only declares functions sat on js-debug's module-entry breakpoint and never bound), or the failure names no stop; seam=the harness's arming that leaves the second stop without a bound line; no_claim=which lines js-debug cannot place
+test('a Bun run whose declared stop stays unbound after the late arming fails before its request, naming that stop', async () => {
+  // Arrange
+  const harness = createHarness({
+    stops: 2,
+    launchLoader: BUN_LOADER,
+    unboundStops: [1],
+  })
+  // Act
+  const error = await harness.run.prepare().then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.match(
+    error.message,
+    /while arming the declared stops: Declared stop 2 at src\/routes\/users\.ts:15 did not bind on Bun: the debugger verified no breakpoint on that line once the server listened, so the request was not sent\./,
+  )
+  assert.equal(harness.server.closeCalls, 1)
+  assert.equal(harness.sender.calls.length, 0)
+})
+
+// Value: protects=a node run keeps accepting a stop that is still unverified at arming (its file loads after the entry pause), so the Bun binding check never refuses a node launch; fails_when=the check leaks into node runs and refuses every stop in a file node has not loaded yet; seam=the harness's arming that leaves the second stop without a bound line on a node launch; no_claim=node's own late binding
+test('a node run with a stop still unverified at arming is prepared as before', async () => {
+  // Arrange
+  const harness = createHarness({ stops: 2, unboundStops: [1] })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.run.view().state, 'ready')
+})

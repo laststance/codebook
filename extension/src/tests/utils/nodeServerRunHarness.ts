@@ -45,6 +45,8 @@ export type HarnessOptions = {
   sourcesChanged?: StudyError
   attachFails?: Error
   armFails?: Error
+  /** The declared stop indexes the fake arming leaves unverified (no bound line), as js-debug leaves a breakpoint it cannot place. */
+  unboundStops?: number[]
   /** Runs inside the debugger's arming, before the release, to end the session or the process while the run prepares. */
   duringArm?: (debug: FakeNodeServerDebugger) => void
   /** Arming waits until the run aborts it, then throws the abort's reason, so a test can act while the run is still before its release. */
@@ -150,7 +152,9 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
     return stops.map((stop) => ({
       declaredStopIndex: stop.declaredStopIndex,
       breakpointId: 100 + stop.declaredStopIndex,
-      boundLine: stop.line,
+      boundLine: this.options.unboundStops?.includes(stop.declaredStopIndex)
+        ? undefined
+        : stop.line,
     }))
   }
   async releaseEntry(

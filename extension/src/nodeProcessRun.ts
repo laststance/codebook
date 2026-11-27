@@ -46,6 +46,7 @@ import type { ResolvedNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { RunClock } from './utils/runningTimeLimit'
 import type { CauseRoots } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
+import { unboundBunStopText } from './utils/unboundBunStopText'
 
 /** What the launcher returns ({@link launchNodeServer}). */
 type LaunchedNodeProcess = Awaited<ReturnType<typeof launchNodeServer>>
@@ -563,9 +564,19 @@ export class NodeProcessRun {
       this.abort.signal,
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
     ])
-    const armed = await this.step('arming the declared stops', () =>
-      this.requireDebugger().armStops(stops, signal),
-    )
+    const armed = await this.step('arming the declared stops', async () => {
+      const answered = await this.requireDebugger().armStops(stops, signal)
+      // The server already runs its code, so a stop the debugger left unverified now never binds: the run ends before its request.
+      const unbound = stops.find((stop) =>
+        answered.some(
+          (arm) =>
+            arm.declaredStopIndex === stop.declaredStopIndex &&
+            arm.boundLine === undefined,
+        ),
+      )
+      if (unbound) throw new Error(unboundBunStopText(unbound))
+      return answered
+    })
     this.applyBoundLines(armed)
     this.record('node-server.stops-armed-after-listen', {
       stops: armed.length,
