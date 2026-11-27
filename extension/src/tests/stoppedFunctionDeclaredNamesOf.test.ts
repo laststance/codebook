@@ -114,8 +114,8 @@ test('declarations inside comments and strings declare nothing', () => {
   assert.deepEqual(sorted(names), ['text'])
 })
 
-// Value: protects=a closed arrow written before the stop line in the stopped function without a terminator makes the span start after that arrow, so values declared before it are not claimed (fail-closed); fails_when=an earlier declaration is claimed from a span it cannot prove; seam=an expression-bodied arrow followed by the stop line; no_claim=semicolon-terminated code, where the span stays whole
-test('a declaration before an unterminated inner arrow is not claimed', () => {
+// Value: protects=the names of an expression-bodied inner arrow written without a semicolon right before the stop line are the ones returned, so the handler's own names (`name`) are missing from the replay (fail-closed); fails_when=an earlier declaration is claimed from a span it cannot prove; seam=an expression-bodied arrow followed by the stop line; no_claim=the fix of that limit (the handler's own names stay missing until it is fixed) and semicolon-terminated code, where the span stays whole
+test("an expression-bodied inner arrow without a semicolon before the stop line is taken as the stopped function, so the handler's own names are missing", () => {
   // Arrange
   const source = [
     "  .get('/greet', ({ query }) => {",
@@ -315,4 +315,66 @@ test('a factory closure holding apiKey is not copied when only a closed inner ar
   )
   // Assert
   assert.deepEqual([...own], [0])
+})
+
+// Value: protects=a `function` and a `class` declared in the stopped function's body before the stop are its own names; fails_when=either declaration is missed, so its value is dropped from the replay; seam=`function helper` and `class Box` before the stop line; no_claim=hoisting of declarations after the stop
+test('a function and a class declared before the stop are declared names', () => {
+  // Arrange
+  const source = [
+    'function run(input) {',
+    '  function helper() {}',
+    '  class Box {}',
+    '  return helper(input)',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 4, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['Box', 'helper', 'input'])
+})
+
+// Value: protects=a `var` declared in a block that closed before the stop is not claimed (documented fail-closed rule: a value may be dropped, never a foreign one added); fails_when=the closed block's `var` counts as declared; seam=`if (flag) { var inner }` before the stop line; no_claim=function scoping of var
+test('a var declared in a block that closed before the stop is not declared', () => {
+  // Arrange
+  const source = [
+    'function run(flag) {',
+    '  if (flag) {',
+    '    var inner = 1',
+    '  }',
+    '  return flag',
+    '}',
+  ].join('\n')
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 5, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['flag'])
+})
+
+// Value: protects=the binding of a brace-less `for` loop lives only in that statement: not declared on a later line, declared on the statement's own line; fails_when=the loop variable leaks past its statement, or is missed inside it; seam=`for (const item of items) use(item)`; no_claim=nested brace-less loops
+test('a brace-less for loop declares its variable only on its own statement', () => {
+  // Arrange
+  const source = [
+    'function run(items) {',
+    '  for (const item of items) use(item)',
+    '  return items',
+    '}',
+  ].join('\n')
+  // Act
+  const afterLoop = stoppedFunctionDeclaredNamesOf(source, 3, 3)
+  const onLoopLine = stoppedFunctionDeclaredNamesOf(source, 2, 30)
+  // Assert
+  assert.deepEqual(sorted(afterLoop), ['items'])
+  assert.deepEqual(sorted(onLoopLine), ['item', 'items'])
+})
+
+// Value: protects=a generator function with generics declares its parameter; fails_when=the `*` or the `<T>` head hides the parameter list; seam=`function* walk<T>(start: T)`; no_claim=other generics shapes
+test('a generator function head with generics declares its parameter', () => {
+  // Arrange
+  const source = ['function* walk<T>(start: T) {', '  yield start', '}'].join(
+    '\n',
+  )
+  // Act
+  const names = stoppedFunctionDeclaredNamesOf(source, 2, 3)
+  // Assert
+  assert.deepEqual(sorted(names), ['start'])
 })

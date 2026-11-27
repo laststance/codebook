@@ -237,3 +237,47 @@ test('a closure with more names than the variable limit is not copied', async ()
   // Assert
   assert.deepEqual([...own], [])
 })
+
+// Value: protects=a constructor frame (`Server.constructor`) copies a closure labelled with its class when every name in it is declared; fails_when=the class label is not accepted for a constructor frame, so the constructor's own values are dropped; seam=scopes labelled `Closure (Server)` as JavaScriptCore labels a constructor; no_claim=other class members
+test('a constructor stop copies the closure labelled with its class', async () => {
+  // Arrange
+  const scopes = [
+    closure('Closure (Server)', 1),
+    closure('Closure', 2),
+    { name: 'Script', variablesReference: 3 },
+  ]
+  const contents = { 1: ['port'], 2: ['secretClient'] }
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    variablesOf(contents),
+    new Set(['port']),
+    'Server.constructor',
+    MAX_NAMES,
+  )
+  // Assert
+  assert.deepEqual([...own], [0])
+})
+
+// Value: protects=an unlabelled closure of a named function is an enclosing function's and ends the copy with everything after it; fails_when=the unlabelled closure or a later one is copied or read; seam=`Closure (greet)`, an unlabelled closure, a labelled one, then the module's closure; no_claim=the module scope rule
+test('a named function stop ends the copy at an unlabelled closure', async () => {
+  // Arrange
+  const scopes = [
+    closure('Closure (greet)', 1),
+    closure('Closure', 2),
+    closure('Closure (greet)', 3),
+    closure('Closure', 4),
+    { name: 'Script', variablesReference: 5 },
+  ]
+  const contents = { 1: ['name'], 2: ['name'], 3: ['name'], 4: ['module'] }
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    variablesOf(contents),
+    new Set(['name']),
+    'greet',
+    MAX_NAMES,
+  )
+  // Assert
+  assert.deepEqual([...own], [0])
+})

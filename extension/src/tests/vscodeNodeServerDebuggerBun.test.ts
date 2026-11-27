@@ -231,6 +231,7 @@ const SAME_LINE_STOPS = [
 function armStopsAt(
   debug: NodeServerDebugger,
   stops: Array<{ line: number; column: number }>,
+  signal: AbortSignal = AbortSignal.timeout(5_000),
 ) {
   return debug.armStops(
     stops.map((stop, index) => ({
@@ -242,7 +243,7 @@ function armStopsAt(
       hash: 'a'.repeat(64),
       inspections: [],
     })),
-    AbortSignal.timeout(5_000),
+    signal,
   )
 }
 
@@ -336,6 +337,55 @@ test('a Bun stop pending at first and verified before the arming deadline is arm
   const armed = await arming
   // Assert
   assert.equal(armed[0]?.boundLine, 14)
+  await debug.release()
+})
+
+// Value: protects=a Bun stop whose registration never verifies is armed with no bound line once the arming deadline passes, so the run refuses it by name instead of failing the arming; fails_when=the deadline is rethrown as an arming failure, or the stop is reported bound; seam=the editor harness's pending reply and an arming signal that times out after 300 ms; no_claim=the length of the real arming budget
+test('a Bun stop whose registration never verifies is armed unbound when the arming deadline passes', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: (_requested, id) => ({ id, verified: false }),
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  // Act
+  const armed = await armStopsAt(
+    debug,
+    [{ line: 14, column: 3 }],
+    AbortSignal.timeout(300),
+  )
+  // Assert
+  assert.equal(armed.length, 1)
+  assert.equal(armed[0]?.boundLine, undefined)
+  await debug.release()
+})
+
+// Value: protects=a Bun arming the run itself ended (an exit or a failure aborts the signal with its reason) rejects with that reason instead of reading as an unbound stop; fails_when=any abort is swallowed as a deadline, so a dead run is reported as a refused stop; seam=the editor harness's pending reply and a signal aborted with an Error; no_claim=which events abort the signal
+test('a Bun stop arming rejects with the aborting reason when the arming is aborted for another reason than the deadline', async () => {
+  // Arrange
+  let pendingReplies = 0
+  const editor = await editorHarness({
+    breakpointReply: (_requested, id) => {
+      pendingReplies += 1
+      return { id, verified: false }
+    },
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const controller = new AbortController()
+  const arming = armStopsAt(debug, [{ line: 14, column: 3 }], controller.signal)
+  const rejection = assert.rejects(arming, { message: 'run stopped' })
+  await waitUntil(
+    () => pendingReplies > 0,
+    'the pending reply to the stop registration',
+    5_000,
+  )
+  // The arming polls for the acknowledgement once more, then waits for the verification; let it reach that wait so the abort ends the wait itself. Nothing outside the debugger shows that moment: on a slower machine the abort can end the earlier poll instead, which rejects with the same reason, so the test never fails falsely; it then only misses this branch.
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  // Act
+  controller.abort(new Error('run stopped'))
+  // Assert
+  await rejection
   await debug.release()
 })
 
