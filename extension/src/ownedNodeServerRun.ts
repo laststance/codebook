@@ -572,6 +572,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
 
   async sendRequest(key: string, options?: { secret?: string }): Promise<void> {
     const ready = this.assertReadyForRequest()
+    // A Bun stop withdrawn since the preparation, or a pause not classified yet, refuses the send before any byte.
+    const refusal = this.core.requestRefusalNow()
+    if (refusal) throw new StudyError('RUN_NOT_READY', refusal)
     const { signIn } = this.input.configuration
     if (signIn) return this.sendSignInRequest(key, ready, options?.secret)
     const { host, port } = ready
@@ -853,6 +856,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       bodyBytes: Buffer.byteLength(declared.body ?? ''),
     })
     this.notify()
+    // The sign-in already ran: a stop withdrawn meanwhile ends the declared request before its bytes.
+    const refusal = this.core.requestRefusalNow()
+    if (refusal) {
+      this.failRequest('REQUEST_FAILED', refusal)
+      return
+    }
     const cookie = cookieHeaderOf(cookies, declared.path)
     let handle: ReturnType<NodeServerRunDependencies['sendRequest']>
     try {

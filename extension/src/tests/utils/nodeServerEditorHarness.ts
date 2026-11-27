@@ -37,6 +37,8 @@ export async function editorHarness(
     stopFailures?: number
     /** The adapter rejects the stack trace of a pause after the entry pause. */
     stackTraceFails?: boolean
+    /** A Bun launch: no entry pause is continued, so every stack trace read is a pause's and the gate or failure above applies from the first one. */
+    noEntryPause?: boolean
     /** Holds the adapter's stack trace of a pause after the entry pause until the test settles it. */
     stackTraceGate?: Promise<void>
     /** Holds every `stopDebugging` call until the test settles it, so a release stays under way. */
@@ -114,7 +116,7 @@ export async function editorHarness(
   const adapterReplies = new Map<SourceBreakpoint, DebugProtocol.Breakpoint>()
   let armed = 0
   // The entry pause is read normally; the pauses after it fail when asked.
-  let entryDone = false
+  let entryDone = options.noEntryPause === true
   /** Passes the editor's replacement of the file's breakpoints, and the adapter's reply, through the debugger's tracker. */
   const replaceBreakpoints = (): void => {
     const sequence = ++requestSequence
@@ -457,11 +459,14 @@ export async function editorHarness(
       })
     },
     /** The adapter's later news about a breakpoint it acknowledged (a DAP `breakpoint` event). */
-    breakpointNews(breakpoint: DebugProtocol.Breakpoint): void {
+    breakpointNews(
+      breakpoint: DebugProtocol.Breakpoint,
+      reason: 'changed' | 'removed' = 'changed',
+    ): void {
       tracker?.onDidSendMessage?.({
         type: 'event',
         event: 'breakpoint',
-        body: { reason: 'changed', breakpoint },
+        body: { reason, breakpoint },
       })
     },
     /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread. */

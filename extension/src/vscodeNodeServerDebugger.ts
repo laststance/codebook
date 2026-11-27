@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { basename, isAbsolute, relative } from 'node:path'
+import { basename, isAbsolute, relative, resolve } from 'node:path'
 
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import * as vscode from 'vscode'
@@ -58,12 +58,28 @@ type NativeStop = {
   threadId: number
   reason: string
   hitBreakpointIds?: number[]
+  /** A Bun run: whether the request window was open when the adapter's `stopped` arrived, so a classification that finishes later still tells a pause before the request from one it caused. */
+  inRequestWindowAtStop?: boolean
 }
 
 /** A declared stop with the owned breakpoint that arms it. */
 type ArmedStop = {
   target: NodeServerStopTarget
   breakpoint: OwnedRepositoryBreakpoint
+}
+
+/**
+ * Tells whether something an arming wait ended with is the arming deadline (the wait's own budget or the signal's timeout) rather than the run ending the arming.
+ * Called by {@link VscodeNodeServerDebugger.armStops} and its helpers for a Bun run's late arming.
+ * @param reason - The error a wait threw, or the arming signal's abort reason.
+ * @returns `true` for a {@link WaitTimeoutError} or a `TimeoutError` DOMException; `false` for anything else.
+ * @example isArmingDeadline(new DOMException('x', 'TimeoutError')) // => true
+ */
+function isArmingDeadline(reason: unknown): boolean {
+  return (
+    reason instanceof WaitTimeoutError ||
+    (reason instanceof DOMException && reason.name === 'TimeoutError')
+  )
 }
 
 /**
@@ -223,6 +239,12 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       hitBreakpointIds: Array.isArray(body.hitBreakpointIds)
         ? body.hitBreakpointIds.filter((id) => Number.isInteger(id))
         : undefined,
+      // Bun runs during arming: its pause is judged by the window as it stood when it arrived.
+      ...(this.runtime === 'bun'
+        ? {
+            inRequestWindowAtStop: codebookStopLedger.isWindowOpen(session.id),
+          }
+        : {}),
     }
     this.sessionStops.push(stop)
     this.input.record('node-server.dap-stopped', {
@@ -279,8 +301,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     if (threadId === undefined) this.pausedThreads.delete(sessionId)
     else this.pausedThreads.get(sessionId)?.delete(threadId)
     // A stop that ran on is no pause any more: the release, which hands the session's earlier stops to the run, must not report it (a Bun target runs before its release).
-    for (let index = this.sessionStops.length - 1; index >= 0; index -= 1)
-      if (ranOn(this.sessionStops[index]!)) this.sessionStops.splice(index, 1)
+    // Only a Bun run drops them here: a node run's release still finds the entry pause the learner continued first.
+    if (this.runtime === 'bun')
+      for (let index = this.sessionStops.length - 1; index >= 0; index -= 1)
+        if (ranOn(this.sessionStops[index]!)) this.sessionStops.splice(index, 1)
     for (const [token, stop] of this.unreportedStops)
       if (ranOn(stop)) this.unreportedStops.delete(token)
     for (const [token, { stop }] of this.livePauses)
@@ -405,22 +429,58 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     }))
     const armedStops: NodeServerArmedStop[] = []
     for (const { target, breakpoint } of this.armed) {
-      const receipt = await this.registeredAsDeclared(
+      // A Bun arming that passed its deadline answers every stop it did not reach as unbound, so the run names the first one.
+      if (this.runtime === 'bun' && isArmingDeadline(signal.reason))
+        armedStops.push({
+          declaredStopIndex: target.declaredStopIndex,
+          boundLine: breakpoint.boundPlace(session)?.line,
+        })
+      else
+        armedStops.push(
+          await this.armOneStop(target, breakpoint, session, signal),
+        )
+    }
+    return armedStops
+  }
+
+  /**
+   * Waits for one armed stop's acknowledgement and reads the line it is bound to.
+   * Called by {@link armStops} for each stop in order.
+   * @param target - The declared stop.
+   * @param breakpoint - Its owned breakpoint.
+   * @param session - The bound session.
+   * @param signal - The arming's cancellation and deadline.
+   * @returns The stop's arming answer; a Bun stop the deadline caught before its acknowledgement is answered unbound.
+   * @throws The refusal of a stop bound elsewhere, or the abort reason when the run itself ended the arming.
+   * @example await this.armOneStop(target, breakpoint, session, signal) // => { declaredStopIndex: 0, breakpointId: 4, boundLine: 14 }
+   */
+  private async armOneStop(
+    target: NodeServerStopTarget,
+    breakpoint: OwnedRepositoryBreakpoint,
+    session: vscode.DebugSession,
+    signal: AbortSignal,
+  ): Promise<NodeServerArmedStop> {
+    let receipt
+    try {
+      receipt = await this.registeredAsDeclared(
         breakpoint,
         target,
         session,
         signal,
       )
-      // A pending reply names no place yet, so the adapter is asked once more while the server is still paused.
-      if (receipt.status === 'pending')
-        await breakpoint.assertBoundAsDeclared(session, signal)
-      armedStops.push({
-        declaredStopIndex: target.declaredStopIndex,
-        breakpointId: receipt.breakpointId,
-        boundLine: await this.boundLineOf(breakpoint, session, signal),
-      })
+    } catch (error) {
+      // A Bun stop the deadline caught before its acknowledgement is unbound; the run names it.
+      if (this.runtime !== 'bun' || !isArmingDeadline(error)) throw error
+      return { declaredStopIndex: target.declaredStopIndex }
     }
-    return armedStops
+    // A pending reply names no place yet, so the adapter is asked once more while the server is still paused.
+    if (receipt.status === 'pending')
+      await breakpoint.assertBoundAsDeclared(session, signal)
+    return {
+      declaredStopIndex: target.declaredStopIndex,
+      breakpointId: receipt.breakpointId,
+      boundLine: await this.boundLineOf(breakpoint, session, signal),
+    }
   }
 
   /**
@@ -449,10 +509,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       return place.line
     } catch (error) {
       // The arming deadline (the wait's own budget or the signal's timeout) leaves the stop unbound; any other end belongs to the run.
-      const isDeadline =
-        error instanceof WaitTimeoutError ||
-        (error instanceof DOMException && error.name === 'TimeoutError')
-      if (isDeadline) return undefined
+      if (isArmingDeadline(error)) return undefined
       throw error
     }
   }
@@ -596,7 +653,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     codebookStopLedger.recordStop(
       session.id,
       declaredStopIndex !== undefined &&
-        codebookStopLedger.isWindowOpen(session.id),
+        (stop.inRequestWindowAtStop ??
+          codebookStopLedger.isWindowOpen(session.id)),
     )
     this.livePauses.set(stop.token, { stop, trace })
     this.unreportedStops.delete(stop.token)
@@ -662,13 +720,38 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         place !== undefined &&
         frame.source?.path === target.file &&
         frame.line === place.line &&
-        // A verified place without a column matches any column of its line.
-        (place.column === undefined || frame.column === place.column)
+        // A verified place without a column matches any column of its line, unless the learner holds a breakpoint of their own on that line: the pause may be theirs.
+        (place.column === undefined
+          ? !this.learnerHoldsBreakpointAt(target.file, frame.line, breakpoint)
+          : frame.column === place.column)
       )
     })
     return matches.length === 1
       ? matches[0]?.target.declaredStopIndex
       : undefined
+  }
+
+  /**
+   * Tells whether the editor holds a breakpoint other than a declared stop's own on a file and line.
+   * Why it exists: a line-only bound place matches any column of its line, so an ID-less Bun pause there could be the learner's own breakpoint; the editor's list is the evidence that tells them apart. Called by {@link armedStopAtFrame}.
+   * @param file - The declared stop's file.
+   * @param line - The one-based line of the pause.
+   * @param owned - The declared stop's own breakpoint, which does not count.
+   * @returns `true` when another source breakpoint lies on that file and line.
+   * @example this.learnerHoldsBreakpointAt('/repo/src/a.ts', 14, owned) // => true after the learner set a breakpoint on line 14
+   */
+  private learnerHoldsBreakpointAt(
+    file: string,
+    line: number,
+    owned: OwnedRepositoryBreakpoint,
+  ): boolean {
+    return vscode.debug.breakpoints.some(
+      (candidate) =>
+        candidate instanceof vscode.SourceBreakpoint &&
+        candidate.id !== owned.breakpoint.id &&
+        resolve(candidate.location.uri.fsPath) === resolve(file) &&
+        candidate.location.range.start.line + 1 === line,
+    )
   }
 
   /** Names the top frame for an event: the repository-relative path inside the repository, the file name alone outside it. */

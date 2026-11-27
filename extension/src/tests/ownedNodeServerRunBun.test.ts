@@ -4,7 +4,12 @@ import { test } from 'node:test'
 import { StudyError } from '../errors'
 
 import { defer } from './utils/defer'
-import { createHarness, sendRequest } from './utils/nodeServerRunHarness'
+import {
+  createHarness,
+  RESPONSE_200,
+  sendRequest,
+  until,
+} from './utils/nodeServerRunHarness'
 
 /** The Bun loader a `loader: "bun"` declaration resolves to, with a learner's Bun and the extension's bootstrap. */
 const BUN_LOADER = {
@@ -224,4 +229,69 @@ test('a node run with a stop still unverified at arming is prepared as before', 
   await harness.run.prepare()
   // Assert
   assert.equal(harness.run.view().state, 'ready')
+})
+
+// Value: protects=a Bun run re-reads every declared stop's binding right before the request bytes are written, so a stop withdrawn after the preparation refuses the send with the unbound-stop sentence and writes nothing; fails_when=the send trusts the preparation's cached readiness and the POST runs with a stop that no longer pauses; seam=the harness debugger withdrawing stop 0 after the run is prepared; no_claim=how js-debug withdraws a binding
+test('a Bun run refuses its request when a declared stop was withdrawn after the preparation and writes no byte', async () => {
+  // Arrange
+  const harness = createHarness({ stops: 2, launchLoader: BUN_LOADER })
+  await harness.run.prepare()
+  harness.debug.withdrawnAfterArming.add(0)
+  // Act
+  const error = await sendRequest(harness).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.match(
+    error.message,
+    /^Declared stop 1 at src\/routes\/users\.ts:14 did not bind on Bun/,
+  )
+  assert.equal(harness.sender.calls.length, 0)
+})
+
+// Value: protects=a Bun run does not send its request while a pause is still being classified, so a pause that came before the request is never read as caused by it; fails_when=the request window opens with an unclassified pause pending; seam=the harness debugger reporting an unreported pause; no_claim=how long a stack read takes
+test('a Bun run sends no request while a pause of the server is still being read', async () => {
+  // Arrange
+  const harness = createHarness({ launchLoader: BUN_LOADER })
+  await harness.run.prepare()
+  harness.debug.unreportedPause = true
+  // Act
+  const error = await sendRequest(harness).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.match(error.message, /A pause of the server is still being read/)
+  assert.equal(harness.sender.calls.length, 0)
+})
+
+// Value: protects=the declared request that follows a sign-in is not written when a declared stop was withdrawn meanwhile, and the request ends with the unbound-stop sentence; fails_when=only the sign-in is checked and the declared POST runs unobserved; seam=the harness debugger withdrawing stop 0 between the sign-in and its response; no_claim=the sign-in's own server behaviour
+test('a Bun run with sign-in writes no declared request when a stop was withdrawn during the sign-in', async () => {
+  // Arrange
+  const harness = createHarness({
+    launchLoader: BUN_LOADER,
+    signIn: {
+      path: '/login',
+      fields: { email: 'learner@example.test' },
+      secretField: 'password',
+      secret: 'ask-learner',
+    },
+  })
+  await harness.run.prepare()
+  await harness.run.sendRequest('key-1', { secret: 'hunter2-correct-horse' })
+  harness.debug.withdrawnAfterArming.add(0)
+  // Act
+  const [signInExchange] = harness.sender.exchanges
+  signInExchange?.onSetCookie?.(['sid=s%3Aabc123def456; Path=/; HttpOnly'])
+  signInExchange?.response.resolve(RESPONSE_200)
+  await until(harness, (view) => view.state === 'request-failed')
+  // Assert
+  assert.equal(harness.sender.exchanges.length, 1)
+  assert.match(
+    JSON.stringify(harness.run.view()),
+    /Declared stop 1 at src\/routes\/users\.ts:14 did not bind on Bun/,
+  )
 })

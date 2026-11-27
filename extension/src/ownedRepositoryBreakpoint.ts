@@ -107,6 +107,7 @@ export class OwnedBreakpointMovedError extends Error {
 }
 /** The breakpoint of a DAP `breakpoint` event: the adapter's later news about a breakpoint it acknowledged, for example a pending one verified when its module loads. */
 const breakpointEventSchema = z.object({
+  reason: z.string().optional(),
   breakpoint: z.object({
     id: z.number().int(),
     verified: z.boolean(),
@@ -979,22 +980,26 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Tells whether a `breakpoint` event calls the acknowledged owned breakpoint unverified, for {@link takeBreakpointNews}: js-debug sends such news when the script that held the binding is reloaded.
+   * Tells whether a `breakpoint` event withdraws the acknowledged owned breakpoint, for {@link takeBreakpointNews}: the adapter calls it unverified (js-debug sends such news when the script that held the binding is reloaded), removes it (reason `removed`), or moves the same id to another source file.
    * @param event - A DAP `breakpoint` event of the session.
    * @param receipt - The receipt whose breakpoint id tells the owned breakpoint from every other.
-   * @returns `true` for news about the owned id with `verified: false`; `false` for every other event.
+   * @returns `true` for news about the owned id that is unverified, a removal, or a verified binding in another file; `false` for every other event.
    * @example
-   * this.isUnverifiedNewsOfOwned({ seq: 9, type: 'event', event: 'breakpoint', body: { reason: 'changed', breakpoint: { id: 4, verified: false } } }, receipt) // => true for a receipt of id 4
+   * this.isWithdrawalNewsOfOwned({ seq: 9, type: 'event', event: 'breakpoint', body: { reason: 'removed', breakpoint: { id: 4, verified: true, line: 14 } } }, receipt) // => true for a receipt of id 4
    */
-  private isUnverifiedNewsOfOwned(
+  private isWithdrawalNewsOfOwned(
     event: DebugProtocol.Event,
     receipt: RegistrationReceipt,
   ): boolean {
     const parsed = breakpointEventSchema.safeParse(event.body)
+    if (!parsed.success) return false
+    const { reason, breakpoint } = parsed.data
+    if (breakpoint.id !== receipt.breakpointId) return false
+    // A removal, an unverified report, or the same id in another file leaves no binding in the owned source.
     return (
-      parsed.success &&
-      parsed.data.breakpoint.id === receipt.breakpointId &&
-      !parsed.data.breakpoint.verified
+      reason === 'removed' ||
+      !breakpoint.verified ||
+      !this.isVerifiedInOwnedSource(breakpoint)
     )
   }
 
@@ -1014,8 +1019,8 @@ export class OwnedRepositoryBreakpoint {
     receipt: RegistrationReceipt,
     event: DebugProtocol.Event,
   ): void {
-    // News that calls the acknowledged breakpoint unverified leaves its earlier place standing for every reader but the adapter stand-in, which must not bind a place the adapter withdrew.
-    if (this.isUnverifiedNewsOfOwned(event, receipt)) {
+    // News that withdraws the acknowledged breakpoint (unverified, removed, or moved to another file) leaves its earlier place standing for every reader but the adapter stand-in and {@link boundPlace}, which must not bind a place the adapter withdrew.
+    if (this.isWithdrawalNewsOfOwned(event, receipt)) {
       registration.unverifiedByNews = true
       return
     }
@@ -1026,9 +1031,15 @@ export class OwnedRepositoryBreakpoint {
       if (breakpoint.line === undefined) return
       // News that names a line but no column is the adapter's latest word on the line, for {@link boundPlace}: a line the owner refuses withdraws the bound place.
       registration.verifiedLine = breakpoint.line
-      // A line the owner accepts still verifies the breakpoint there, which lifts an earlier withdrawal.
-      if (this.acknowledgesPosition(breakpoint))
+      // A line the owner accepts still verifies the breakpoint there, which lifts an earlier withdrawal and an earlier refusal.
+      if (this.acknowledgesPosition(breakpoint)) {
         registration.unverifiedByNews = false
+        // A refused place no longer stands, and the column of the place before it is unknown now.
+        if (registration.refusedAt) {
+          registration.refusedAt = undefined
+          registration.verifiedAt = undefined
+        }
+      }
       return
     }
     // The adapter moved the acknowledged breakpoint to a place the owner refuses: the earlier receipt no longer stands.

@@ -117,6 +117,8 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
   lastSessionName = ''
   /** The adapter reported a stop whose stack the editor is still reading, so the run has not heard of it yet. */
   unreportedPause = false
+  /** The declared stop indexes the adapter withdraws once the run is prepared; a test adds one between the preparation and the request. */
+  readonly withdrawnAfterArming = new Set<number>()
   constructor(
     readonly input: NodeServerDebuggerInput,
     private readonly order: string[],
@@ -165,9 +167,11 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
   currentlyBoundStops(): NodeServerArmedStop[] {
     return this.input.stops.map((stop) => ({
       declaredStopIndex: stop.declaredStopIndex,
-      boundLine: this.options.withdrawnStops?.includes(stop.declaredStopIndex)
-        ? undefined
-        : stop.line,
+      boundLine:
+        this.options.withdrawnStops?.includes(stop.declaredStopIndex) ||
+        this.withdrawnAfterArming.has(stop.declaredStopIndex)
+          ? undefined
+          : stop.line,
     }))
   }
   async releaseEntry(

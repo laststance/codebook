@@ -273,6 +273,8 @@ export class NodeProcessRun {
   private stopViews: NodeServerStop[] = []
   /** A Bun launch's declared stops, held from the attach until {@link armDeferredStops} arms them once the server listens. */
   private deferredStops?: NodeServerStopTarget[]
+  /** The stops a Bun launch armed after the server listened; {@link requestRefusalNow} re-reads their bindings before every request. */
+  private lateArmedStops?: NodeServerStopTarget[]
   private prepared = false
   /** True while {@link armDeferredStops} runs: a server exit then fails the start at once, as it does after the run is prepared. */
   private armingDeferredStops = false
@@ -596,10 +598,37 @@ export class NodeProcessRun {
     }).finally(() => {
       this.armingDeferredStops = false
     })
+    this.lateArmedStops = stops
     this.applyBoundLines(armed)
     this.record('node-server.stops-armed-after-listen', {
       stops: armed.length,
     })
+  }
+
+  /**
+   * Tells whether a Bun run may not write its request right now: a declared stop the debugger withdrew since the run was prepared, or a pause still being read.
+   *
+   * Why it exists: the arming's last binding check runs while the run prepares, but the request is sent later (after a confirmation, or after the sign-in), and a request that runs with an unbound stop changes data without the promised observation; a pause that arrived before the request must be classified before the request opens its window. A node launch arms before its server runs, so the call answers nothing for it.
+   * When it runs: called by the node-server run right before it writes the declared request's bytes, the one after the sign-in included.
+   * @returns The sentence to refuse the request with ({@link unboundBunStopText} for the first unbound stop), or `undefined` when the request may go.
+   * @example this.requestRefusalNow() // => 'Declared stop 1 at src/routes/users.ts:14 did not bind on Bun: …'
+   */
+  requestRefusalNow(): string | undefined {
+    const stops = this.lateArmedStops
+    if (!stops) return undefined
+    const current = this.requireDebugger().currentlyBoundStops?.() ?? []
+    const unbound = stops.find((stop) =>
+      current.some(
+        (arm) =>
+          arm.declaredStopIndex === stop.declaredStopIndex &&
+          arm.boundLine === undefined,
+      ),
+    )
+    if (unbound) return unboundBunStopText(unbound)
+    // A pause the run has not heard of yet may be older than the request: the request waits for its classification.
+    if (this.requireDebugger().hasUnreportedPause())
+      return 'A pause of the server is still being read, so the request was not sent. Read the run and send again once the pause is reported.'
+    return undefined
   }
 
   /**

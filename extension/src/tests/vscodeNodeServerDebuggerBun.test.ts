@@ -5,6 +5,7 @@ import type {
   NodeServerDebugger,
   NodeServerDebuggerPause,
 } from '../nodeServerDebugger'
+import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { defer } from './utils/defer'
@@ -446,5 +447,223 @@ test('a Bun stop moved away by news without a column is bound again by later new
     { declaredStopIndex: 0, boundLine: 14 },
     { declaredStopIndex: 1, boundLine: 20 },
   ])
+  await debug.release()
+})
+
+// Value: protects=a Bun stop the adapter removed (a `breakpoint` event with reason `removed` that still carries the last verified position) is read as unbound by the re-read, so no request is sent for a stop that no longer pauses; fails_when=the removal is taken as one more verification and the stop keeps its line; seam=the editor harness's removed breakpoint event after arming; no_claim=when js-debug sends removals
+test('a Bun stop the adapter removed after arming is reported unbound by the re-read', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  await armTwoStops(debug)
+  // Act
+  editor.adapter.breakpointNews(
+    { id: OWNED_IDS[0]!, verified: true, line: 14, column: 3 },
+    'removed',
+  )
+  const current = plain(debug.currentlyBoundStops?.())
+  // Assert
+  assert.deepEqual(current, [
+    { declaredStopIndex: 0 },
+    { declaredStopIndex: 1, boundLine: 20 },
+  ])
+  await debug.release()
+})
+
+// Value: protects=a Bun stop the adapter moved to another source file under the same breakpoint id is read as unbound by the re-read, so an ID-less pause in the old file is never taken for the declared stop; fails_when=news naming another file is ignored and the old position keeps standing; seam=the editor harness's breakpoint event with another source path after arming; no_claim=whether js-debug relocates breakpoints between files
+test('a Bun stop the adapter moves to another file is reported unbound by the re-read', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  await armTwoStops(debug)
+  // Act
+  editor.adapter.breakpointNews({
+    id: OWNED_IDS[0]!,
+    verified: true,
+    line: 14,
+    column: 3,
+    source: { path: '/repo-of-the-editor-test/src/other.ts' },
+  })
+  const current = plain(debug.currentlyBoundStops?.())
+  // Assert
+  assert.deepEqual(current, [
+    { declaredStopIndex: 0 },
+    { declaredStopIndex: 1, boundLine: 20 },
+  ])
+  await debug.release()
+})
+
+// Value: protects=a Bun stop the adapter moved to a refused place is bound again by later news that verifies the declared line without a column; fails_when=the refusal stays after the corrected news, so the run rejects a stop the debugger already fixed; seam=two breakpoint events of the editor harness (15:9, then line 14 alone); no_claim=the order in which js-debug sends its news
+test('a Bun stop moved to a refused place is bound again by later news on its declared line without a column', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  await armTwoStops(debug)
+  editor.adapter.breakpointNews({
+    id: OWNED_IDS[0]!,
+    verified: true,
+    line: 15,
+    column: 9,
+  })
+  // Act
+  editor.adapter.breakpointNews({ id: OWNED_IDS[0]!, verified: true, line: 14 })
+  const current = plain(debug.currentlyBoundStops?.())
+  // Assert
+  assert.deepEqual(current, [
+    { declaredStopIndex: 0, boundLine: 14 },
+    { declaredStopIndex: 1, boundLine: 20 },
+  ])
+  await debug.release()
+})
+
+// Value: protects=a Bun arming whose first stop is still pending at the shared deadline answers every stop (the pending one unbound) so the run names the first unbound stop with its file and line; fails_when=the next stop's registration wait throws a generic TimeoutError and the run never learns which stop failed; seam=the editor harness with only the first reply pending and an arming signal that times out after 300 ms; no_claim=the length of the real arming budget
+test('a Bun arming with a pending first stop at the deadline answers both stops instead of throwing a timeout', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: (requested, id) =>
+      id === OWNED_IDS[0]
+        ? { id, verified: false }
+        : {
+            id,
+            verified: true,
+            line: requested.line,
+            column: requested.column,
+          },
+  })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  // Act
+  const armed = await armStopsAt(debug, TWO_STOPS, AbortSignal.timeout(300))
+  // Assert
+  assert.deepEqual(
+    plain(armed).map((stop) => [stop.declaredStopIndex, stop.boundLine]),
+    [
+      [0, undefined],
+      [1, 20],
+    ],
+  )
+  await debug.release()
+})
+
+/** Adds a breakpoint of the learner's own at a line and column of the harness's stop file, as the editor lists it. */
+function learnerBreakpointAt(
+  editor: Awaited<ReturnType<typeof editorHarness>>,
+  line: number,
+  column: number,
+): void {
+  const { SourceBreakpoint, Location, Position } = editor.editor
+  editor.editorBreakpoints.push(
+    new SourceBreakpoint(
+      new Location({ fsPath: STOP_FILE }, new Position(line - 1, column - 1)),
+    ),
+  )
+}
+
+/** A reply that verifies a stop on its requested line and names no column. */
+const LINE_ONLY_REPLY = (requested: { line: number }, id: number) => ({
+  id,
+  verified: true,
+  line: requested.line,
+})
+
+// Value: protects=an ID-less Bun pause on the line of a declared stop whose place has no column is the learner's own when the editor holds another breakpoint on that line, so sign-in never auto-continues it; fails_when=any column of the line is attributed to the declared stop although the learner broke there too; seam=the editor harness with a line-only reply and a second editor breakpoint at 14:24; no_claim=js-debug's real column for a paused frame
+test('a Bun pause at a learner breakpoint on a declared stop line without a column stays the learner pause', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: LINE_ONLY_REPLY,
+    firstStop: {
+      reason: 'breakpoint',
+      frame: { file: STOP_FILE, line: 14, column: 24 },
+    },
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armStopsAt(debug, [{ line: 14, column: 3 }])
+  learnerBreakpointAt(editor, 14, 24)
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  const pause = await nextPause()
+  // Assert
+  assert.equal(pause.declaredStopIndex, undefined)
+  await debug.release()
+})
+
+// Value: protects=an ID-less Bun pause on the line of a declared stop whose place has no column is still that declared stop when the editor holds no other breakpoint there; fails_when=the learner-breakpoint check refuses every line-only stop, so the run never captures a stop js-debug placed without a column; seam=the editor harness with a line-only reply and no other breakpoint; no_claim=js-debug's real column for a paused frame
+test('a Bun pause on a declared stop line without a column and without a learner breakpoint is that declared stop', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    breakpointReply: LINE_ONLY_REPLY,
+    firstStop: {
+      reason: 'breakpoint',
+      frame: { file: STOP_FILE, line: 14, column: 24 },
+    },
+  })
+  const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armStopsAt(debug, [{ line: 14, column: 3 }])
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  const pause = await nextPause()
+  // Assert
+  assert.equal(pause.declaredStopIndex, 0)
+  await debug.release()
+})
+
+// Value: protects=a Bun pause that arrived before the request window opened stays the learner's even when its stack read finishes after the window opened; fails_when=the classification asks the window as it stands when the stack arrives, so a background hit is recorded as caused by the request and saved in its replay; seam=the editor harness's gated stack trace and the stop ledger; no_claim=how long js-debug takes to answer a stack trace
+test('a Bun pause that arrived before the request window opened is not recorded as caused by the request', async () => {
+  // Arrange
+  codebookStopLedger.reset()
+  const gate = defer<void>()
+  const editor = await editorHarness({
+    noEntryPause: true,
+    stackTraceGate: gate.promise,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
+  })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armTwoStops(debug)
+  editor.adapter.continued(1, true)
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  // Act
+  debug.setRequestWindow(true)
+  gate.resolve()
+  await nextPause()
+  // Assert
+  assert.equal(
+    codebookStopLedger.isCodebookCausedStop('node-server-session'),
+    false,
+  )
+  await debug.release()
+})
+
+// Value: protects=a node run whose learner continued the entry pause before the release ran still finds that entry in the release, so the release does not wait for its timeout; fails_when=a resume drops the entry from the session's stops on a node run (the Bun-only bookkeeping leaks), and the release ends with a timeout; seam=the editor harness's entry pause, a learner Continue, then the release; no_claim=the real adapter's resume order
+test('a node release still finds an entry pause the learner continued before it', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({
+    ...BUN_ATTACH,
+    runtime: 'node',
+    signal: AbortSignal.timeout(5_000),
+  })
+  await armTwoStops(debug)
+  editor.adapter.learnerContinues()
+  // Act
+  await debug.releaseEntry(AbortSignal.timeout(1_500))
+  // Assert
+  assert.equal(
+    editor.requests.filter((request) => request.command === 'continue').length,
+    1,
+  )
   await debug.release()
 })
