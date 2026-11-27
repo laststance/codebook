@@ -66,6 +66,7 @@ function repositoryClient(
     presentedRevision = -1,
     location: RepositorySelection['location'],
     restoring = false,
+    navigationFrame: number | undefined,
     timer: ReturnType<typeof setTimeout> | undefined
   const element = (id: string) => document.getElementById(id)!
   // The focus the pane owes: the element it would have focused in a document that has the focus. The newest wish replaces an older one, as the newest `focus()` would have. It is the control the learner left the pane at until a part of the pane names another place (an article's title, the place a revision returns to, the same control of a list that was rendered again).
@@ -170,10 +171,28 @@ function repositoryClient(
     }
   }
   const persist = (): void => {
-    if (restoring || !current?.selection || current.loading) return
+    // A save due while an explicit Return is pending would publish intermediate layout as the learner's new place.
+    if (
+      navigationFrame !== undefined ||
+      restoring ||
+      !current?.selection ||
+      current.loading
+    )
+      return
     location = capture()
     api.setState({ key: contentKey, location, visited: [...visited] })
     send({ type: 'location', selection: { ...current.selection, location } })
+  }
+  /** Retires an older Return when a new host revision or an in-article navigation chooses another reading place. @example cancelPendingNavigation() */
+  const cancelPendingNavigation = (): void => {
+    if (navigationFrame !== undefined) cancelAnimationFrame(navigationFrame)
+    navigationFrame = undefined
+  }
+  /** Saves the destination that Contents or Back to top just scrolled to and focused, even during an earlier restoration. @example persistReadingMove() */
+  const persistReadingMove = (): void => {
+    cancelPendingNavigation()
+    restoring = false
+    persist()
   }
   /** Restores reading geometry after navigation, resize or status reflow; status updates pass their current pose without replacing saved navigation intent. @param focus - Whether the caller also owes the target keyboard focus. @param target - A temporary current pose, or the saved navigation location by default. @example restore(false, capture()) */
   const restore = (focus: boolean, target = location): void => {
@@ -274,7 +293,7 @@ function repositoryClient(
   element('back-top').onclick = (): void => {
     window.scrollTo(0, 0)
     element('article-title').focus({ preventScroll: true })
-    persist()
+    persistReadingMove()
   }
   window.addEventListener('scroll', () => {
     if (!restoring) {
@@ -400,7 +419,7 @@ function repositoryClient(
             button(`${index + 1}. ${part.title}`, `${id}-${index}`, () => {
               element(`section-${index}`).scrollIntoView()
               element(`section-${index}`).focus({ preventScroll: true })
-              persist()
+              persistReadingMove()
             }),
           ),
         )
@@ -648,11 +667,14 @@ function repositoryClient(
     if (!message.loading && presentedRevision !== message.revision) {
       presentedRevision = message.revision
       if (!changed) location = selection.location ?? location
-      if (location)
-        requestAnimationFrame(() => {
-          // A newer or loading model retires this earlier frame's reading and keyboard restoration.
+      cancelPendingNavigation()
+      const target = location
+      if (target)
+        navigationFrame = requestAnimationFrame(() => {
+          navigationFrame = undefined
+          // A loading model retires this frame's reading and keyboard restoration.
           if (current?.revision === message.revision && !current.loading)
-            restore(true)
+            restore(true, target)
         })
     }
     api.postMessage({

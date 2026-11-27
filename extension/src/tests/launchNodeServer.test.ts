@@ -322,10 +322,21 @@ test('an owned server that exits before it listens reports its exit code and its
     // Assert
     assert.deepEqual(exit, { exitCode: 3, signal: null })
     assert.deepEqual(server.exited(), { exitCode: 3, signal: null })
-    // Node appends its own 'Waiting for the debugger to disconnect...' line when the fixture exits while this test's inspector socket is still closing; that line is the runtime's, so the fixture's line stays the last one the fixture wrote.
-    assert.match(
-      server.output(),
-      /fixture cannot start: exit-before-listen\n(?:Waiting for the debugger to disconnect\.\.\.\n)?$/,
+    // Node can finish detaching before or after the fixture exits. Its ending banner repeats the attached endpoint.
+    const fixtureError = '\nfixture cannot start: exit-before-listen\n'
+    const inspectorEnding = `Debugger ending on ${endpoint}\nFor help, see: https://nodejs.org/`
+    const inspectorTrailers = [
+      '',
+      'Waiting for the debugger to disconnect...\n',
+      `${inspectorEnding}en/docs/inspector\n`,
+      `${inspectorEnding}learn/getting-started/debugging\n`,
+    ]
+    const output = server.output()
+    assert.ok(
+      inspectorTrailers.some((trailer) =>
+        output.endsWith(fixtureError + trailer),
+      ),
+      output,
     )
   } finally {
     inspector?.close()

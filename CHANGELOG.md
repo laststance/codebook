@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.147.0] - 2026-11-27 (development candidate)
+
+Cycle 0151 ([Issue #376](https://github.com/laststance/codebook/issues/376)), a bug-fix cycle. Devin Desktop preserves your settings when an interrupted Codebook chat setup needs to be retried.
+
+### Fixed
+
+- In Devin Desktop, **Codebook: Set Up AI Chat** now rechecks the server entry and its receipt before reporting that first setup succeeded. If either changes during cleanup, the message identifies the affected file. If two recovery files conflict, it names both and explains how to keep them. After a temporary read failure, it keeps the config and recovery record and asks you to retry.
+- If first setup cannot write its receipt, Codebook preserves edits you saved after it wrote the config, including turning off the server or disabling individual tools. Those edits also survive a retry, including recovery from an older setup whose record identifies the original config bytes.
+- When recovery cannot verify the active config, Codebook keeps track of your original copy. The warning names the saved copy and explains how to restore your other servers and settings if the active file is missing or needs repair. When undoing setup only reformatted the settings, the message identifies the file Codebook last checked and the copy with your original formatting. It asks you to recheck the active file before retrying setup or removal.
+- Returning from Study to a Repository Wiki observation keeps it at the same reading position while Codebook rechecks its citations.
+
 ## [0.2.146.0] - 2026-11-27 (development candidate)
 
 Cycle 0150 ([Issue #374](https://github.com/laststance/codebook/issues/374)), a feature cycle. **A generated LLM Wiki served in Devin Desktop now opens its source, update and settings links in Devin Desktop, while the published Wiki files keep VS Code as their durable fallback.** The page's rail says **Open in Devin Desktop** when Devin Desktop serves it, source citations written by the question answerer use Devin Desktop's URI scheme, and the reader rebinds existing VS Code or Cursor links in memory instead of rewriting the published files.

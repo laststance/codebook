@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { Worker } from 'node:worker_threads'
+import {
+  MessageChannel,
+  type MessagePort,
+  receiveMessageOnPort,
+  Worker,
+} from 'node:worker_threads'
 
 import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
 
@@ -11,7 +16,10 @@ import { browserAttributeText } from '../utils/browserAttributeText'
 import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { withServedAddresses } from '../utils/withServedAddresses'
 
-import { shortestTimesInTurns } from './utils/shortestTimesInTurns'
+import {
+  measureServingTurns,
+  shortestTimesInTurns,
+} from './utils/shortestTimesInTurns'
 
 // The pinned parser alone reads a select by the rules before 2025; Node 24 loads this ESM package synchronously.
 const parse5: typeof Parse5 = require('parse5')
@@ -26,11 +34,9 @@ const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
 const SELECT_PAIRS_PARSER_BOUND_RATIO = 2
 /** How many runs of the page the select-pairs timing test times for the reader and for the parser alone, in turns ({@link shortestTimesInTurns}); the shortest of each counts, so one scheduling stall on a loaded host does not decide the ratio. */
 const SELECT_PAIRS_TIMED_RUNS = 5
-/** How many times {@link servingTimes} serves each crafted page and the ordinary page in turns with it; the shortest of each counts. */
-const SERVING_TIMED_RUNS = 2
-/** How long the timing test waits for its worker's warm-up and ordinary page before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
+/** How long the timing test waits for worker startup and each ordinary-page calibration before marking the remaining work unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
-/** How many times as long as {@link ORDINARY_PAGE} the timing test waits for each run of a crafted page, besides the ordinary page's run in turns with it, before it takes the filtering for unfinished: more than every bound of these tests ({@link CLOSED_SVG_PAGE_BOUND_RATIO} the largest), so a page that misses its bound is measured, and a page that never ends is stopped. One fixed deadline for the whole worker cut the last page of the closed-svg test on a CI runner under coverage, where the ordinary page took 1,835 ms and the four pages together about 28 s more. */
+/** How much worker CPU time one measured call may spend relative to its same-turn ordinary page. This exceeds the largest wall-time acceptance ratio ({@link CLOSED_SVG_PAGE_BOUND_RATIO}). The independent wall watchdog uses the larger of this budget and {@link FILTER_DEADLINE_MS}, so a descheduled or blocked worker cannot keep a test open indefinitely. */
 const PAGE_DEADLINE_RATIO = 10
 /** An ordinary Wiki page of more than 1 MB, sections of a heading, text, a link and code; each crafted page of the timing tests is compared with it. */
 const ORDINARY_PAGE =
@@ -42,16 +48,132 @@ const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
 /** The reader's script tag as {@link servedWikiPageHtml} hands it to the filter for a page served without a publication. */
 const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 
-/** A crafted page's shortest serving time and the shortest time of the ordinary page served in turns with it, in milliseconds. */
-type ServedInTurns = { page: number; ordinary: number }
+/** Shortest elapsed times and the paired measurements retained by the serving worker for diagnosis. */
+type ServedInTurns = ReturnType<typeof measureServingTurns>
 
 /**
- * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers for each crafted page its shortest time and the shortest time of the ordinary page served in turns with it, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's first time is known, then {@link SERVING_TIMED_RUNS} times one more than {@link PAGE_DEADLINE_RATIO} times the ordinary page's latest measured time for each crafted page, floored at its first time so one pair's quiet moment never shrinks the next page's deadline under what the machine first took (the shortest of its runs in turns with each crafted page that finished, or that first time when it is longer). The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
- * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} once for the deadline; then, for each crafted page, it serves the crafted page and the ordinary page in turns, {@link SERVING_TIMED_RUNS} times each ({@link shortestTimesInTurns}), so that each crafted page is compared with an ordinary page in the same thread, served by the same call in the same moments of the machine, and a moment of load on a busy machine lengthens neither measurement alone (Cycle 0049 F6: one run of a crafted page took 830 ms against the ordinary page's 184 ms under nine concurrent runs; Discussion 354: the ordinary page's runs, all taken before the crafted pages' runs, missed the busy moments those met).
+ * Marks unfinished or over-budget page measurements for the timing tests' failure lists.
+ * @param ratio - The page family's existing acceptance limit relative to an ordinary page.
+ * @example
+ * exceedsServingBound({page: 70, ordinary: 10}, 6) // true
+ */
+function exceedsServingBound(
+  time: Pick<ServedInTurns, 'page' | 'ordinary'> | 'unfinished',
+  ratio: number,
+): boolean {
+  return time === 'unfinished' || time.page > ratio * time.ordinary
+}
+
+/** Start of a worker calibration or measured call, stamped on the process's monotonic clock. */
+type ServingPhase = {
+  startedAt: number
+  ordinaryMs?: number
+  cpuAtStart?: NodeJS.CpuUsage
+}
+
+/**
+ * Arms the serving worker's watchdog for startup, each calibration, and each measured call.
+ * The parent owns the timer so it can stop the worker even while a serving call is synchronous.
+ * @param stop - Terminates the worker when the current step exhausts its budget.
+ * @param updates - The worker's calibration port. A queued update supersedes the expired interval even when its event has not been dispatched.
+ * @param now - Monotonic clock shared by the parent and worker; tests can supply a virtual clock.
+ * @param cpuElapsed - CPU milliseconds used by the worker since its measured call began. Wall-clock samples still decide every ratio.
+ * @returns Controls for starting the next step and clearing the timer on worker exit.
+ * @example
+ * const deadline = servingDeadline(() => void worker.terminate())
+ * deadline.arm(150)
+ * deadline.clear()
+ */
+function servingDeadline(
+  stop: () => void,
+  updates?: MessagePort,
+  now: () => number = () => performance.now(),
+  cpuElapsed?: (start: NodeJS.CpuUsage) => Promise<number>,
+) {
+  let active: ServingPhase | undefined
+  let wallTimer: NodeJS.Timeout | undefined
+  let cpuTimer: NodeJS.Timeout | undefined
+  function disarm(): void {
+    active = undefined
+    clearTimeout(wallTimer)
+    clearTimeout(cpuTimer)
+  }
+  // The worker may already have started a later turn while the parent's timer or CPU query was pending.
+  function takeLatest(first: ServingPhase): void {
+    let latest = first
+    let next = updates && receiveMessageOnPort(updates)
+    while (next) {
+      latest = next.message as ServingPhase
+      next = updates && receiveMessageOnPort(updates)
+    }
+    start(latest)
+  }
+  function superseded(phase: ServingPhase): boolean {
+    if (active !== phase) return true
+    const queued = updates && receiveMessageOnPort(updates)
+    if (!queued) return false
+    takeLatest(queued.message as ServingPhase)
+    return true
+  }
+  function expire(phase: ServingPhase): void {
+    if (superseded(phase)) return
+    disarm()
+    stop()
+  }
+  function start(phase: ServingPhase): void {
+    disarm()
+    active = phase
+    const age = now() - phase.startedAt
+    const budget =
+      phase.ordinaryMs === undefined
+        ? FILTER_DEADLINE_MS
+        : PAGE_DEADLINE_RATIO * phase.ordinaryMs
+    const cpuAtStart = phase.cpuAtStart
+    // An unscheduled worker spends wall time without spending its compute budget. Keep the existing absolute calibration bound for such waits.
+    const hardLimit = cpuAtStart ? Math.max(FILTER_DEADLINE_MS, budget) : budget
+    if (age >= hardLimit) {
+      expire(phase)
+      return
+    }
+    wallTimer = setTimeout(() => expire(phase), Math.ceil(hardLimit - age))
+    if (!cpuAtStart || !cpuElapsed || hardLimit === budget) return
+    const readCpu = () => cpuElapsed(cpuAtStart)
+    async function checkCpu(): Promise<void> {
+      if (superseded(phase)) return
+      const used = await readCpu().catch(() => Number.POSITIVE_INFINITY)
+      if (superseded(phase)) return
+      if (!Number.isFinite(used) || used < 0 || used >= budget) expire(phase)
+      else
+        cpuTimer = setTimeout(() => void checkCpu(), Math.ceil(budget - used))
+    }
+    cpuTimer = setTimeout(
+      () => void checkCpu(),
+      Math.max(0, Math.ceil(budget - age)),
+    )
+  }
+  const arm = (ordinaryMs?: number, cpuAtStart?: NodeJS.CpuUsage): void =>
+    start({ startedAt: now(), ordinaryMs, cpuAtStart })
+  arm()
+  updates?.on('message', takeLatest)
+  return {
+    arm,
+    clear(): void {
+      disarm()
+      updates?.close()
+    },
+  }
+}
+
+/**
+ * Times the pages in a worker so the test runner can stop a synchronous serving call.
+ * Each ordinary-page calibration gets {@link FILTER_DEADLINE_MS}. Its duration sets the next call's watchdog
+ * before that call starts. The shortest ordinary and tested-page times across the alternating pairs are reported.
+ * An expired watchdog leaves every unfinished page marked as such.
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
  * @param pages - The crafted pages, by name.
  * @param tagAtBodyEnd - The tag the function puts at the body's end of every page, the ordinary page's included, as the reader hands its script tag to the filter ({@link servedWikiPageHtml}); none when left out.
+ * @param confirmationRatio - Elapsed-time limit above which the initial two turns require three confirmation pairs.
  * @returns For each crafted page, its time and the time of the ordinary page served in turns with it, in milliseconds, or `unfinished`.
  * @example
  * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { small: { page: 0.1, ordinary: 128 } }
@@ -62,28 +184,40 @@ async function servingTimes(
   exportName: string,
   pages: Record<string, string>,
   tagAtBodyEnd?: string,
+  confirmationRatio = CRAFTED_PAGE_BOUND_RATIO,
 ): Promise<Record<string, ServedInTurns | 'unfinished'>> {
   const times: Record<string, ServedInTurns | 'unfinished'> =
     Object.fromEntries(Object.keys(pages).map((name) => [name, 'unfinished']))
+  const { port1, port2 } = new MessageChannel()
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads')
 const serve = require(workerData.module)[workerData.exportName]
-const { shortestTimesInTurns } = require(workerData.timing)
+const { measureServingTurns, threadCpuSnapshot } = require(workerData.timing)
 const serveOnce = (page) => {
   if (workerData.tagAtBodyEnd === undefined) serve(page, 'cursor')
   else serve(page, 'cursor', workerData.tagAtBodyEnd)
 }
+const reportTurn = (ordinaryMs) => workerData.calibrations.postMessage({
+  startedAt: performance.now(), ordinaryMs,
+  cpuAtStart: ordinaryMs === undefined ? undefined : threadCpuSnapshot(),
+})
 serveOnce(workerData.warmUp)
-const started = performance.now()
-serveOnce(workerData.ordinary)
-parentPort.postMessage({ firstOrdinaryMs: performance.now() - started })
 for (const [name, page] of Object.entries(workerData.pages)) {
-  const { measured, baseline } = shortestTimesInTurns(() => serveOnce(page), () => serveOnce(workerData.ordinary), workerData.runs)
-  parentPort.postMessage({ name, page: measured, ordinary: baseline })
-}`,
+  const timings = measureServingTurns(
+    () => serveOnce(workerData.ordinary),
+    () => serveOnce(page),
+    workerData.confirmationRatio,
+    reportTurn,
+  )
+  reportTurn(undefined)
+  parentPort.postMessage({ name, timings })
+}
+workerData.calibrations.close()`,
     {
       eval: true,
+      transferList: [port2],
       workerData: {
+        calibrations: port2,
         module: join(__dirname, '..', 'utils', `${moduleName}.js`),
         exportName,
         timing: join(__dirname, 'utils', 'shortestTimesInTurns.js'),
@@ -91,46 +225,33 @@ for (const [name, page] of Object.entries(workerData.pages)) {
         ordinary: ORDINARY_PAGE,
         pages,
         tagAtBodyEnd,
-        runs: SERVING_TIMED_RUNS,
+        confirmationRatio,
       },
     },
   )
   await new Promise<void>((resolve) => {
-    const stop = (): void => {
-      void worker.terminate().then(() => resolve())
-    }
-    let deadline = setTimeout(stop, FILTER_DEADLINE_MS)
-    // The ordinary page's first measured time on this machine: the deadline's baseline never shrinks under it, because one pair's shortest ordinary measurement can come out far under it in a quiet moment of a noisy runner, and a deadline shrunk to that moment cuts the next page although the machine takes as long as the first measurement again.
-    let firstBaselineMs = 0
-    // The baseline the deadline counts with: the ordinary page's latest measured time on this machine (first its one run before the crafted pages, then the shortest of its runs in turns with each crafted page), floored at the first measurement, so a runner that slows down after the first measurement still measures every page.
-    let baselineMs = 0
+    const deadline = servingDeadline(
+      () => {
+        void worker.terminate()
+      },
+      port1,
+      undefined,
+      // Node 24.0–24.5 can stamp the worker's starting CPU time but cannot sample it from the parent.
+      typeof worker.cpuUsage === 'function'
+        ? async (start) => {
+            const { user, system } = await worker.cpuUsage(start)
+            return (user + system) / 1_000
+          }
+        : undefined,
+    )
     worker.on(
       'message',
-      (
-        message:
-          { firstOrdinaryMs: number } | ({ name: string } & ServedInTurns),
-      ) => {
-        // The first message gives the ordinary page's time on this machine; each later one a crafted page's turns, whose own ordinary measurement freshens the baseline, upward only past its floor.
-        if ('firstOrdinaryMs' in message) {
-          firstBaselineMs = message.firstOrdinaryMs
-          baselineMs = message.firstOrdinaryMs
-        } else {
-          times[message.name] = {
-            page: message.page,
-            ordinary: message.ordinary,
-          }
-          baselineMs = Math.max(firstBaselineMs, message.ordinary)
-        }
-        // Each crafted page gets its own deadline, a multiple of the ordinary page's latest measured time on this machine for each of its runs and the ordinary page's run in turns with it, so a slow runner measures every page.
-        clearTimeout(deadline)
-        deadline = setTimeout(
-          stop,
-          SERVING_TIMED_RUNS * (PAGE_DEADLINE_RATIO + 1) * baselineMs,
-        )
+      (message: { name: string; timings: ServedInTurns }) => {
+        times[message.name] = message.timings
       },
     )
-    worker.on('exit', () => {
-      clearTimeout(deadline)
+    worker.once('exit', () => {
+      deadline.clear()
       resolve()
     })
   })
@@ -168,6 +289,348 @@ test('the timing-ratio tests time the measured run and its baseline in turns and
   ])
   assert.deepEqual(readingsMs, [])
   assert.deepEqual(times, { measured: 20, baseline: 50 })
+})
+
+test('a two-turn elapsed overrun gets exactly three confirmation pairs and preserves the fastest original baseline', () => {
+  // Arrange: the second scenario slows both sides in the confirmation. The third has a persistent wall-only delay.
+  for (const [limit, ordinaryMs, pageMs, expectedTimes, overLimit] of [
+    [4, [88, 90, 85, 86, 90], [492, 500, 125, 128, 135], [85, 125], false],
+    [4, [88, 90, 200, 200, 200], [492, 500, 490, 496, 510], [88, 490], true],
+    [6, [20, 20, 20, 20, 20], [145, 145, 145, 145, 145], [20, 145], true],
+  ] as const) {
+    let clock = 0
+    let turn = 0
+    // Act: the scripted wall times advance independently of the real CPU consumed by these additions.
+    const result = measureServingTurns(
+      () => {
+        clock += ordinaryMs[turn] ?? Number.NaN
+      },
+      () => {
+        clock += pageMs[turn++] ?? Number.NaN
+      },
+      limit,
+      undefined,
+      () => clock,
+    )
+    // Assert
+    assert.equal(turn, 5)
+    assert.deepEqual([result.ordinary, result.page], expectedTimes)
+    assert.equal(exceedsServingBound(result, limit), overLimit)
+    assert.deepEqual(
+      result.turns.map(({ ordinary, page }) => [ordinary.wallMs, page.wallMs]),
+      ordinaryMs.map((ordinary, i) => [ordinary, pageMs[i]]),
+    )
+  }
+})
+
+test('wall-clock comparisons work without thread CPU counters and wall-only callers never read them', (context) => {
+  // Arrange
+  const unavailable = context.mock.method(process, 'threadCpuUsage', () => {
+    throw new Error('CPU counter unavailable')
+  })
+  let clock = 0
+  const work = (): void => {
+    clock += 10
+  }
+  // Act
+  const wallOnly = shortestTimesInTurns(work, work, 2, () => clock)
+  const readsAfterWallOnly = unavailable.mock.callCount()
+  const serving = measureServingTurns(work, work, 4, undefined, () => clock)
+  // Assert
+  assert.deepEqual(wallOnly, { measured: 10, baseline: 10 })
+  assert.equal(readsAfterWallOnly, 0)
+  assert.deepEqual(serving.turns, [
+    {
+      ordinary: { wallMs: 10, cpuMs: null },
+      page: { wallMs: 10, cpuMs: null },
+    },
+    {
+      ordinary: { wallMs: 10, cpuMs: null },
+      page: { wallMs: 10, cpuMs: null },
+    },
+  ])
+})
+
+// Value: protects=current-turn calibration and the measured worker deadline; fails_when=a slower valid turn expires against the previous ordinary sample; seam=ordinary arithmetic, scripted elapsed time and the parent's fake timers; no_claim=real reader throughput.
+test('a slower Wiki timing turn finishes within its own ordinary-page budget and a stalled turn still stops', (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let nowMs = 0
+  let timedOut = false
+  const deadline = servingDeadline(() => {
+    timedOut = true
+  })
+  const advance = (ms: number): void => {
+    nowMs += ms
+    context.mock.timers.tick(ms)
+  }
+  let turn = 0
+  const stoppedDuringPage: boolean[] = []
+  deadline.arm(5)
+  // Act: both sides slow together on the second turn; no HTML or real waits are involved.
+  const sample = shortestTimesInTurns(
+    () => advance(turn === 0 ? 5 : 100),
+    () => {
+      advance(turn === 0 ? 10 : 300)
+      stoppedDuringPage.push(timedOut)
+      turn += 1
+    },
+    2,
+    () => nowMs,
+    deadline.arm,
+  )
+  // A slower page can fail its acceptance ratio and still deliver both measured values.
+  const overRatio = shortestTimesInTurns(
+    () => advance(10),
+    () => advance(70),
+    1,
+    () => nowMs,
+    deadline.arm,
+  )
+  // A stalled call after a 40 ms ordinary sample has exactly its 400 ms budget.
+  let beforeDeadline = false
+  let afterDeadline = false
+  shortestTimesInTurns(
+    () => advance(40),
+    () => {
+      advance(399)
+      beforeDeadline = timedOut
+      advance(1)
+      afterDeadline = timedOut
+    },
+    1,
+    () => nowMs,
+    deadline.arm,
+  )
+  deadline.clear()
+
+  // Assert
+  assert.deepEqual(stoppedDuringPage, [false, false])
+  assert.deepEqual(sample, { measured: 5, baseline: 10 })
+  assert.deepEqual(overRatio, { measured: 10, baseline: 70 })
+  assert.equal(
+    exceedsServingBound(
+      { page: overRatio.baseline, ordinary: overRatio.measured },
+      CLOSED_SVG_PAGE_BOUND_RATIO,
+    ),
+    true,
+  )
+  assert.equal(beforeDeadline, false)
+  assert.equal(afterDeadline, true)
+})
+
+// Value: protects=a bounded ordinary-page calibration and clean worker exit; fails_when=calibration can wait forever or a stopped worker's timer fires later; seam=the parent's fake timers; no_claim=any reader ratio.
+test('the Wiki timing worker stops a stuck ordinary-page calibration and clears its timer on exit', (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let stops = 0
+  const deadline = servingDeadline(() => {
+    stops += 1
+  })
+
+  // Act
+  deadline.arm(5)
+  deadline.arm()
+  context.mock.timers.tick(29_999)
+  const beforeLimit = stops
+  context.mock.timers.tick(1)
+  const atLimit = stops
+  deadline.arm(5)
+  deadline.clear()
+  context.mock.timers.tick(30_000)
+
+  // Assert
+  assert.equal(beforeLimit, 0)
+  assert.equal(atLimit, 1)
+  assert.equal(stops, 1)
+})
+
+// Value: protects=a healthy worker when the parent event loop is busy; fails_when=an expired timer ignores the next phase already in its port; seam=one real message channel and a scripted parent clock; no_claim=real reader throughput.
+test('a delayed Wiki worker update keeps only the time remaining on the latest call', (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const { port1, port2 } = new MessageChannel()
+  let stops = 0
+  const deadline = servingDeadline(
+    () => {
+      stops += 1
+    },
+    port1,
+    Date.now,
+  )
+  context.after(() => {
+    deadline.clear()
+    port2.close()
+  })
+
+  // Act: the first queued phase has expired before the old timer fires. The last phase started at 10 ms and has 400 ms in total.
+  deadline.arm(35)
+  port2.postMessage({ startedAt: 0, ordinaryMs: 5 })
+  context.mock.timers.tick(10)
+  port2.postMessage({ startedAt: 10, ordinaryMs: 40 })
+  context.mock.timers.tick(340)
+  const stopsAtPreviousDeadline = stops
+  context.mock.timers.tick(59)
+  const stopsBeforeCurrentDeadline = stops
+  context.mock.timers.tick(1)
+
+  // Assert
+  assert.equal(stopsAtPreviousDeadline, 0)
+  assert.equal(stopsBeforeCurrentDeadline, 0)
+  assert.equal(stops, 1)
+})
+
+// Value: protects=a descheduled worker gets its two measured turns, a CPU-bound call stops at its calibrated limit, and a blocked call still has a wall deadline.
+test('the Wiki worker can resume a descheduled turn but still stops a CPU overrun or a blocked call', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const cpuAtStart = { user: 7_000, system: 3_000 }
+  let used = 10
+  const stops: number[] = []
+  const deadline = servingDeadline(
+    () => stops.push(Date.now()),
+    undefined,
+    Date.now,
+    async (start) => {
+      assert.equal(start, cpuAtStart)
+      return used
+    },
+  )
+  context.after(() => deadline.clear())
+
+  // Act: after 100 ms of wall time, the worker has used only 10 of its 100 ms CPU budget.
+  deadline.arm(10, cpuAtStart)
+  context.mock.timers.tick(100)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  const afterDeschedule = [...stops]
+  used = 100
+  context.mock.timers.tick(90)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  const afterCpuOverrun = [...stops]
+
+  // A second turn blocks completely. Its hard wall clock still expires while the CPU check is pending.
+  used = 0
+  deadline.arm(10, cpuAtStart)
+  context.mock.timers.tick(29_999)
+  const beforeWallLimit = [...stops]
+  context.mock.timers.tick(1)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  // Assert
+  assert.deepEqual(afterDeschedule, [])
+  assert.deepEqual(afterCpuOverrun, [190])
+  assert.deepEqual(beforeWallLimit, [190])
+  assert.deepEqual(stops, [190, 30_190])
+})
+
+// Value: protects=Node 24.0–24.5 can finish an interrupted measured turn and still stop a stuck one.
+test('without parent-side worker CPU sampling, a measured Wiki turn stays open until its hard wall deadline', (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const stops: number[] = []
+  const deadline = servingDeadline(
+    () => stops.push(Date.now()),
+    undefined,
+    Date.now,
+  )
+  context.after(() => deadline.clear())
+
+  // Act: an ordinary 10 ms call would trigger a CPU check after 100 ms on a newer Node.
+  deadline.arm(10, { user: 10_000, system: 0 })
+  context.mock.timers.tick(29_999)
+  const beforeWallLimit = [...stops]
+  context.mock.timers.tick(1)
+
+  // Assert
+  assert.deepEqual(beforeWallLimit, [])
+  assert.deepEqual(stops, [30_000])
+})
+
+// Value: protects=missing worker CPU telemetry cannot extend a synchronous call indefinitely.
+test('an unavailable Wiki worker CPU reading expires the current measured call', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  let stops = 0
+  const deadline = servingDeadline(
+    () => {
+      stops++
+    },
+    undefined,
+    Date.now,
+    async () => {
+      throw new Error('Worker CPU reading unavailable')
+    },
+  )
+  context.after(() => deadline.clear())
+
+  // Act
+  deadline.arm(10, { user: 0, system: 0 })
+  context.mock.timers.tick(100)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  // Assert
+  assert.equal(stops, 1)
+})
+
+// Value: protects=an old worker CPU reading cannot terminate a new calibration while the parent awaits the reading.
+test('a delayed CPU result for the previous Wiki worker turn cannot stop the next ordinary calibration', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  let complete!: (used: number) => void
+  const reading = new Promise<number>((resolve) => {
+    complete = resolve
+  })
+  let stops = 0
+  const deadline = servingDeadline(
+    () => {
+      stops++
+    },
+    undefined,
+    Date.now,
+    () => reading,
+  )
+  context.after(() => deadline.clear())
+
+  // Act
+  deadline.arm(10, { user: 0, system: 0 })
+  context.mock.timers.tick(100)
+  deadline.arm()
+  complete(500)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  context.mock.timers.tick(29_999)
+  const beforeCalibrationLimit = stops
+  context.mock.timers.tick(1)
+
+  // Assert
+  assert.equal(beforeCalibrationLimit, 0)
+  assert.equal(stops, 1)
+})
+
+// Value: protects=delivery of calibrated timings through the real worker channel; fails_when=a valid small page remains unfinished or the worker omits its ordinary-page sample; seam=benign static Wiki content and the compiled serving function; no_claim=worst-case parser throughput.
+test('the Wiki timing worker reports a completed ordinary link through its real message channel', async () => {
+  // Arrange
+  const pages = {
+    introduction: '<p><a href="#overview">Project overview</a></p>',
+  }
+
+  // Act
+  const { introduction } = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+  )
+
+  // Assert
+  assert.ok(introduction && introduction !== 'unfinished')
+  assert.ok(Number.isFinite(introduction.page) && introduction.page >= 0)
+  assert.ok(Number.isFinite(introduction.ordinary) && introduction.ordinary > 0)
+  assert.ok([2, 5].includes(introduction.turns.length))
+  for (const { ordinary, page } of introduction.turns) {
+    assert.ok(
+      ordinary.wallMs > 0 && (ordinary.cpuMs === null || ordinary.cpuMs >= 0),
+    )
+    assert.ok(page.wallMs >= 0 && (page.cpuMs === null || page.cpuMs >= 0))
+  }
 })
 
 // Value: protects=the extension host from seconds of synchronous Wiki filtering; fails_when=tags or unmatched ends rescan a deep stack, including after formatting adoption changes it, so a crafted page takes many times as long as an ordinary page of its size served in turns with it; why_new=W1 and row1044 plus row1058's observed non-top insertion callback, and a closed camelCase svg name (clipPath) whose end the open-name index must lower; row1058's full parser exceeds a fixed 400 ms on any page of 1 MB under coverage; seam=none; no_claim=native editor responsiveness (reader runs in an isolated test worker); serving each crafted page and the ordinary page in turns and comparing each one's shortest time removes a busy moment that falls on all runs of one side while the other side ran before or after it (Discussion 354), not a load that covers every run of one side, which still fails the test
@@ -230,10 +693,8 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
     [true, true, true, true, true, true, true, true, true, true, true],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -382,10 +843,8 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
     ],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -524,6 +983,7 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
     'withServedAddresses',
     pages,
     READER_SCRIPT_TAG,
+    CLOSED_SVG_PAGE_BOUND_RATIO,
   )
 
   // Assert: every page is over 1 MB, and each was filtered within the bound of the time of the ordinary page served in turns with it.
@@ -532,10 +992,8 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
     [true, true, true, true],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -578,10 +1036,8 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
       .join(', '),
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CLOSED_SVG_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CLOSED_SVG_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -710,10 +1166,8 @@ test('the reader serves a page of more than 1 MB built to make a pattern of its 
     [true, true, true],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )

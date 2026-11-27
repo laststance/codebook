@@ -37,6 +37,13 @@ for (const type of ['keydown', 'keypress', 'keyup']) {
     window.events.push({ type, key: event.key, code: event.code, ctrl: event.ctrlKey, shift: event.shiftKey, meta: event.metaKey, trusted: event.isTrusted, target: event.target.id || event.target.tagName.toLowerCase() });
   }, true);
 }
+// Consume unhandled fixture keys before Chrome forwards them to macOS. Text inputs keep native editing.
+document.addEventListener('keypress', (event) => {
+  if (!(event.target instanceof HTMLInputElement)) event.preventDefault();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' || event.ctrlKey) event.preventDefault();
+});
 document.addEventListener('keydown', () => { if (window.pauseOnKeydown) { debugger; } });
 const host = document.getElementById('host').attachShadow({ mode: 'open', delegatesFocus: true });
 host.innerHTML = '<input type="password" id="inner-secret">';

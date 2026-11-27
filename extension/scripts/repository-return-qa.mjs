@@ -350,6 +350,9 @@ async function check(page, options, collected) {
     verifiedMessage,
   ) {
     // Arrange: real wheel input moves reading before the debounced saved location catches up.
+    await page.evaluate(() => {
+      window.sent.length = 0
+    })
     await page.mouse.move(180, 320)
     await page.mouse.wheel(0, 48)
     await page.waitForFunction(
@@ -361,16 +364,32 @@ async function check(page, options, collected) {
     // Act: a status refresh must preserve the current viewport, not replay the older Return location.
     await publish(checkingMessage)
     await publish(verifiedMessage)
+    // The host must receive the wheel position after the Return frame has completed.
+    const savedTop = await page.waitForFunction(() => {
+      const lastSave = window.sent.findLast(
+        (message) => message.type === 'location',
+      )
+      const top =
+        lastSave?.selection.location.focusViewportFraction * innerHeight
+      const control = document.getElementById('evidence-0-observation')
+      return Math.abs(top - control.getBoundingClientRect().top) <= 1
+        ? top
+        : false
+    })
     // Assert: neither keyboard nor the learner's new reading position is replaced.
     addCase(
       'citation status refresh preserves recent wheel scrolling and the focused observation',
-      { focus: 'evidence-0-observation', top: 278.5 },
-      await page.evaluate(() => ({
-        focus: document.activeElement.id,
-        top: document
-          .getElementById('evidence-0-observation')
-          .getBoundingClientRect().top,
-      })),
+      { focus: 'evidence-0-observation', top: 278.5, savedTop: 278.5 },
+      await page.evaluate(
+        (savedTop) => ({
+          focus: document.activeElement.id,
+          top: document
+            .getElementById('evidence-0-observation')
+            .getBoundingClientRect().top,
+          savedTop,
+        }),
+        await savedTop.jsonValue(),
+      ),
     )
   }
   /** Runs the wheel check only for the after-frame case, selecting its appropriate starting document. @example await verifyCitationWheelAfterReturn('after restoration', false, checkingMessage, verifiedMessage) */
@@ -386,6 +405,150 @@ async function check(page, options, collected) {
       ? verifyRememberedCitationWheel
       : verifyPendingCitationWheel
     await verifyWheel(checkingMessage, verifiedMessage)
+  }
+  /** Places a real focus-save timeout on either side of the next navigation frame to verify both the viewport and what the host saves. @example await verifyPendingLocationSave(checkingMessage, verifiedMessage, true) */
+  async function verifyPendingLocationSave(checking, verified, saveFirst) {
+    // Arrange: a verified article owns focus before a new explicit Return arrives.
+    await openPane(undefined)
+    await page.setViewportSize({ width: 339, height: 654 })
+    await publish({ ...verified, revision: 7 })
+    const actual = await page.evaluate(
+      async ({ checking, verified, saveFirst }) => {
+        const observation = document.getElementById('evidence-0-observation')
+        const top = () => observation.getBoundingClientRect().top
+        const nextFrame = window.requestAnimationFrame.bind(window)
+        const nextTask = window.setTimeout.bind(window)
+        const post = (data) =>
+          window.dispatchEvent(new MessageEvent('message', { data }))
+        const afterPaint = () =>
+          new Promise((resolve) => nextFrame(() => nextFrame(resolve)))
+        const settledTop = top()
+        let saveFinished = Promise.resolve(),
+          resumeFrame
+        const frameFinished = new Promise((resolve) => {
+          resumeFrame = resolve
+        })
+        // Preserve native cancellation and wait for the debounce deadline even if the renderer cancels the old save.
+        const setTimeout = window.setTimeout
+        window.setTimeout = (callback, delay, ...args) => {
+          const timeout = nextTask(async () => {
+            if (!saveFirst) await frameFinished
+            callback(...args)
+          }, delay)
+          saveFinished = new Promise((resolve) => nextTask(resolve, delay))
+          return timeout
+        }
+        document
+          .getElementById('evidence-0-recording')
+          .focus({ preventScroll: true })
+        observation.focus({ preventScroll: true })
+        window.setTimeout = setTimeout
+        observation.blur()
+        document.hasFocus = () => false
+        window.dispatchEvent(new Event('blur'))
+        window.sent.length = 0
+        const requestFrame = window.requestAnimationFrame
+        window.requestAnimationFrame = (callback) => {
+          window.requestAnimationFrame = requestFrame
+          const restore = (time) => {
+            callback(time)
+            resumeFrame()
+          }
+          if (saveFirst) {
+            void saveFinished.then(() => nextFrame(restore))
+            return 0
+          }
+          return nextFrame(restore)
+        }
+        // Act: the checking label loses one line before the explicit destination is restored.
+        post(checking)
+        await Promise.all([saveFinished, frameFinished])
+        await afterPaint()
+        const checkingTop = top()
+        post(verified)
+        await afterPaint()
+        delete document.hasFocus
+        window.dispatchEvent(new Event('focus'))
+        // Assert against posted positions too: the host can persist a transient offset even if the frame repairs the screen.
+        const savedTops = window.sent
+          .filter((message) => message.type === 'location')
+          .map(
+            (message) =>
+              message.selection.location.focusViewportFraction * innerHeight,
+          )
+        return {
+          settledTop,
+          checkingTop,
+          verifiedTop: top(),
+          focus: document.activeElement.id,
+          wrongSavedTops: savedTops.filter(
+            (savedTop) => Math.abs(savedTop - settledTop) > 1,
+          ),
+        }
+      },
+      { checking, verified, saveFirst },
+    )
+    addCase(
+      `an explicit Return preserves its position in the pane and in host saves when the focus timeout runs ${saveFirst ? 'before' : 'after'} its frame`,
+      {
+        settledTop: 326.5,
+        checkingTop: 326.5,
+        verifiedTop: 326.5,
+        focus: 'evidence-0-observation',
+        wrongSavedTops: [],
+      },
+      actual,
+    )
+  }
+  /** Delivers a Return just before a real click takes the learner to another place in the article. @example await verifyNewerReadingMove(verifiedMessage) */
+  async function verifyNewerReadingMove(verified) {
+    for (const [buttonId, destination] of [
+      ['contents-wide-1', 'section-1'],
+      ['back-top', 'article-title'],
+    ]) {
+      // Arrange: the host schedules the Return in the capture phase of the learner's click, before the control acts.
+      await openPane(undefined)
+      await page.setViewportSize({ width: 960, height: 654 })
+      await publish({ ...verified, revision: 7 })
+      await page.evaluate((message) => {
+        window.addEventListener(
+          'click',
+          () => {
+            window.sent.length = 0
+            window.dispatchEvent(new MessageEvent('message', { data: message }))
+          },
+          { capture: true, once: true },
+        )
+        document.addEventListener(
+          'click',
+          () => {
+            window.scrollAfterReadingMove = scrollY
+            window.savedReadingMove =
+              window.sent.findLast((item) => item.type === 'location')
+                ?.selection.location.focusId ?? null
+          },
+          { once: true },
+        )
+      }, verified)
+      // Act: let the real control move the viewport and focus, then allow the older frame to run.
+      await page.locator(`#${buttonId}`).click()
+      const actual = await page.evaluate(async () => {
+        await new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        )
+        return {
+          focus: document.activeElement.id,
+          savedFocus: window.savedReadingMove,
+          keptScroll: scrollY === window.scrollAfterReadingMove,
+        }
+      })
+      // Assert: the host receives the new reading place and neither keyboard nor viewport jumps back.
+      addCase(
+        `a newer reading move with ${buttonId} supersedes a pending Wiki Return`,
+        { focus: destination, savedFocus: destination, keptScroll: true },
+        actual,
+      )
+    }
   }
   /** Leaves the reused title with an earlier article's actual keyboard memory; {@link verifyCitationStatusReturn} calls it before opening a different explicit Return. @example await leavePreviousArticle() */
   async function leavePreviousArticle() {
@@ -518,6 +681,15 @@ async function check(page, options, collected) {
           }))),
         },
       )
+      if (
+        hasRememberedControl &&
+        !hasPreviousArticle &&
+        statusTiming === 'before restoration'
+      ) {
+        await verifyPendingLocationSave(checkingMessage, verifiedMessage, true)
+        await verifyPendingLocationSave(checkingMessage, verifiedMessage, false)
+        await verifyNewerReadingMove(verifiedMessage)
+      }
       // The old-article variants own only the new memory boundary; existing cases already exercise wheel input after Return.
       if (!hasPreviousArticle)
         await verifyCitationWheelAfterReturn(

@@ -268,8 +268,8 @@ test('a search that reaches its entry limit while listing a level stops reading 
   await installVitest(join(root, 'packages', 'query-core'), '5.0.5')
   const entriesRead = countEntriesRead(context)
 
-  // Act
-  const search = await searchRepositoryVitest(root)
+  // Act: keep the search clock fixed so only the entry limit can end this slow directory read.
+  const search = await searchRepositoryVitest(root, () => 0)
 
   // Assert
   assert.deepEqual(search, {

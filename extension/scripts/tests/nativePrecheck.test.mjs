@@ -9,6 +9,7 @@ import {
   HELP_TEXT,
   parseProcessRows,
   parseSwapUsage,
+  readProcessSample,
   runNativePrecheck,
 } from '../native-precheck.mjs'
 import { runCommandLine } from '../utils/commandContract.mjs'
@@ -32,6 +33,8 @@ const NOTHING_RUNS = {
   package: 0,
   health: 0,
   gate: 0,
+  codeRabbitReview: 0,
+  codexReview: 0,
 }
 
 /**
@@ -45,7 +48,7 @@ async function runWithReadings(argv, readings) {
   const err = []
   const seams = {
     ownPid: 4242,
-    readMachine: () => readings,
+    readMachine: () => ({ platform: 'darwin', pressureText: '1', ...readings }),
     print: (line) => out.push(line),
   }
   const exitCode = await runCommandLine(
@@ -278,6 +281,8 @@ test('each build and test kind the repository starts is counted once per process
     package: 3,
     health: 1,
     gate: 1,
+    codeRabbitReview: 0,
+    codexReview: 0,
   })
 })
 
@@ -575,129 +580,340 @@ test("the precheck's own process and its ps are not counted, even inside a node 
   assert.deepEqual(counts, NOTHING_RUNS)
 })
 
-// Value: protects=a clear verdict on a quiet Mac whose used swap is below the limit; fails_when=a zero count or used swap below the limit gives a reason; no_claim=the printed lines (the run tests below)
-test('a quiet machine with used swap below the limit is clear', () => {
+// Value: protects=solo native work can proceed despite retained swap, at the default and with a legacy override; fails_when=swap alone or an idle editor server blocks admission; no_claim=how much memory a later workload uses
+test('a quiet Mac admits native work with 12 to 20 GiB retained swap, including with a former hard limit', async () => {
   // Arrange
-  const facts = {
-    swap: { totalMb: 4096, usedMb: 2048, freeMb: 2048 },
-    processes: NOTHING_RUNS,
+  for (const [usedMb, options] of [
+    [12288, []],
+    [20480, ['--max-used-swap-mb', '1024']],
+  ]) {
+    const readings = {
+      loadAverages: [1, 1, 1],
+      cores: 8,
+      pressureText: '1\n',
+      swapText: `total = 24576M  used = ${usedMb}M  free = ${24576 - usedMb}M`,
+      processRows: [{ pid: 11, command: 'tsc', args: ['--lsp'] }],
+    }
+
+    // Act
+    const result = await runWithReadings(['--json', ...options], readings)
+
+    // Assert
+    assert.equal(result.exitCode, 0)
+    const report = JSON.parse(result.out[0])
+    assert.equal(report.memoryPressure, 'normal')
+    assert.equal(report.swap.usedMb, usedMb)
+    assert.deepEqual(report.processes, NOTHING_RUNS)
+    assert.deepEqual(report.reasons, [])
   }
-
-  // Act
-  const judgement = decideVerdict(facts, 8192)
-
-  // Assert
-  assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
 })
 
-// Value: protects=a Mac that has allocated no swap at all judged clear (macOS allocates swap only under pressure); fails_when=a zero total with zero used and zero free gives a reason; no_claim=none beyond protects
-test('a machine with no swap allocated is clear', () => {
+// Value: protects=only an explicit experiment may overlap an actual build or suite; fails_when=normal work is admitted or a controlled overlap loses the observations; no_claim=whether the VM survives a particular trial
+test('a warning-pressure Mac serializes an ordinary build but admits and reports its controlled overlap', async () => {
   // Arrange
-  const facts = {
-    swap: { totalMb: 0, usedMb: 0, freeMb: 0 },
-    processes: NOTHING_RUNS,
+  const readings = {
+    loadAverages: [1, 1, 1],
+    cores: 8,
+    pressureText: '2',
+    processRows: [{ pid: 12, command: 'node', args: ['scripts/qa-build.mjs'] }],
   }
 
   // Act
-  const judgement = decideVerdict(facts, 8192)
+  const ordinary = await runWithReadings(['--json'], readings)
+  const trial = await runWithReadings(['--experiment', '--json'], readings)
+  const plainTrial = await runWithReadings(['--experiment'], readings)
 
   // Assert
-  assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
+  const ordinaryReport = JSON.parse(ordinary.out[0])
+  const trialReport = JSON.parse(trial.out[0])
+  assert.equal(ordinary.exitCode, 3)
+  assert.deepEqual(ordinaryReport.reasons, ['1 qa-build.mjs or build-fast.mjs'])
+  assert.equal(trial.exitCode, 0)
+  assert.equal(trialReport.experiment, true)
+  assert.equal(trialReport.memoryPressure, 'warning')
+  assert.deepEqual(trialReport.observations, [
+    '1 qa-build.mjs or build-fast.mjs',
+  ])
+  assert.deepEqual(trialReport.reasons, [])
+  assert.equal(trialReport.swap, null)
+  assert.ok(
+    plainTrial.out.includes(
+      'Experimental overlap: 1 qa-build.mjs or build-fast.mjs',
+    ),
+  )
+  assert.equal(plainTrial.out.at(-1), 'PRECHECK: clear')
 })
 
-// Value: protects=a quiet Mac with one barely used swapfile judged clear (macOS adds swap one swapfile at a time, so `free` is only the unused part of the swap already allocated, not the room left); fails_when=the small free amount of a fresh swapfile (974 MB) makes the verdict busy, as the free-swap rule did; no_claim=how much room macOS can still allocate
-test('a machine with one barely used swapfile is clear', () => {
+// Value: protects=observational CLI review counts in either lane with no private arguments; fails_when=an unrelated session counts or a review alone blocks native work; no_claim=review tool resource usage
+test('active CLI reviews are counted without admitting editor sessions as review work or blocking native QA', async () => {
   // Arrange
-  const facts = {
-    swap: { totalMb: 1024, usedMb: 50, freeMb: 974 },
-    processes: NOTHING_RUNS,
+  const readings = {
+    loadAverages: [1, 1, 1],
+    cores: 8,
+    processRows: [
+      {
+        pid: 21,
+        command: '/bin/codex',
+        args: ['review', '--base', 'private-branch'],
+      },
+      {
+        pid: 22,
+        command: 'codex',
+        args: ['exec', 'review', '--base', 'private-branch'],
+      },
+      { pid: 23, command: 'codex', args: ['app-server', 'review'] },
+      {
+        pid: 24,
+        command: 'coderabbit',
+        args: ['--agent', '--base', 'private-branch'],
+      },
+      {
+        pid: 25,
+        command: '/bin/coderabbit',
+        args: ['review', '--base', 'private-branch'],
+      },
+      {
+        pid: 26,
+        command: 'coderabbit',
+        args: ['config', 'validate', 'review'],
+      },
+    ],
   }
 
   // Act
-  const judgement = decideVerdict(facts, 8192)
+  const ordinary = await runWithReadings(['--json'], readings)
+  const trial = await runWithReadings(['--experiment', '--json'], readings)
 
   // Assert
-  assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
+  for (const result of [ordinary, trial]) {
+    assert.equal(result.exitCode, 0)
+    const report = JSON.parse(result.out[0])
+    assert.equal(report.processes.codexReview, 2)
+    assert.equal(report.processes.codeRabbitReview, 2)
+    assert.deepEqual(report.reasons, [])
+    assert.ok(!result.out[0].includes('private-branch'))
+  }
 })
 
-// Value: protects=a running suite stopping the native check (Discussion 359: parallel suites filled the swap and stopped the Space's VM); fails_when=running node --test processes give a clear verdict or the reason does not name the kind and count; no_claim=none beyond protects
-test('a running suite makes the machine busy and the reason names it', () => {
+// Value: protects=review counts, RSS and admission with root CLI options; fails_when=an option value or later prompt is counted as a review; no_claim=arguments with spaces flattened by ps
+test('Codex review counts and RSS follow the subcommand after root options', async () => {
   // Arrange
-  const facts = {
-    swap: { totalMb: 4096, usedMb: 1024, freeMb: 3072 },
-    processes: { ...NOTHING_RUNS, nodeTest: 5 },
+  const cases = [
+    ['-C /private-workdir review --base main', 1],
+    ['--cd=/private-workdir --search -m review exec review', 1],
+    ['-C/private-workdir e review --base main', 1],
+    ['--image screen.png --cd /private-workdir review', 1],
+    ['--image=screen.png review', 1],
+    ['--cd review app-server', 0],
+    ['-m review exec build', 0],
+    ['--cd /private-workdir exec build review', 0],
+    ['--image screen.png review', 0],
+    ['-C --search review', 0],
+    ['--image --search review', 0],
+    ['-- review', 0],
+    ['--unknown-option review', 0],
+  ]
+  for (const [args, expected] of cases) {
+    const processRows = parseProcessRows(`2048 41 /bin/codex ${args}`, true)
+
+    // Act
+    const result = await runWithReadings(['--json'], {
+      loadAverages: [1, 1, 1],
+      cores: 8,
+      processRows,
+    })
+
+    // Assert
+    const report = JSON.parse(result.out[0])
+    assert.equal(report.processes.codexReview, expected, args)
+    assert.equal(report.rssMiBByKind.codexReview, expected ? 2 : 0, args)
+    assert.equal(report.verdict, 'clear', args)
+    assert.ok(!result.out[0].includes('private-workdir'))
   }
-
-  // Act
-  const judgement = decideVerdict(facts, 8192)
-
-  // Assert
-  assert.deepEqual(judgement, { verdict: 'busy', reasons: ['5 node --test'] })
 })
 
-// Value: protects=heavy swap use stopping the native check while nothing builds (the swap stays used after the builds end; the VM stopped at about 14 to 15.3 GB used); fails_when=used swap above the limit gives a clear verdict or the reason does not name the used MB and the limit; no_claim=none beyond protects
-test('used swap above the limit makes the machine busy and the reason names both numbers', () => {
+// Value: protects=per-workload RSS sums the exact process IDs that were counted; fails_when=shared classification, duplicate rows, or unclassified children inflate the total; no_claim=unique physical memory or unobserved children
+test('workload RSS sums sampled resident sizes once per classified PID in MiB', async () => {
   // Arrange
-  const facts = {
-    swap: { totalMb: 10240, usedMb: 9216, freeMb: 1024 },
-    processes: NOTHING_RUNS,
-  }
+  const rows = parseProcessRows(
+    [
+      ' 1536 101 node --test scripts/gate.mjs',
+      '  512 102 node scripts/gate.mjs',
+      ' 2048 101 tsc --build',
+      '  256 103 codex review --base private-name',
+      ' 8192 104 esbuild --service',
+      '    - 105 editor app',
+      '  100 4242 node --test',
+    ].join('\n'),
+    true,
+  )
 
   // Act
-  const judgement = decideVerdict(facts, 8192)
-
-  // Assert
-  assert.deepEqual(judgement, {
-    verdict: 'busy',
-    reasons: ['used swap 9216 MB above 8192 MB'],
+  const result = await runWithReadings(['--experiment', '--json'], {
+    loadAverages: [1, 1, 1],
+    cores: 8,
+    processRows: rows,
   })
-})
-
-// Value: protects=the limit being the most used swap that still counts as clear; fails_when=used swap exactly at the limit is judged busy; no_claim=none beyond protects
-test('used swap exactly at the limit is clear', () => {
-  // Arrange
-  const facts = {
-    swap: { totalMb: 9216, usedMb: 8192, freeMb: 1024 },
-    processes: NOTHING_RUNS,
-  }
-
-  // Act
-  const judgement = decideVerdict(facts, 8192)
 
   // Assert
-  assert.deepEqual(judgement, { verdict: 'clear', reasons: [] })
-})
-
-// Value: protects=every reason of a busy machine named at once, so one rerun is enough after fixing them; fails_when=the verdict stops at the first reason; no_claim=none beyond protects
-test('a machine that builds and uses swap above the limit names both reasons', () => {
-  // Arrange
-  const facts = {
-    swap: { totalMb: 16384, usedMb: 15564.25, freeMb: 819.75 },
-    processes: { ...NOTHING_RUNS, tsc: 1, pnpmInstall: 2 },
-  }
-
-  // Act
-  const judgement = decideVerdict(facts, 8192)
-
-  // Assert
-  assert.deepEqual(judgement, {
-    verdict: 'busy',
-    reasons: ['1 tsc', '2 pnpm install', 'used swap 15564.25 MB above 8192 MB'],
+  const report = JSON.parse(result.out[0])
+  assert.equal(result.exitCode, 0)
+  assert.deepEqual(report.processes, {
+    ...NOTHING_RUNS,
+    gate: 2,
+    codexReview: 1,
   })
+  assert.deepEqual(report.rssMiBByKind, {
+    ...NOTHING_RUNS,
+    gate: 2,
+    codexReview: 0.25,
+  })
+  assert.ok(!result.out[0].includes('private-name'))
 })
 
-// Value: protects=a machine whose swap or process list cannot be read never judged clear (the rule needs the used swap shown within the limit and no build seen); fails_when=an unknown swap or process list gives a clear verdict or no reason; no_claim=why the reading failed
-test('a machine whose swap and process list cannot be read is busy and says so', () => {
+// Value: protects=missing RSS is explicit and never drops a busy PID or changes admission; fails_when=a restricted RSS reading becomes zero, hides a build, or blocks an experiment; no_claim=why RSS is unavailable
+test('unavailable or malformed RSS keeps workload counts and makes the RSS total unknown', async () => {
   // Arrange
-  const facts = { swap: undefined, processes: undefined }
+  const samples = [
+    parseProcessRows('101 tsc --build\n102 node app.js'),
+    ...['-', '', 'bad', '-1', '9'.repeat(320)].map((rss) =>
+      parseProcessRows(`${rss} 101 tsc --build\n20 102 node app.js`, true),
+    ),
+  ]
 
   // Act
-  const judgement = decideVerdict(facts, 8192)
+  for (const processRows of samples) {
+    const readings = { loadAverages: [1, 1, 1], cores: 8, processRows }
+    const ordinary = await runWithReadings(['--json'], readings)
+    const experiment = await runWithReadings(
+      ['--json', '--experiment'],
+      readings,
+    )
+
+    // Assert
+    assert.equal(ordinary.exitCode, 3)
+    assert.equal(experiment.exitCode, 0)
+    for (const result of [ordinary, experiment]) {
+      const report = JSON.parse(result.out[0])
+      assert.equal(report.rssMiBByKind, null)
+      assert.equal(report.processes.tsc, 1)
+    }
+  }
+})
+
+// Value: protects=the production ps reader retains process occupancy when the host denies the RSS column; fails_when=RSS denial hides the running build or invents memory; no_claim=host-specific permissions
+test('a host rejecting the RSS column still reports a busy build from the counts-only process list', async () => {
+  // Arrange
+  for (const restricted of [undefined, '']) {
+    const columns = []
+    const read = (_command, args) => {
+      columns.push(args.at(-1))
+      return args.at(-1) === 'rss=,pid=,args='
+        ? restricted
+        : '101 node scripts/qa-build.mjs'
+    }
+
+    // Act
+    const result = await runWithReadings(['--json'], {
+      loadAverages: [1, 1, 1],
+      cores: 8,
+      processRows: readProcessSample(read),
+    })
+
+    // Assert
+    assert.deepEqual(columns, ['rss=,pid=,args=', 'pid=,args='])
+    assert.equal(result.exitCode, 3)
+    const report = JSON.parse(result.out[0])
+    assert.equal(report.rssMiBByKind, null)
+    assert.equal(report.processes.inProcessBuild, 1)
+  }
+})
+
+// Value: protects=actual critical pressure stops ordinary and controlled trials even with zero swap; fails_when=experiment waives real pressure or masks the heavy process; no_claim=elapsed time until recovery
+test('critical memory pressure stops a controlled trial while its workload remains visible', async () => {
+  // Arrange
+  const readings = {
+    loadAverages: [1, 1, 1],
+    cores: 8,
+    pressureText: '4\n',
+    swapText: 'total = 0M  used = 0M  free = 0M',
+    processRows: [
+      { pid: 13, command: 'node', args: ['scripts/checkHealth.mjs'] },
+    ],
+  }
+
+  // Act
+  const ordinary = await runWithReadings(['--json'], readings)
+  const trial = await runWithReadings(['--experiment', '--json'], readings)
+
+  // Assert
+  assert.equal(ordinary.exitCode, 3)
+  assert.deepEqual(JSON.parse(ordinary.out[0]).reasons, [
+    '1 checkHealth.mjs',
+    'critical memory pressure',
+  ])
+  assert.equal(trial.exitCode, 3)
+  assert.deepEqual(JSON.parse(trial.out[0]).reasons, [
+    'critical memory pressure',
+  ])
+  assert.deepEqual(JSON.parse(trial.out[0]).observations, ['1 checkHealth.mjs'])
+})
+
+// Value: protects=only exact supported kernel pressure values admit a Mac, with unreadable input kept private; fails_when=partial numbers or non-Mac readings are treated as valid; no_claim=why the reading was unavailable
+test('missing and malformed pressure or an unsupported operating system yield explicit reasons', async () => {
+  // Arrange
+  const cases = [
+    ...[
+      undefined,
+      '',
+      '0',
+      '3',
+      '1junk',
+      '1\n4',
+      'unexpected-private-text',
+      1,
+    ].map((pressureText) => [
+      'darwin',
+      pressureText,
+      'unknown',
+      'memory pressure unknown',
+    ]),
+    ['linux', '1', 'unsupported', 'macOS host required'],
+  ]
+  for (const [platform, pressureText, pressure, reason] of cases) {
+    const readings = {
+      platform,
+      pressureText,
+      loadAverages: [1, 1, 1],
+      cores: 8,
+      processRows: [{ pid: 1, command: '/sbin/launchd', args: [] }],
+    }
+
+    // Act
+    const result = await runWithReadings(['--json', '--experiment'], readings)
+
+    // Assert
+    assert.equal(result.exitCode, 3)
+    const report = JSON.parse(result.out[0])
+    assert.equal(report.memoryPressure, pressure)
+    assert.deepEqual(report.reasons, [reason])
+    assert.ok(!result.out[0].includes('unexpected-private-text'))
+  }
+})
+
+// Value: protects=unknown workload occupancy stays explicit in an experiment; fails_when=unreadable process counts admit a blind overlap; no_claim=other system limits
+test('an experiment requires a readable process list', () => {
+  // Arrange
+  const facts = { memoryPressure: 'normal', processes: undefined }
+
+  // Act
+  const judgement = decideVerdict(facts, true)
 
   // Assert
   assert.deepEqual(judgement, {
     verdict: 'busy',
-    reasons: ['process list unknown', 'swap unknown'],
+    reasons: ['process list unknown'],
+    observations: [],
   })
 })
 
@@ -744,6 +960,7 @@ test('a busy machine prints load, swap, one line per kind and the busy verdict l
   assert.deepEqual(result.out, [
     'Load: 7.50, 6.26, 4.00 (1, 5, 15 min) on 16 cores',
     'Swap: total 16384 MB, used 15564.25 MB, free 819.75 MB',
+    'Memory pressure: normal',
     'Running node --test: 1',
     'Running test-shard.mjs: 0',
     'Running run-pregate-tests.mjs: 0',
@@ -756,12 +973,14 @@ test('a busy machine prints load, swap, one line per kind and the busy verdict l
     'Running package.mjs, check-package.mjs or vsce: 0',
     'Running checkHealth.mjs: 0',
     'Running gate.mjs: 1',
-    'PRECHECK: busy 1 node --test, 1 gate.mjs, used swap 15564.25 MB above 8192 MB',
+    'Running CodeRabbit CLI review: 0',
+    'Running Codex CLI review: 0',
+    'PRECHECK: busy 1 node --test, 1 gate.mjs',
   ])
 })
 
-// Value: protects=--json printing the same facts and verdict as one JSON object, and --max-used-swap-mb setting the limit (1228.25 MB used is clear under the default 8192 MB and busy under 1024 MB); fails_when=the object lacks a fact, the limit is not applied, or more than one line is printed; no_claim=none beyond protects
-test('--json prints the facts and the verdict as one object, judged against --max-used-swap-mb', async () => {
+// Value: protects=legacy JSON consumers keep their configured swap setting and receive actual pressure separately; fails_when=an old threshold blocks a healthy host or the reported facts change shape; no_claim=the real host's load
+test('--json preserves the former swap setting as a diagnostic field', async () => {
   // Arrange
   const readings = {
     loadAverages: [1.234, 2, 3.5],
@@ -777,15 +996,19 @@ test('--json prints the facts and the verdict as one object, judged against --ma
   )
 
   // Assert
-  assert.equal(result.exitCode, 3)
+  assert.equal(result.exitCode, 0)
   assert.equal(result.out.length, 1)
   assert.deepEqual(JSON.parse(result.out[0]), {
     load: { oneMinute: 1.23, fiveMinutes: 2, fifteenMinutes: 3.5, cores: 8 },
     swap: { totalMb: 2048, usedMb: 1228.25, freeMb: 819.75 },
+    memoryPressure: 'normal',
+    experiment: false,
     processes: NOTHING_RUNS,
+    rssMiBByKind: null,
     maxUsedSwapMb: 1024,
-    verdict: 'busy',
-    reasons: ['used swap 1228.25 MB above 1024 MB'],
+    verdict: 'clear',
+    reasons: [],
+    observations: [],
   })
 })
 

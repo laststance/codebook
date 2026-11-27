@@ -184,6 +184,8 @@ type ConfigLook =
       identity: FileIdentity
       /** SHA-256 of the bytes that were read, to tell a save made meanwhile from the file that was read. */
       sha256: string
+      /** Digest of the same JSON bytes before any extra trailing line breaks, used only by legacy take-back. */
+      sha256BeforeExtraLineBreaks: string | undefined
       /** Whether a number of the file would change when written back ({@link parseConfig}). */
       hasLossyNumber: boolean
     }
@@ -733,8 +735,27 @@ function parseConfig(
     servers: rawServers,
     identity,
     sha256: bytesSha256(bytes),
+    sha256BeforeExtraLineBreaks: hashBeforeExtraLineBreaks(bytes),
     hasLossyNumber,
   }
+}
+
+/**
+ * Identifies an older setup's staged JSON when only line breaks were appended.
+ * The validated root is an object, and the writer ended its closing brace with one LF.
+ * @example
+ * hashBeforeExtraLineBreaks(Buffer.from('{}\n\r\n')) // hashes '{}\n'
+ */
+function hashBeforeExtraLineBreaks(bytes: Buffer): string | undefined {
+  const firstBreak = bytes.lastIndexOf('}') + 1
+  // Hash an additional prefix only when the entire suffix consists of extra line breaks.
+  if (
+    bytes[firstBreak] === 10 &&
+    firstBreak + 1 < bytes.length &&
+    bytes.subarray(firstBreak + 1).every((byte) => byte === 10 || byte === 13)
+  )
+    return bytesSha256(bytes.subarray(0, firstBreak + 1))
+  return undefined
 }
 
 /**
@@ -1861,6 +1882,8 @@ async function dropFailedStage(
 /** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise), whether the record says completed (`false`: the completed record could not be written, so no copy of the previous config was deleted; the staged name, only a second name of the config, goes all the same, {@link dropPublishedStage}) and whether a first setup's old record's private name stayed after the link because it no longer showed the record that setup moved there ({@link dropMovedAfterLink}; the pending record stays then too). */
 type Published = {
   config: ConfigNumbers
+  /** Digest of the complete bytes written to the staging file, before Devin could edit the published config. */
+  stagedSha256: string
   keptLeft: KeptFile[]
   isRecorded: boolean
   isRetiredKept: boolean
@@ -2744,6 +2767,7 @@ async function createConfig(
   const stagedKept = await dropPublishedStage(context, temporary, stagedVersion)
   return {
     config,
+    stagedSha256: stagedVersion.sha256,
     keptLeft: stagedKept ? [stagedKept] : [],
     isRecorded,
     isRetiredKept: linked.isRetiredKept,
@@ -3056,6 +3080,7 @@ async function replaceConfig(
     // From here the config is published; cleanup failures are reported and leave the pending record, written in the shape the link left it.
     return {
       config,
+      stagedSha256: replacement.stagedVersion.sha256,
       isRetiredKept: linked.isRetiredKept,
       ...(await settlePublished(
         context,
@@ -3125,6 +3150,15 @@ function journalOf(
 }
 
 /**
+ * Encodes the bytes {@link publishRoot} writes, also used by recovery to recognize the result of removing Codebook's entry.
+ * @example
+ * serializedConfig({ mcpServers: {} }) // => '{\n  "mcpServers": {}\n}\n'
+ */
+function serializedConfig(root: JsonObject): string {
+  return `${JSON.stringify(root, null, 2)}\n`
+}
+
+/**
  * Publishes the config. The new bytes are staged first and their inode read from the open handle; the pending record then names the staged file, its inode, the probe name and the private name for the displaced file before anything is moved; the record stays from the first move on, because only the next run can tell how far a crash got.
  * A create links the staged file in ({@link createConfig}). A replacement moves the config aside, compares it and links the new file in ({@link replaceConfig}), so no file is replaced without being compared. Either link goes only while the staged name still shows the file and bytes this run wrote there ({@link assertStagedConfigStill}), and nothing rests on it until a read right after it finds that file with those bytes at the config name ({@link linkedConfigState}). The new file keeps the owner's permission bits only (`mode & 0o600`), so a rewrite never widens access.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
@@ -3147,7 +3181,7 @@ async function publishRoot(
   head: PendingHead,
   staleReceipt?: Receipt,
 ): Promise<Published> {
-  const serialized = `${JSON.stringify(root, null, 2)}\n`
+  const serialized = serializedConfig(root)
   assertWithinSizeLimit(context, serialized)
   const mode =
     look.kind === 'present'
@@ -5278,6 +5312,23 @@ function receiptConflictError(
 class ReceiptConflictError extends Error {}
 
 /**
+ * Gives the safe recovery steps when first setup or a subsequent receipt read finds a directory.
+ * Only a fresh look at the receipt name can distinguish a folder holding the learner's files.
+ * @example
+ * const refusal = receiptFolderRefusal(context, cause)
+ */
+function receiptFolderRefusal(
+  context: Context,
+  cause: unknown,
+): Error | undefined {
+  if (!isFolderAt(context.receiptPath)) return undefined
+  return new Error(
+    `Codebook found a folder at ${context.receiptPath}, where it keeps its receipt for Devin Desktop's MCP config at ${context.path}. To keep its contents, move that folder to another folder, never delete it. Restore the matching receipt from the moved folder or a backup if you have one, or ${KEEP_ENTRY_ADVICE} in ${context.path} if that entry exists, ${context.retry}.`,
+    { cause },
+  )
+}
+
+/**
  * Words the refusal of a write of Codebook's record of the entry ({@link receiptConflictError}): what the run found at `receipt.json` against what it knew of that name.
  * @param context - The run; its paths and retry are named, and its known version there ({@link Context.receiptVersion}) tells a record it read from a name it found or left empty.
  * @param kind - What the run found ({@link receiptConflictError}).
@@ -5772,7 +5823,7 @@ function publishedConfigUnprovenError(
   copyPath: string,
 ): PublishedConfigUnprovenError {
   return new PublishedConfigUnprovenError(
-    `Codebook could not verify that the config at ${path} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy: a later run of Codebook deletes it only while it still holds exactly your previous config and the published config still stands with the bytes Codebook wrote; look at both files before you use either, and never copy the private file over the config, ${retry}.`,
+    `Codebook could not verify that the config at ${path} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy. To keep the saved settings, move the private copy to a new, unused private filename of your choice. If the active config is missing, restore the other servers and any top-level settings you want from the saved copy into a new config at ${path}. If the active config exists, preserve its edits. Finish saving or repair it until it is readable and contains valid JSON, then merge any settings you want from the saved copy. Leave Codebook’s record in place, ${retry}.`,
   )
 }
 
@@ -5832,6 +5883,9 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 /** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
 class HandedCopyError extends Error {}
 
+/** A completed replacement's original is being handed over because its settings already stand in the exact format written by withdrawal. */
+class WithdrawnConfigCopyError extends HandedCopyError {}
+
 /** Thrown by a write or delete of a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`), and by a write of a tracked publish record whose name was found empty (`gone`, {@link writeTrackedJournal}); nothing was written or deleted at that name ({@link journalConflictError}), and {@link settleRollbackJournal} ends the run with it, or {@link publishRecordConflict} words it as the publish record's. */
 class JournalConflictError extends Error {
   constructor(
@@ -5876,16 +5930,18 @@ class PutBackCheckError extends Error {
 }
 
 /**
- * Tells whether a recovery failure's own text names both files and what stays ({@link PutBackCheckError}, {@link ConfigChangedError}), so it is shown as it is; called by {@link unsettledRefusal} and {@link mergeWithLeftover}.
+ * Tells whether a recovery failure's own text names both files and what stays ({@link PutBackCheckError}, {@link ConfigChangedError}, or {@link PublishedConfigUnprovenError}), so a later refusal cannot hide the recovery paths. Called by {@link unsettledRefusal} and {@link mergeWithLeftover}.
  * @param cause - What stopped the leftover's recovery.
- * @returns `true` for those two errors; `false` for every other failure, which {@link unsettledRefusal} words itself.
+ * @returns Whether the learner needs the error's own two-file recovery directions.
  * @example
  * namesBothFiles(configChangedError(context, keptPath)) // => true
  * namesBothFiles(new Error('busy'))                     // => false
  */
 function namesBothFiles(cause: unknown) {
   return (
-    cause instanceof PutBackCheckError || cause instanceof ConfigChangedError
+    cause instanceof PutBackCheckError ||
+    cause instanceof ConfigChangedError ||
+    cause instanceof PublishedConfigUnprovenError
   )
 }
 
@@ -6073,6 +6129,12 @@ function unsettledRefusal(
     return new Error(
       `${changedWhileWorking(context).message} ${replacedCopySentence(leftover.path)}`,
     )
+  if (cause instanceof WithdrawnConfigCopyError)
+    return new Error(
+      isHandoverUnrecorded
+        ? `Codebook kept ${keptCopyPhrase(leftover.path)}, ${UNCONFIRMED_CLAUSE}; ${context.retry}.`
+        : `When Codebook checked ${context.path}, it contained your settings in the format Codebook writes after taking out its entry. Codebook kept the original formatting in ${leftover.path} for you. Restore the settings you need from the copy if the active file is missing, or merge them with any newer edits, ${context.retry}.`,
+    )
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   // A record that stands and still names the copy, or one that could not be read back, may still let a later run delete that copy: it is never left to the learner.
   if (copyFate === 'tracked' || copyFate === 'unconfirmed')
@@ -6126,13 +6188,18 @@ function bothFilesRefusal(
 /**
  * Builds the record that stays after a recovery: only the unsettled leftovers' names, inodes and hashes, so the next run retries just those.
  * @param pending - The record recovery keeps ({@link recordAfterRecovery}); its phase, and its unverified mark ({@link Pending.bytesUnverified}) while the displaced file stays tracked, carry over.
- * @param tracked - The unsettled leftovers that stay tracked; for a finished or handed record the one reported is left out ({@link unsettledRefusal}).
+ * @param unsettled - All leftovers recovery could not settle, in the order it reports them.
+ * @param phase - The phase the run read, before any handover. A finished or handed record releases the reported leftover unless its original still needs proof ({@link Unsettled.staysTracked}).
  * @returns The reduced record; undefined when nothing stays tracked.
  */
 function retainedRecord(
   pending: Pending,
-  tracked: Unsettled[],
+  unsettled: Unsettled[],
+  phase: Pending['phase'],
 ): Pending | undefined {
+  const tracked = phase
+    ? unsettled.filter((entry, index) => index > 0 || entry.staysTracked)
+    : unsettled
   if (tracked.length === 0) return undefined
   const roles = new Set(tracked.map(({ leftover }) => leftover.role))
   return {
@@ -6297,26 +6364,13 @@ async function tidyLeftover(
 }
 
 /**
- * Deletes a leftover that holds exactly the bytes its record names, once its name, a fresh hash of it and, for a displaced original of a change that published, the published config still show what recovery checked; called by {@link tidyLeftover}.
- * Same-size overwrites keep inode and size, so the file is hashed again right before; a copy of the previous config goes only on the word of the record as recovery read it ({@link recordStillCheck}). Each synchronous look comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers.
- * Limits: a swap or a write between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode or content); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
- * @param context - The run.
- * @param leftover - The accepted leftover; its hash is the one its record holds.
- * @param copy - What {@link lookAtLeftover} found.
- * @param pending - The pending record of the interrupted run; its staged hash names the published bytes.
- * @param publishedIno - The published config's inode for a displaced original of a change that published ({@link keepOriginalUnlessPublished}); undefined otherwise.
- * @throws When the leftover's bytes are not the ones its record names, a name no longer shows what was checked, the bytes changed, the config is no longer the published file, the record changed, or the unlink fails; the leftover stays then.
- * @example
- * await deleteRecordedLeftover(context, stagedLeftover, copy, pending, undefined) // the staged name is gone
- */
-/**
  * Verifies the published config of a completed replacement before its displaced copy is deleted.
  * @param context - The run.
  * @param pending - The pending record of the interrupted run.
  * @param publishedIno - The published config's inode.
  * @param leftoverPath - The displaced copy that stays tracked when proof fails.
  * @returns The config as it was read.
- * @throws The {@link publishedConfigUnprovenError} when the published config cannot be verified.
+ * @throws A {@link WithdrawnConfigCopyError} to preserve the original formatting, or the {@link publishedConfigUnprovenError} when recovery cannot verify either outcome.
  */
 async function assertCompletedPublishStill(
   context: Context,
@@ -6332,30 +6386,58 @@ async function assertCompletedPublishStill(
       leftoverPath,
     )
   } catch {
-    // A backup may instead have put the previous config itself back: those very bytes standing at the config name make the copy redundant as well. Any other or unreadable config leaves the copy possibly the last one, so the record keeps tracking it.
-    const restored = await readConfigHoldingBytes(context, pending.keptSha256)
-    if (restored) return restored
+    // A byte-exact restored original is redundant. Withdrawal can instead have preserved the settings but changed their formatting: keep the original bytes for the learner in that case.
+    const current = await inspectCopy(context.path, context.seam).catch(
+      () => undefined,
+    )
+    if (current && current.sha256 === pending.keptSha256) return current
+    if (
+      current &&
+      (await showsWithdrawnSettings(
+        context,
+        pending,
+        leftoverPath,
+        current,
+      ).catch(() => false))
+    )
+      throw new WithdrawnConfigCopyError()
     throw publishedConfigUnprovenError(context, leftoverPath)
   }
 }
 
 /**
- * Reads the config as proof that the displaced copy's exact bytes still stand at the config name; called by {@link assertCompletedPublishStill} when the published replacement no longer stands because a backup may have put the previous config back.
- * @param context - The run; its seam is called inside the read.
- * @param keptSha256 - The displaced copy's recorded bytes.
- * @returns The config as it was read when it holds exactly those bytes; undefined when it holds anything else or cannot be read.
+ * Recognizes the exact config {@link takeEntryOut} writes from the recorded original, before {@link assertCompletedPublishStill} hands that original to the learner.
+ * The original must still be the same readable file, with its recorded bytes and round-trippable settings. Both names are checked once more after the read.
  * @example
- * await readConfigHoldingBytes(context, pending.keptSha256) // => the config's read once a backup restored the previous config byte for byte
+ * await showsWithdrawnSettings(context, pending, copyPath, current) // true for withdrawal's formatted settings
  */
-async function readConfigHoldingBytes(
+async function showsWithdrawnSettings(
   context: Context,
-  keptSha256: string | undefined,
-): Promise<InspectedCopy | undefined> {
-  if (keptSha256 === undefined) return undefined
-  const config = await inspectCopy(context.path, context.seam).catch(
-    () => undefined,
+  pending: Pending,
+  copyPath: string,
+  current: InspectedCopy,
+): Promise<boolean> {
+  const original = await lookAtConfig({ ...context, path: copyPath })
+  if (
+    original.kind === 'absent' ||
+    original.hasLossyNumber ||
+    original.sha256 !== pending.keptSha256 ||
+    pending.keptIno === undefined ||
+    !isSameFileId(pending.keptIno, original.identity.ino) ||
+    original.servers?.[SERVER_NAME] !== undefined
   )
-  return config?.sha256 === keptSha256 ? config : undefined
+    return false
+  // A first setup creates the servers object if missing; its withdrawal writes that empty object back. All other keys are preserved.
+  const withdrawn = serializedConfig({
+    ...original.root,
+    mcpServers: original.servers ?? {},
+  })
+  if (current.sha256 !== bytesSha256(withdrawn)) return false
+  await lookAheadAt([context.path, copyPath])
+  return (
+    isLeftoverStill(context, context.path, current) &&
+    isLeftoverStill(context, copyPath, original.identity)
+  )
 }
 
 /**
@@ -6438,6 +6520,19 @@ async function verifyPublishedCopyDeletion(
   return { publishedLook, lastLook }
 }
 
+/**
+ * Deletes a leftover that holds exactly the bytes its record names, once its name, a fresh hash of it and, for a displaced original of a change that published, the published config still show what recovery checked; called by {@link tidyLeftover}.
+ * Same-size overwrites keep inode and size, so the file is hashed again right before; a copy of the previous config goes only on the word of the record as recovery read it ({@link recordStillCheck}). Each synchronous look comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers.
+ * Limits: a swap or a write between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode or content); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run.
+ * @param leftover - The accepted leftover; its hash is the one its record holds.
+ * @param copy - What {@link lookAtLeftover} found.
+ * @param pending - The pending record of the interrupted run; its staged hash names the published bytes.
+ * @param publishedIno - The published config's inode for a displaced original of a change that published ({@link keepOriginalUnlessPublished}); undefined otherwise.
+ * @throws When the leftover's bytes are not the ones its record names, a name no longer shows what was checked, the bytes changed, the config is no longer the published file, the record changed, or the unlink fails; the leftover stays then.
+ * @example
+ * await deleteRecordedLeftover(context, stagedLeftover, copy, pending, undefined) // the staged name is gone
+ */
 async function deleteRecordedLeftover(
   context: Context,
   leftover: Leftover,
@@ -6470,7 +6565,13 @@ async function deleteRecordedLeftover(
     path,
   ])
   // Only synchronous looks follow: the config name first (it must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode), the record, the displaced name last.
-  if (publishedLook) assertConfigUnchangedSince(context, publishedLook, path)
+  if (publishedLook)
+    assertConfigUnchangedSince(
+      context,
+      publishedLook,
+      path,
+      leftoverPhaseOf(pending) === 'completed',
+    )
   recordStill?.assert()
   // The hash came from the open handle; the unlink acts on the name, which must still show that same file with the size and times it had at its last hash.
   assertLeftoverStill(context, path, lastLook)
@@ -6870,16 +6971,24 @@ function proofOfRecordedCopy(
  * @param context - The run.
  * @param look - The config as {@link assertConfigStillPublished} read it.
  * @param leftoverPath - The displaced name about to be unlinked; kept and named when the check fails.
- * @throws An error naming `leftoverPath` when the config changed.
+ * @param isCompleted - A completed replacement keeps the original tracked if its final proof changes or cannot be read.
+ * @throws An error naming `leftoverPath` when the config changed or the final proof failed.
  */
 function assertConfigUnchangedSince(
   context: Context,
   look: InspectedCopy,
   leftoverPath: string,
+  isCompleted: boolean,
 ): void {
-  const { ino, size, mtimeNs, ctimeNs } = look
-  if (!isLeftoverStill(context, context.path, { ino, size, mtimeNs, ctimeNs }))
-    throw configChangedError(context, leftoverPath)
+  try {
+    if (isLeftoverStill(context, context.path, look)) return
+  } catch (cause) {
+    // A failed last look also leaves a completed publish unproven. An in-progress change keeps its existing read failure.
+    if (!isCompleted) throw cause
+  }
+  throw isCompleted
+    ? publishedConfigUnprovenError(context, leftoverPath)
+    : configChangedError(context, leftoverPath)
 }
 
 /** Throws when a displaced copy's last read shows other bytes or another inode than the ones Codebook checked; the copy stays untouched. */
@@ -9907,6 +10016,8 @@ type RollbackResult = {
   outcome:
     | 'took-out'
     | 'replaced-config'
+    | 'edited-config'
+    | 'unverified-config'
     | 'not-ours'
     | 'unreadable'
     | 'not-taken-out'
@@ -9970,18 +10081,25 @@ async function confirmPublishedConfig(
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
+ * @param stagedSha256 - The hash of the bytes staged for publication, when the setup record supplies it.
+ * @param configStill - During the current setup, the additional identity check from receipt settlement.
  * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name, or another file or nothing there at the take-back's last look before the config moves ({@link assertTakeBackRecordStill}), is `journal-taken`, and nothing moved; another file at that name once the entry is out, as the journal was to be deleted, is `took-out-record-taken`, and a name that could not be read again then is `took-out-record-unread`; what stands there stays.
  * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`, except the {@link RecordConflictError} of a take-back whose publish record no longer stands as its run read or wrote it ({@link assertTakeBackRecordStill}), which {@link finishCutShortSetup} rethrows and {@link takeOutUnrecordedEntry} answers as `record-changed`, because nothing moved.
  */
 async function rollBackPublishedEntry(
   context: Context,
   written: Receipt,
+  stagedSha256: string | undefined,
+  configStill?: StillLook,
 ): Promise<RollbackResult> {
   const confirmed = await confirmPublishedConfig(context, written)
   // Not the file this setup published with its entry, or one that cannot be read again: nothing is touched.
   if (!('look' in confirmed))
     return { outcome: confirmed.outcome, keptLeft: [] }
   const { look } = confirmed
+  // The same snapshot that proves the original config also guards its move during rollback.
+  const conflict = rollbackConfigConflict(look, stagedSha256, configStill)
+  if (conflict) return { outcome: conflict, keptLeft: [] }
   try {
     const { keptLeft, status } = await takeEntryOut(
       rollbackContextOf(context, written.generation),
@@ -10004,6 +10122,31 @@ async function rollBackPublishedEntry(
     throw error
   }
 }
+
+/**
+ * Checks the snapshot used by {@link rollBackPublishedEntry} against the bytes staged for publication and, during the same setup, the identity found before writing the receipt.
+ * Older records without that evidence keep their existing entry and inode checks.
+ * @example
+ * rollbackConfigConflict(look, pending.stagedSha256) // 'edited-config' after an in-place change
+ */
+function rollbackConfigConflict(
+  look: Extract<ConfigLook, { kind: 'present' }>,
+  stagedSha256: string | undefined,
+  configStill?: StillLook,
+): 'edited-config' | 'unverified-config' | undefined {
+  // Only a mismatch of verified bytes establishes a content edit.
+  if (stagedSha256 !== undefined && look.sha256 !== stagedSha256)
+    return 'edited-config'
+  try {
+    configStill?.assert()
+    return undefined
+  } catch {
+    return 'unverified-config'
+  }
+}
+
+/** Keeps the learner's edited or unowned server entry available when they run setup again. */
+const KEEP_ENTRY_ADVICE = `rename the "${SERVER_NAME}" entry to an unused name to keep its settings`
 
 /** The end of a rollback journal's name beside `pending.json` ({@link rollbackContextOf}); {@link journalConflictError} words a conflict at a name with it as a rollback record's. */
 const ROLLBACK_JOURNAL_SUFFIX = '.rollback'
@@ -10142,6 +10285,9 @@ function rollbackOutcomeClause(
   const journal = rollbackContextOf(context).pendingPath
   return {
     'took-out': 'so it took that entry out again and changed nothing else',
+    'unverified-config':
+      'and could not verify that the config stayed unchanged, so it kept the file and its recovery record',
+    'edited-config': `but the file at that path was edited in place, so it left that file unchanged; ${KEEP_ENTRY_ADVICE}`,
     'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
     'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
     unreadable: `and could not read that file again, so it left it unchanged; check that its "${SERVER_NAME}" entry is what you want before you change it`,
@@ -10162,7 +10308,8 @@ function rollbackOutcomeClause(
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
  * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
- * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link writeTakeBackMark}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
+ * @param published - The staged digest and whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link writeTakeBackMark}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
+ * @param publishedLook - The original config check, including when the receipt write itself failed.
  * @returns The error to reject with: whether the entry was taken out again, and the way out that fits why the receipt could not be written ({@link receiptFailureEnding}), followed by the refusal of Codebook's own step at the setup record's dropping name when the take-back mark stopped there ({@link unrecordedEntrySentences}).
  */
 async function takeOutUnrecordedEntry(
@@ -10170,7 +10317,8 @@ async function takeOutUnrecordedEntry(
   written: Receipt,
   cause: unknown,
   { asLeft, asTracked }: LeftCopies,
-  isRetiredKept: boolean,
+  { isRetiredKept, stagedSha256 }: Published,
+  publishedLook?: StillLook,
 ): Promise<Error> {
   const recordChanged: RollbackResult = {
     outcome: 'record-changed',
@@ -10182,12 +10330,16 @@ async function takeOutUnrecordedEntry(
   let result = recordChanged
   // No run: the setup's record changed, moved away or could not be read again as the mark read or wrote it, so the config is never changed on this run's word alone.
   if (run)
-    result = await rollBackPublishedEntry(run, written).catch(
-      (error: unknown): RollbackResult =>
-        // The setup's record no longer stood right before the config would move, so nothing moved; any other failure leaves the rejection below saying the entry may still stand.
-        error instanceof RecordConflictError
-          ? recordChanged
-          : { outcome: 'not-taken-out', keptLeft: [] },
+    result = await rollBackPublishedEntry(
+      run,
+      written,
+      stagedSha256,
+      publishedLook,
+    ).catch((error: unknown): RollbackResult =>
+      // The setup's record no longer stood right before the config would move, so nothing moved; any other failure leaves the rejection below saying the entry may still stand.
+      error instanceof RecordConflictError
+        ? recordChanged
+        : { outcome: 'not-taken-out', keptLeft: [] },
     )
   const { outcome } = result
   // The rollback replaced the published file, so the next run hands an untracked copy over instead of deleting it, also when it then found another file at its own record's name or could not read that name again; another file found at the config path may still give way to the published one before then.
@@ -10383,6 +10535,7 @@ async function publishEntry(
 /**
  * Writes the receipt of a publish and words what the publish left; the last steps of {@link publishEntry}, once the config stands.
  * A first setup never leaves an entry without a receipt: when that receipt cannot be written, or `receipt.json` no longer shows it once its write's awaited cleanup of the staged name ended ({@link publishedReceiptCheck}), its entry is taken out again ({@link takeOutUnrecordedEntry}); an update keeps its own record of the change and what stands at `receipt.json` (the old receipt while nothing was written there), and rejects. When another program kept the completed record from being written ({@link Published.recordConflict}), the receipt is written only while the config is still the file this setup published with its entry, and the copies are worded as the record that stands leaves them ({@link settleRecordConflict}). Once the receipt stands, a delete of the setup's own record that Codebook's own step at the record's dropping name refuses ({@link DroppingNameConflictError}) is no failure of that receipt: the entry stays, and the success says where the record stands in that refusal's own words, because both names stay and the next run stops at them; any other conflict of that delete leaves a stale record the next run reads first, as before.
+ * A first setup checks the config and receipt again after retiring its setup record. A change then refuses success and leaves the current files alone. When retirement itself met a dropping-name conflict, its recovery directions accompany the refusal.
  * @param context - The run.
  * @param written - The receipt this publish writes.
  * @param published - What the publish reported ({@link Published}).
@@ -10406,36 +10559,59 @@ async function recordPublishedEntry(
     : await settlePublishedConfig(context, written, published)
   // Codebook's own step at the record's dropping name can refuse the delete of this setup's record after the receipt stands: both names then stay and the next run stops at them, so the success names them in that refusal's own words instead of reporting nothing.
   let droppingConflict: DroppingNameConflictError | undefined
+  let receiptWasWritten = false
   try {
     await writeReceipt(context, written, settled.configStill)
-    // The receipt must still stand as its write published it once that write's awaited cleanup of its staged name ended: the setup's own record, which may go next, is the only other record of this entry.
-    const assertReceiptLeft = await publishedReceiptCheck(
-      context,
-      receiptConflictError,
+    receiptWasWritten = true
+    // A first setup can report installation only while the config still holds the entry it published and the receipt still records it.
+    const assertPublished = bothLooks(
+      await publishedReceiptCheck(context, receiptConflictError),
+      isFirst ? settled.configStill : undefined,
     )
-    await lookAheadAt(assertReceiptLeft.names)
-    assertReceiptLeft.assert()
-    // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it; one that goes here goes only while the receipt still stands.
-    if (keptLeft.length === 0 && !isRetiredKept)
-      await dropPending(context, {
-        assertStill: assertReceiptLeft,
-        onConflict: 'throw',
-      }).catch((error: unknown) => {
-        // The dropping-name refusal is said with the success below, because the entry is installed and recorded once the receipt stands; another program's conflict leaves a stale record the next run reads first, as before. Anything else is the receipt's own look, which the caller answers as a receipt-write failure, as before.
-        if (error instanceof DroppingNameConflictError) droppingConflict = error
-        else if (!(error instanceof JournalConflictError)) throw error
-      })
+    await lookAndAssertStill(assertPublished)
+    // Keep records that name retained copies; otherwise check the same evidence throughout retirement.
+    if (keptLeft.length === 0 && !isRetiredKept) {
+      droppingConflict = await dropPublishedSetupRecord(
+        context,
+        assertPublished,
+      )
+      // Dropping even a successfully retired record awaits note cleanup. Both published files must still stand after it.
+      if (isFirst) await lookAndAssertStill(assertPublished)
+    }
   } catch (cause) {
-    // An update keeps its own record of the change and rejects as before; a first setup's take-back decides from the config as it stands then.
+    // An update keeps its own record of the change. Only a first setup considers taking its entry back.
     if (!isFirst) throw cause
+    const refusal = receiptWasWritten
+      ? firstSetupProofFailure(
+          context,
+          cause,
+          settled.copies.asTracked,
+          droppingConflict ?? recordConflict,
+        )
+      : undefined
+    if (refusal) throw refusal
     throw await takeOutUnrecordedEntry(
       context,
       written,
       cause,
       settled.copies,
-      isRetiredKept,
+      published,
+      settled.configStill,
     )
   }
+  return publishedEntryResult(written.generation, settled, droppingConflict)
+}
+
+/**
+ * Builds the installed result and names any recovery files that survived publication.
+ * @example
+ * publishedEntryResult(generation, settled, undefined)
+ */
+function publishedEntryResult(
+  generation: string,
+  settled: ReceiptWriteSettlement,
+  droppingConflict: DroppingNameConflictError | undefined,
+): PublishedEntry {
   const cleanupFailure = [
     cleanupFailureOf(settled.copies.asTracked),
     settled.sentence,
@@ -10444,8 +10620,72 @@ async function recordPublishedEntry(
   ]
     .filter(Boolean)
     .join(' ')
-  const { generation } = written
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
+}
+
+/**
+ * Retires the setup record once the receipt stands. A conflict at its two recovery names carries directions the final notice needs.
+ * @example
+ * const conflict = await dropPublishedSetupRecord(context, assertPublished)
+ */
+async function dropPublishedSetupRecord(
+  context: Context,
+  assertPublished: StillLook | undefined,
+): Promise<DroppingNameConflictError | undefined> {
+  try {
+    await dropPending(context, {
+      assertStill: assertPublished,
+      onConflict: 'throw',
+    })
+  } catch (error) {
+    if (error instanceof DroppingNameConflictError) return error
+    // Ordinary journal conflicts leave a stale record for the next run. A failed config or receipt proof still refuses setup.
+    if (!(error instanceof JournalConflictError)) throw error
+  }
+  return undefined
+}
+
+/**
+ * Describes a failed first setup whose receipt was published but whose final evidence changed.
+ * Called by {@link recordPublishedEntry} before considering a rollback on a surviving setup record.
+ * @param copies - Recovery copies still named by the publication.
+ * @param recordConflict - Any earlier conflict during retirement or publication of the recovery record.
+ * @returns The refusal when the files must be left alone; otherwise the setup's existing take-back handles the failure.
+ * @example
+ * firstSetupProofFailure(context, receiptConflictError(context, 'gone'), [], undefined)
+ */
+function firstSetupProofFailure(
+  context: Context,
+  cause: unknown,
+  copies: KeptFile[],
+  recordConflict: JournalConflictError | undefined,
+): Error | undefined {
+  // A failed put-back carries the two recovery names on the proof error itself.
+  const conflict = [recordConflict, cause instanceof Error && cause.cause].find(
+    (error): error is DroppingNameConflictError =>
+      error instanceof DroppingNameConflictError,
+  )
+  if (cause instanceof PublishUncoveredError)
+    return new Error(
+      changedWhileWorking(context).message +
+        keptCopiesSentence(copies) +
+        (conflict ? ` ${conflict.message}` : ''),
+      { cause },
+    )
+  if (!(cause instanceof ReceiptConflictError)) return undefined
+  // A stranded journal cannot authorize a take-back. Both failures have independent recovery steps.
+  if (conflict)
+    return new Error(
+      `${cause.message}${keptCopiesSentence(copies)} ${conflict.message}`,
+      { cause },
+    )
+  if (context.journalVersion?.current) return undefined
+  const folder = receiptFolderRefusal(context, cause)
+  if (folder) return folder
+  return new Error(
+    `Codebook could no longer verify its receipt at ${context.receiptPath} for the entry it wrote in Devin Desktop's MCP config at ${context.path}. It left the current files untouched. Check both locations and keep any different receipt separately. Restore the matching receipt from backup or, if you have no backup, ${KEEP_ENTRY_ADVICE} in ${context.path}, ${context.retry}.`,
+    { cause },
+  )
 }
 
 /**
@@ -10738,7 +10978,6 @@ async function settleRollbackJournal(
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   // An unverified put-back's handed journal is read as the change in progress it is, so its displaced file stays tracked.
   const phase = leftoverPhaseOf(pending)
-  const tracked = phase ? unsettled.slice(1) : unsettled
   // A journal of an older build names no publish: the config its recovery just put back helps tell whether it is this publish's.
   const legacy =
     pending.publishGeneration === undefined
@@ -10770,7 +11009,8 @@ async function settleRollbackJournal(
     )
   const retained = retainedRecord(
     await recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
-    tracked,
+    unsettled,
+    phase,
   )
   let held: HeldJournal | undefined
   try {
@@ -11994,6 +12234,26 @@ async function dropAdoptedReceiptOf(
 }
 
 /**
+ * Returns the config digest a recovering take-back must see again. A plain-hash
+ * legacy record accepts appended line breaks only on the exact bytes it staged.
+ * @example
+ * takeBackConfigHash(pending, look) // the full current digest after a verified legacy append
+ */
+function takeBackConfigHash(
+  pending: Pending,
+  look: Extract<ConfigLook, { kind: 'present' }>,
+): string | undefined {
+  const { stagedSha256 } = pending
+  if (
+    stagedSha256 !== undefined &&
+    stagedSha256 === look.sha256BeforeExtraLineBreaks &&
+    !isFirstSetupRecord(pending)
+  )
+    return look.sha256
+  return stagedSha256
+}
+
+/**
  * Finishes the take-back of a first setup whose rollback was cut short; called by {@link inspect} after {@link settleRollbackJournal} put the published config back.
  * That config holds the entry the failed setup published, and its receipt was never written, so the publish record is not adopted: the entry is taken out again with the rollback's own steps and checks ({@link rollBackPublishedEntry}) and the setup's record is retired. A config with no matching publish record, one a receipt of the same generation that setup wrote itself covers ({@link isTakeBackCovered}), or a record marked {@link Pending.notLinked} (that publish linked nothing), is not concerned. A receipt of the same generation that an adoption wrote ({@link Receipt.adopted}) covers nothing: the entry is taken back all the same, and that receipt goes with it, before the record ends, while `receipt.json` still shows the version this run read and the entry is still out of the config ({@link dropAdoptedReceiptOf}).
  * Limit: an adopted receipt that cannot go then (another file at its name, a delete that fails) stays beside no entry, as a removal's receipt that it left does, and the next setup or removal settles it.
@@ -12049,7 +12309,11 @@ async function finishCutShortSetup(
   }
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
   try {
-    result = await rollBackPublishedEntry(context, written)
+    result = await rollBackPublishedEntry(
+      context,
+      written,
+      takeBackConfigHash(pending, look),
+    )
   } catch (error) {
     // The record this take-back rests on changed or disappeared before the config moved: nothing changed, and the run goes no further.
     if (error instanceof RecordConflictError) throw error
@@ -12157,9 +12421,6 @@ async function inspect(context: Context): Promise<Inspection> {
   const isHandoverUnrecorded = Boolean(
     pending && isHandedNow && !(await persistHandover(run, pending, unsettled)),
   )
-  const tracked = phase
-    ? unsettled.filter((entry, index) => index > 0 || entry.staysTracked)
-    : unsettled
   const [first] = unsettled
   const reported = first && {
     ...first,
@@ -12169,7 +12430,8 @@ async function inspect(context: Context): Promise<Inspection> {
     pending &&
     retainedRecord(
       await recordAfterRecovery(run, pending, unsettled, isHandedNow),
-      tracked,
+      unsettled,
+      phase,
     )
   const inspection = await settleAfterRecovery(
     run,
@@ -12226,7 +12488,7 @@ function ownRecordContext(
  * - The record handed and unverified ({@link Pending.bytesUnverified}) while its displaced name stays a second name of the config that no check cleared ({@link isUnverifiedSecondName}), also when this run's put-back wrote that mark: an older build then never deletes that name by the shared inode alone, and this build checks the bytes again
  * - Otherwise the record in the phase recovery reads it ({@link leftoverPhaseOf}), without the mark: a displaced file that is no second name of the config leaves an older build nothing to delete by its inode, and an older build would read an empty config name under a handed record as handed over
  * @example
- * retainedRecord(await recordAfterRecovery(context, pending, unsettled, false), tracked)
+ * retainedRecord(await recordAfterRecovery(context, pending, unsettled, false), unsettled, leftoverPhaseOf(pending))
  */
 async function recordAfterRecovery(
   context: Context,
@@ -12349,7 +12611,10 @@ async function settleAfterRecovery(
     receipt: stored,
     version: storedVersion,
     otherConfigPath,
-  } = await readReceiptWithVersion(context)
+  } = await readReceiptWithVersion(context).catch((cause: unknown) => {
+    // A folder at the receipt name may hold the learner's files on an immediate retry.
+    throw receiptFolderRefusal(context, cause) ?? cause
+  })
   // This read itself passes the note that receipt.json is unverified: a look before it that found the name empty grants nothing to a file put there since.
   assertNotedReceipt(context, storedVersion)
   // The note is the publish record's as read, which this read settles: the run's own later writes and put-backs answer to the records they write.
