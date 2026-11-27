@@ -10448,7 +10448,7 @@ async function publishEntry(
 /**
  * Writes the receipt of a publish and words what the publish left; the last steps of {@link publishEntry}, once the config stands.
  * A first setup never leaves an entry without a receipt: when that receipt cannot be written, or `receipt.json` no longer shows it once its write's awaited cleanup of the staged name ended ({@link publishedReceiptCheck}), its entry is taken out again ({@link takeOutUnrecordedEntry}); an update keeps its own record of the change and what stands at `receipt.json` (the old receipt while nothing was written there), and rejects. When another program kept the completed record from being written ({@link Published.recordConflict}), the receipt is written only while the config is still the file this setup published with its entry, and the copies are worded as the record that stands leaves them ({@link settleRecordConflict}). Once the receipt stands, a delete of the setup's own record that Codebook's own step at the record's dropping name refuses ({@link DroppingNameConflictError}) is no failure of that receipt: the entry stays, and the success says where the record stands in that refusal's own words, because both names stay and the next run stops at them; any other conflict of that delete leaves a stale record the next run reads first, as before.
- * A first setup whose config changes after the receipt was written reports the change and leaves its recovery record for the next run.
+ * A first setup checks the config and receipt again after retiring its setup record. A change then refuses success and leaves the current files alone. When retirement itself met a dropping-name conflict, its recovery directions accompany the refusal.
  * @param context - The run.
  * @param written - The receipt this publish writes.
  * @param published - What the publish reported ({@link Published}).
@@ -10492,20 +10492,21 @@ async function recordPublishedEntry(
         if (error instanceof DroppingNameConflictError) droppingConflict = error
         else if (!(error instanceof JournalConflictError)) throw error
       })
-      // A failed cleanup can leave the record standing without reaching its last check.
-      if (isFirst && context.journalVersion?.current)
-        await lookAndAssertStill(assertPublished)
+      // Dropping even a successfully retired record awaits note cleanup. Both published files must still stand after it.
+      if (isFirst) await lookAndAssertStill(assertPublished)
     }
   } catch (cause) {
-    // This receipt was published. Leave the changed config and recovery records for the next run.
-    if (receiptWasWritten && cause instanceof PublishUncoveredError)
-      throw new Error(
-        changedWhileWorking(context).message +
-          keptCopiesSentence(settled.copies.asTracked),
-        { cause },
-      )
-    // An update keeps its own record of the change and rejects as before; a first setup's take-back decides from the config as it stands then.
+    // An update keeps its own record of the change. Only a first setup considers taking its entry back.
     if (!isFirst) throw cause
+    const refusal = receiptWasWritten
+      ? firstSetupProofFailure(
+          context,
+          cause,
+          settled.copies.asTracked,
+          droppingConflict,
+        )
+      : undefined
+    if (refusal) throw refusal
     throw await takeOutUnrecordedEntry(
       context,
       written,
@@ -10524,6 +10525,38 @@ async function recordPublishedEntry(
     .join(' ')
   const { generation } = written
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
+}
+
+/**
+ * Describes a failed first setup whose receipt was published but whose final evidence changed.
+ * Called by {@link recordPublishedEntry} before considering a rollback on a surviving setup record.
+ * @param copies - Recovery copies still named by the publication.
+ * @param droppingConflict - The cleanup refusal whose two-file recovery directions must survive.
+ * @returns The refusal when the files must be left alone; otherwise the setup's existing take-back handles the failure.
+ * @example
+ * firstSetupProofFailure(context, receiptConflictError(context, 'gone'), [], undefined)
+ */
+function firstSetupProofFailure(
+  context: Context,
+  cause: unknown,
+  copies: KeptFile[],
+  droppingConflict: DroppingNameConflictError | undefined,
+): Error | undefined {
+  // The active file changed; preserve it and include any separate recovery conflict already identified.
+  if (cause instanceof PublishUncoveredError)
+    return new Error(
+      changedWhileWorking(context).message +
+        keptCopiesSentence(copies) +
+        (droppingConflict ? ` ${droppingConflict.message}` : ''),
+      { cause },
+    )
+  // An already retired record cannot authorize taking the entry out when its receipt has changed.
+  if (!context.journalVersion?.current && cause instanceof ReceiptConflictError)
+    return new Error(
+      `Codebook could no longer verify its receipt at ${context.receiptPath} for the entry it wrote in Devin Desktop's MCP config at ${context.path}. It left the current files untouched; check both locations, keep any different receipt separately before restoring the matching one from your backup, ${context.retry}.`,
+      { cause },
+    )
+  return undefined
 }
 
 /**
