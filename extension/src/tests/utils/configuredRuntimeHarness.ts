@@ -2511,11 +2511,15 @@ export async function configuredRuntimeHarness(
         ) => {
           // A nested app is read below its package root; the first argument stays the repository root.
           developmentBundleRoots.push(nextPackage?.packageRoot ?? workspaceRoot)
-          // A hung `.next/dev` read ends only when the run is cancelled.
-          if (options.sealHangs)
+          // The setup deadline may have expired during the preceding lock read.
+          if (options.sealHangs) {
+            signal.throwIfAborted()
             await new Promise<never>((_resolve, reject) =>
-              signal.addEventListener('abort', () => reject(signal.reason)),
+              signal.addEventListener('abort', () => reject(signal.reason), {
+                once: true,
+              }),
             )
+          }
           if (options.serverSeal === 'client-component')
             throw clientComponentRefusal(source)
           // A server stop of a run with a scripted server is sealed at the address of the layer it is sealed from.
