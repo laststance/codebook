@@ -808,12 +808,19 @@ export async function reportTrials(root) {
       const stop = await recordedStop(dir, rows, deadline)
       if (stop?.sampleAt === ended.sampleAt) stopEvidence = stop.stopEvidence
     }
-    // A timeout describes the declared interval, even when the closer recorded a different time.
+    // A timeout describes the declared interval. A confirmed stop can shorten it.
     const terminalTime =
-      ended?.outcome === 'observer-timeout'
-        ? trial.deadline
-        : (stopEvidence?.stopped.to ?? ended?.at)
-    const cutoff = ended ? Date.parse(terminalTime) : Infinity
+      stopEvidence?.stopped.to ??
+      (ended?.outcome === 'observer-timeout' ? trial.deadline : ended?.at)
+    // Older terminals can lack a valid declaration. Their own observation boundary still applies.
+    const hasDeclaredWindow =
+      typeof trial.started === 'string' &&
+      typeof trial.deadline === 'string' &&
+      Date.parse(trial.started) < deadline
+    const cutoff = Math.min(
+      hasDeclaredWindow ? deadline : Infinity,
+      ended ? Date.parse(terminalTime) : Infinity,
+    )
     const within = (timestamp) => Date.parse(timestamp) <= cutoff
     const regular = rows.filter((row) => !row.additionalObservation)
     // With no per-metric clock in an older journal, only its completion time bounds the reading.

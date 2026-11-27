@@ -1537,6 +1537,100 @@ test('a scheduled stop closes immediately when an independent planner supplied t
   assert.equal(end.sampleAt, new Date(start + 1000).toISOString())
 })
 
+for (const outcome of ['incomplete', 'unknown']) {
+  test(`a trial reported as ${outcome} excludes work and paging after its declared deadline`, async (t) => {
+    // Arrange
+    const { root, put, start } = await startedTrial(t)
+    const atDeadline = sample(start + 10000, 'running', true, 22)
+    const overtime = sample(start + 10500, 'running', true, 99)
+    overtime.host.workloads = { suite: 9 }
+    overtime.host.usedSwapMb = 45000
+    overtime.guest.memoryBytes = 32 * 1024 ** 3
+    await put('sample-slot-0.json', sample(start + 8000))
+    await put('sample-slot-1.json', atDeadline)
+    await put('sample-slot-2.json', overtime)
+    if (outcome === 'unknown') {
+      // A lost probe makes the late finish record unknown instead of observer-timeout.
+      await put('pending-abcd.json', { expiresAt: 0 })
+      const end = await controlTrial(
+        root,
+        options.id,
+        'finish',
+        'unknown',
+        () => assert.fail('past deadline'),
+        () => start + 11000,
+      )
+      assert.equal(end.reason, 'incomplete-observation')
+    }
+
+    // Act
+    const {
+      trials: [trial],
+      groups: [group],
+    } = await reportTrials(root)
+
+    // Assert
+    assert.equal(trial.outcome, outcome)
+    assert.equal(trial.samples, 2)
+    assert.deepEqual(trial.peakProcesses, { build: 1 })
+    assert.equal(trial.maxUsedSwapMb, 12000)
+    assert.equal(trial.pagingIntervals.host.length, 1)
+    assert.equal(trial.pagingIntervals.host[0].pages, 10)
+    assert.deepEqual(group.observedCombinations, ['build'])
+    assert.deepEqual(group.observedGuestMemoryBytes, [])
+  })
+}
+
+test('a legacy terminal without a usable deadline keeps observations through its recorded end', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  await put('end.json', { at: at(11), outcome: 'healthy' })
+  await put('sample-slot-0.json', sample(start + 10500))
+  const after = sample(start + 12000)
+  after.host.workloads = { suite: 9 }
+  await put('sample-slot-1.json', after)
+
+  for (const deadline of [undefined, 'invalid', at(-1)]) {
+    await put('trial.json', { ...options, started: at(0), deadline })
+
+    // Act
+    const {
+      trials: [trial],
+    } = await reportTrials(root)
+
+    // Assert
+    assert.equal(trial.samples, 1)
+    assert.deepEqual(trial.peakProcesses, { build: 1 })
+    assert.equal(trial.outcome, 'healthy')
+  }
+})
+
+test('an observed stop shortens the declared interval even on a timeout terminal', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  await put('sample-slot-0.json', sample(start + 5000))
+  const after = sample(start + 7000)
+  after.host.workloads = { suite: 9 }
+  await put('sample-slot-1.json', after)
+  await put('end.json', {
+    at: at(11),
+    outcome: 'observer-timeout',
+    stopEvidence: {
+      running: { from: at(5), to: at(5) },
+      stopped: { from: at(6), to: at(6) },
+    },
+  })
+
+  // Act
+  const {
+    trials: [trial],
+  } = await reportTrials(root)
+
+  // Assert
+  assert.equal(trial.samples, 1)
+  assert.deepEqual(trial.peakProcesses, { build: 1 })
+})
+
 for (const endedAt of [9.5, 10.5]) {
   test(`a timeout recorded at ${endedAt} seconds includes workload and paging evidence only through the ten-second deadline`, async (t) => {
     // Arrange
