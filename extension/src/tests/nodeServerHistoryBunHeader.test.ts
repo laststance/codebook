@@ -43,7 +43,7 @@ function headerInput(loader: 'bun' | 'tsx', withSignIn: boolean) {
   }
 }
 
-// protects=a Bun run's replay header gets a format an older Codebook does not know (listed there as saved by a newer Codebook), while tsx runs keep formats 2 and 3; fails_when=a Bun run is written as 2 or 3, so an older Codebook reads its loader as corrupt; no_claim=how an older Codebook lists the folder
+// protects=a Bun run's replay header gets a format an older Codebook does not know (not listed there), while tsx runs keep formats 2 and 3; fails_when=a Bun run is written as 2 or 3, so an older Codebook reads its loader as corrupt; no_claim=how an older Codebook lists the folder
 test('a history header is written as format 4 for a Bun run, 5 for Bun with signIn, and keeps 2 and 3 for tsx runs', async (context) => {
   // Arrange
   const { repository, learningDirectory } = await openServerRepository(context)
@@ -116,4 +116,25 @@ test('the header format of a configuration follows its loader and signIn', () =>
   ]
   // Assert
   assert.deepEqual(formats, [2, 3, 4, 5])
+})
+
+// protects=this build reads formats 4 and 5 for a Bun run and refuses a future format 99, so an older build (which lacks 4 and 5) is the one that hides a Bun history; fails_when=format 4 or 5 stops parsing for a Bun run, or 99 parses; no_claim=how an older build lists the folder
+test('formats 4 and 5 are known to this build for a Bun run and a future format 99 is not', () => {
+  // Arrange
+  const cases = [
+    { withSignIn: false, formatVersion: 4, accepted: true },
+    { withSignIn: true, formatVersion: 5, accepted: true },
+    { withSignIn: false, formatVersion: 99, accepted: false },
+    { withSignIn: true, formatVersion: 99, accepted: false },
+  ] as const
+  // Act
+  const results = cases.map(
+    ({ withSignIn, formatVersion }) =>
+      nodeServerHistoryHeaderSchema.safeParse({
+        ...headerInput('bun', withSignIn),
+        formatVersion,
+      }).success,
+  )
+  // Assert
+  assert.deepEqual(results, [true, true, false, false])
 })

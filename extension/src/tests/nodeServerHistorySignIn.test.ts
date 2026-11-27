@@ -375,11 +375,12 @@ test('the writer refuses a request after a failed sign-in and a sign-in in a for
   await assert.rejects(signInInFormat2)
 })
 
-// protects=a header of a format version this Codebook does not know is not listed, not counted and never deleted (the rule a Codebook without format 3 follows); fails_when=it is listed, counted or its folder removed; no_claim=what a newer Codebook writes into it
+// protects=a header of a format version this Codebook does not know (a future one, 99) is not listed, not counted and never deleted (the rule an older Codebook follows for formats it lacks, as one without format 4 does for a Bun replay); fails_when=it is listed, counted or its folder removed; no_claim=what a newer Codebook writes into it
 test('a node-server header of an unknown format version is not listed, not counted and stays on disk', async (context) => {
   // Arrange
   const { repository, learningDirectory } = await openServerRepository(context)
-  const header = { ...headerInput(true), formatVersion: 4 }
+  // 99 is a format no Codebook knows yet; 4 and 5 are known to this build (nodeServerHistoryBunHeader.test.ts), so they would not stand for "unknown" here.
+  const header = { ...headerInput(true), formatVersion: 99 }
   const folder = join(learningDirectory, 'node-servers.v1', header.studyId)
   await mkdir(folder, { recursive: true })
   await writeFile(join(folder, 'header.json'), JSON.stringify(header))
