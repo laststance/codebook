@@ -660,3 +660,48 @@ test('a stopped confirmation counts only when its reply arrives within the guest
     })
   }
 })
+
+test('a late guest reply preserves the received start marker without reporting a timely connection or measurements', async () => {
+  // Arrange
+  const start = Date.parse(at)
+  for (const [code, firstLine, expectedStart] of [
+    [null, 'codebook-qa-sample', true],
+    [0, 'codebook-qa-sample', true],
+    [null, 'codebook-qa-sample-partial', false],
+  ]) {
+    const fixture = fixtureRunner()
+    let elapsed = 0
+    const run = async (program, args) => {
+      if (program === 'cua' && args[0] === 'sb') {
+        elapsed = 24_001
+        return {
+          code,
+          stdout: firstLine + '\r\n2\nSwapouts: 18.\nmemoryBytes=4096\n',
+        }
+      }
+      return fixture.run(program, args)
+    }
+
+    // Act
+    const { guest } = await readNativeTrialSample({
+      run,
+      now: () => new Date(start + elapsed),
+      elapsed: () => elapsed,
+    })
+
+    // Assert
+    assert.equal(guest.probeStarted, expectedStart ? true : undefined)
+    assert.equal(
+      guest.probeMarkerReceivedAt,
+      expectedStart ? '2026-11-27T06:00:24.001Z' : undefined,
+    )
+    assert.equal(guest.observerFailure, 'timeout')
+    assert.equal(guest.state, 'unknown')
+    assert.equal(guest.reachable, null)
+    assert.equal(guest.stateObservedTo, null)
+    assert.equal(guest.memoryBytes, null)
+    assert.equal(guest.memoryPressure, 'unknown')
+    assert.equal(guest.swapoutsObservedAt, null)
+    assert.equal(guest.measurementsObservedAt, null)
+  }
+})

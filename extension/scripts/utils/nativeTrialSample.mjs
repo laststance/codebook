@@ -166,8 +166,18 @@ async function readGuest(run, now, elapsed) {
       }
     const result = await run('cua', args, timeout)
     // A command can exit within its timeout while its completion reaches the observer after the shared deadline.
-    if (elapsed() > deadline)
-      return { code: null, stdout: '', observerFailure: 'timeout' }
+    if (elapsed() > deadline) {
+      // The exact guest shell marker still proves contact before receipt; discard all late inventory and telemetry.
+      const firstLine =
+        args[0] === 'sb' && typeof result?.stdout === 'string'
+          ? result.stdout.split(/\r?\n/, 1)[0]
+          : ''
+      return {
+        code: null,
+        stdout: firstLine === guestMarker ? guestMarker : '',
+        observerFailure: 'timeout',
+      }
+    }
     return result
   }
   const observation = await readInventory(runGuest, now)
@@ -199,7 +209,9 @@ async function readGuest(run, now, elapsed) {
         stateObservedFrom: observation.stateObservedFrom,
         stateObservedTo: observation.stateObservedTo,
       },
-      ...(probeStarted ? { probeStarted: true } : {}),
+      ...(probeStarted
+        ? { probeStarted: true, probeMarkerReceivedAt: measuredAt }
+        : {}),
       reachable:
         confirmed.state === 'running' && exited && result.code !== 0
           ? false
