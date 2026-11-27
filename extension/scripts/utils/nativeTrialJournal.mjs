@@ -554,7 +554,13 @@ export async function controlTrial(
           witness: row.file,
           acceptedAt: new Date(decisionAt).toISOString(),
         })
-        if (authorization.status === 'accepted') return intent
+        // Publishing the grant may outlast the trial. Every finisher seals admission before writing its outcome.
+        if (
+          authorization.status === 'accepted' &&
+          !(await readRecord(join(dir, 'closing.json'))) &&
+          now() < deadline
+        )
+          return intent
       }
       if (row)
         await publish(dir, `refused-${row.file}`, {

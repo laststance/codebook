@@ -1694,3 +1694,67 @@ test('an active trial can approve a fresh stop plan after a prior observation wa
   assert.equal(end.outcome, 'planned-stop')
   assert.equal(end.stopEvidence.running.to, at(2))
 })
+
+for (const [change, response] of [
+  ['the deadline arrives', 'refuses shutdown'],
+  ['finish closes the trial', 'refuses shutdown'],
+  ['the trial stays open', 'allows shutdown'],
+]) {
+  test(`the stop plan ${response} when ${change} during grant publication`, async (t) => {
+    // Arrange
+    const { root, dir, start, at } = await startedTrial(t)
+    const directory = await open(dir, 'r')
+    const handles = Object.getPrototypeOf(directory)
+    const sync = handles.sync
+    const identity = await directory.stat()
+    await directory.close()
+    let clock = start + 9900
+    const now = () => clock
+    const running = async () => sample(clock)
+    let reachedGrantSync = false
+    t.mock.method(handles, 'sync', async function () {
+      const current = await this.stat()
+      if (
+        !reachedGrantSync &&
+        current.dev === identity.dev &&
+        current.ino === identity.ino &&
+        (await readdir(dir)).includes('plan-stop-authorization.json')
+      ) {
+        // Interleave at the real directory sync after the new grant is visible.
+        reachedGrantSync = true
+        if (change === 'finish closes the trial') {
+          const end = await controlTrial(
+            root,
+            options.id,
+            'finish',
+            'healthy',
+            running,
+            now,
+          )
+          assert.equal(end.outcome, 'healthy')
+        } else {
+          clock = start + (change === 'the deadline arrives' ? 10_000 : 9999)
+        }
+      }
+      return sync.call(this)
+    })
+
+    // Act
+    const plan = controlTrial(
+      root,
+      options.id,
+      'plan-stop',
+      undefined,
+      running,
+      now,
+    )
+
+    // Assert
+    if (change === 'the trial stays open') {
+      assert.deepEqual(await plan, { at: at(9.9), requiresAuthorization: true })
+    } else {
+      await assert.rejects(plan, /Do not stop the VM/)
+    }
+    assert.equal(reachedGrantSync, true)
+  })
+}
