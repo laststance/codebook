@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
+import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 import {
   resolveBunRuntime,
+  runBunProgram,
   type RunBunProgram,
 } from '../utils/resolveBunRuntime'
 
@@ -218,5 +222,33 @@ test('an unreadable identity or a relative executable is refused as unreadable',
       error.message,
       /could not read the release of the Bun it found/,
     )
+  }
+})
+
+// Value: protects=the Bun identity probe never hands the editor's credentials or the opened repository's folder to a Bun wrapper or a bunfig preload, even when the version check refuses the run; fails_when=the probe inherits the full parent environment (a variable outside the server launch allowlist reaches the program) or runs in the editor's working folder; seam=the default reader run against a fake bun script that prints its own environment and folder; no_claim=a real Bun installation
+test('the identity probe runs with the restricted server environment and a neutral working folder', async () => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-bun-probe-'))
+  const fakeBun = join(folder, 'fake-bun')
+  await writeFile(
+    fakeBun,
+    '#!/bin/sh\necho "parent=${CODEBOOK_TEST_PARENT_ONLY:-absent}"\necho "path=${PATH:+present}"\npwd -P\n',
+  )
+  await chmod(fakeBun, 0o755)
+  const previous = process.env.CODEBOOK_TEST_PARENT_ONLY
+  process.env.CODEBOOK_TEST_PARENT_ONLY = 'leaked'
+  try {
+    // Act
+    const output = await runBunProgram(fakeBun, ['-e', 'ignored'])
+    // Assert
+    assert.deepEqual(output.trim().split('\n'), [
+      'parent=absent',
+      'path=present',
+      await realpath(tmpdir()),
+    ])
+  } finally {
+    if (previous === undefined) delete process.env.CODEBOOK_TEST_PARENT_ONLY
+    else process.env.CODEBOOK_TEST_PARENT_ONLY = previous
+    await rm(folder, { recursive: true, force: true })
   }
 })

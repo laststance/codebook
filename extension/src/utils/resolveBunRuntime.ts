@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { BUN_MINIMUM_VERSION, BUN_VERSION_READ_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
 
+import { buildNodeServerEnvironment } from './buildNodeServerEnvironment'
 import { isNewerExtensionVersion } from './isNewerExtensionVersion'
 
 const executeFile = promisify(execFile)
@@ -43,15 +44,24 @@ export type RunBunProgram = (program: string, args: string[]) => Promise<string>
 
 /**
  * Runs a candidate Bun once within {@link BUN_VERSION_READ_TIMEOUT_MS}; the default reader of {@link resolveBunRuntime}.
+ *
+ * The probe gets the same restricted environment as the server launch ({@link buildNodeServerEnvironment}) and the OS temp folder as its working folder, so a wrapper on the PATH or a `bunfig.toml` preload in the editor's folder never sees the editor's credentials or the opened repository's configuration, even when the version check refuses the run.
  * @param program - `bun` (looked up on the PATH) or an absolute path.
  * @param args - The arguments, here the identity script.
  * @returns The program's stdout.
  * @throws The `execFile` error: `ENOENT` when no such program exists, a timeout or a non-zero exit otherwise.
  * @example await runBunProgram('bun', ['-e', 'console.log(Bun.version)']) // => '1.4.5\n'
  */
-async function runBunProgram(program: string, args: string[]): Promise<string> {
+export async function runBunProgram(
+  program: string,
+  args: string[],
+): Promise<string> {
   const { stdout } = await executeFile(program, args, {
     timeout: BUN_VERSION_READ_TIMEOUT_MS,
+    // Only the allowlisted variables (PATH and HOME stay so the wrapper and Bun run); no credentials of the editor.
+    env: buildNodeServerEnvironment(),
+    // A neutral folder holds no project configuration (bunfig.toml, .env) for Bun to load.
+    cwd: tmpdir(),
     // A wrapper that handles SIGTERM must still end at the deadline, or the lookup would never answer.
     killSignal: 'SIGKILL',
   })
