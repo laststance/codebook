@@ -129,8 +129,7 @@ function servingDeadline(
         : PAGE_DEADLINE_RATIO * phase.ordinaryMs
     const cpuAtStart = phase.cpuAtStart
     // An unscheduled worker spends wall time without spending its compute budget. Keep the existing absolute calibration bound for such waits.
-    const hardLimit =
-      cpuAtStart && cpuElapsed ? Math.max(FILTER_DEADLINE_MS, budget) : budget
+    const hardLimit = cpuAtStart ? Math.max(FILTER_DEADLINE_MS, budget) : budget
     if (age >= hardLimit) {
       expire(phase)
       return
@@ -235,10 +234,13 @@ workerData.calibrations.close()`,
       },
       port1,
       undefined,
-      async (start) => {
-        const { user, system } = await worker.cpuUsage(start)
-        return (user + system) / 1_000
-      },
+      // Node 24.0–24.5 can stamp the worker's starting CPU time but cannot sample it from the parent.
+      typeof worker.cpuUsage === 'function'
+        ? async (start) => {
+            const { user, system } = await worker.cpuUsage(start)
+            return (user + system) / 1_000
+          }
+        : undefined,
     )
     worker.on('message', (message: { name: string } & ServedInTurns) => {
       times[message.name] = { page: message.page, ordinary: message.ordinary }
@@ -454,6 +456,29 @@ test('the Wiki worker can resume a descheduled turn but still stops a CPU overru
   assert.deepEqual(afterCpuOverrun, [190])
   assert.deepEqual(beforeWallLimit, [190])
   assert.deepEqual(stops, [190, 30_190])
+})
+
+// Value: protects=Node 24.0–24.5 can finish an interrupted measured turn and still stop a stuck one.
+test('without parent-side worker CPU sampling, a measured Wiki turn stays open until its hard wall deadline', (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const stops: number[] = []
+  const deadline = servingDeadline(
+    () => stops.push(Date.now()),
+    undefined,
+    Date.now,
+  )
+  context.after(() => deadline.clear())
+
+  // Act: an ordinary 10 ms call would trigger a CPU check after 100 ms on a newer Node.
+  deadline.arm(10, { user: 10_000, system: 0 })
+  context.mock.timers.tick(29_999)
+  const beforeWallLimit = [...stops]
+  context.mock.timers.tick(1)
+
+  // Assert
+  assert.deepEqual(beforeWallLimit, [])
+  assert.deepEqual(stops, [30_000])
 })
 
 // Value: protects=missing worker CPU telemetry cannot extend a synchronous call indefinitely.
