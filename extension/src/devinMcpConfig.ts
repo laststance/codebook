@@ -5806,7 +5806,7 @@ function publishedConfigUnprovenError(
   copyPath: string,
 ): PublishedConfigUnprovenError {
   return new PublishedConfigUnprovenError(
-    `Codebook could not verify that the config at ${path} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy. To keep both versions and finish recovery, move the private copy to a new, unused private filename of your choice, leave the config and Codebook’s record where they are, ${retry}.`,
+    `Codebook could not verify that the config at ${path} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy. To keep the saved settings, move the private copy to a new, unused private filename of your choice. If the active config is missing, restore the other servers and any top-level settings you want from the saved copy into a new config at ${path}. If the active config exists, preserve its edits. Finish saving or repair it until it is readable and contains valid JSON, then merge any settings you want from the saved copy. Leave Codebook’s record in place, ${retry}.`,
   )
 }
 

@@ -2192,9 +2192,11 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
 
   // Assert
   await assert.rejects(attempt, (error: Error) => {
-    assert.ok(error.message.includes(configPath))
+    assert.ok(
+      error.message.includes(`at ${configPath} and left that file untouched`),
+    )
     assert.match(error.message, /valid JSON/)
-    assert.ok(error.message.includes(copyPath))
+    assert.ok(error.message.includes(`at ${copyPath} (`))
     assert.match(error.message, /still tracks that copy/)
     return true
   })
@@ -2203,6 +2205,17 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
   assert.equal(
     (await readRecordFile(storage, 'pending.json')).keptName,
     basename(copyPath),
+  )
+  // Repeating setup while the active JSON is unreadable must identify how to repair it.
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home),
+    (error: Error) => {
+      assert.ok(
+        error.message.includes(`at ${configPath} and left that file untouched`),
+      )
+      assert.match(error.message, /valid JSON/)
+      return true
+    },
   )
   // Repair the interrupted in-place write, then retry through the same public operation.
   await writeFile(configPath, published)
@@ -17171,7 +17184,10 @@ test('A completed update record never costs the moved-aside copy after the publi
   // Value: protects=the last surviving copy of the learner's other servers: round-5 keeps the moved-aside copy when the config an update published can no longer be verified, but the record is already completed, so the next recovery may delete that copy only while the published inode and bytes still stand at the config path, never when a sync tool deleted that published config and the unedited staged name went with its own cleanup (Cycle 0149 round-6 review MAJOR-1287); fails_when=the copy is gone or changed after the next run, the record no longer tracks it, the next run answers as though nothing stayed, or the first update resolves; no_claim=a real sync tool (seam.afterPublish deletes the published config once, right after the post-link read confirmed it), a swap between the recovery's last look and its unlink (no Node primitive unlinks by inode), what happens once the published config is back
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeConfig(
+    configPath,
+    '{"mcpServers":{"alpha":{"command":"a"}},"activeProfile":"work"}\n',
+  )
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
   const beforeUpdate = readFileSync(configPath, 'utf8')
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
@@ -17224,11 +17240,30 @@ test('A completed update record never costs the moved-aside copy after the publi
   assert.equal(copyAfterUpdate, beforeUpdate)
   assert.equal(
     nextError instanceof Error ? nextError.message : nextError,
-    `Codebook could not verify that the config at ${configPath} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy. To keep both versions and finish recovery, move the private copy to a new, unused private filename of your choice, leave the config and Codebook’s record where they are, then run Codebook: Set Up AI Chat again.`,
+    `Codebook could not verify that the config at ${configPath} is still the file Codebook published in the change its record covers, so it kept the private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) and still tracks that copy. To keep the saved settings, move the private copy to a new, unused private filename of your choice. If the active config is missing, restore the other servers and any top-level settings you want from the saved copy into a new config at ${configPath}. If the active config exists, preserve its edits. Finish saving or repair it until it is readable and contains valid JSON, then merge any settings you want from the saved copy. Leave Codebook’s record in place, then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(copyAfterNext, beforeUpdate)
   assert.equal(recordAfterNext.phase, 'completed')
   assert.equal(recordAfterNext.keptName, basename(copyPath))
+
+  // Follow the refusal: keep the original and restore its unrelated server before retrying setup.
+  const saved = join(home, 'previous-mcp-config.json')
+  await rename(copyPath, saved)
+  const previous = JSON.parse(await readFile(saved, 'utf8'))
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      mcpServers: { alpha: previous.mcpServers.alpha },
+      activeProfile: previous.activeProfile,
+    }),
+    { flag: 'wx', mode: 0o600 },
+  )
+  await writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY },
+    activeProfile: 'work',
+  })
+  assert.equal(await readFile(saved, 'utf8'), beforeUpdate)
 })
 
 test('An update whose config is written in place right after its link drops the staged name when its handover record cannot be written, so the next update is not refused for a second link', async (context) => {
@@ -33190,6 +33225,7 @@ for (const editAt of [
       }),
       /rename the "codebook" entry to an unused name/,
     )
+    assert.equal(existsSync(receiptPath), false)
     const afterSetup = await readFile(configPath, 'utf8')
     const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
       ({ status }) => status,
@@ -33197,6 +33233,7 @@ for (const editAt of [
     )
 
     // Assert
+    assert.equal(existsSync(receiptPath), false)
     assert.equal(editedInPlace, true)
     assert.equal(afterSetup, edited)
     assert.equal(await readFile(configPath, 'utf8'), edited)
