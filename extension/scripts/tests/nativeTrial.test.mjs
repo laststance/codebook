@@ -54,7 +54,7 @@ function clocked(clock, get, after = () => {}) {
     sample: async () => get(clock.at),
     sleep: async (ms) => {
       clock.at += ms
-      await after()
+      return after()
     },
   }
 }
