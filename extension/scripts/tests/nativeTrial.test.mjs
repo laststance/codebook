@@ -542,10 +542,18 @@ test(
     // Arrange
     const root = await fixture(t)
     const dir = join(root, options.id)
+    const start = Date.now()
     await mkdir(dir)
-    await writeFile(join(dir, 'trial.json'), JSON.stringify(options))
+    await writeFile(
+      join(dir, 'trial.json'),
+      JSON.stringify({
+        ...options,
+        started: new Date(start).toISOString(),
+        deadline: new Date(start + 4000).toISOString(),
+      }),
+    )
     const first = join(dir, 'sample-slot-0.json')
-    await writeFile(first, JSON.stringify(sample(Date.now())))
+    await writeFile(first, JSON.stringify(sample(start)))
     // Shared immutable fixture bytes exercise 160 distinct file opens with minimal storage.
     for (let i = 1; i < 160; i++)
       await link(first, join(dir, `sample-slot-${i}.json`))
@@ -1368,6 +1376,125 @@ test('a faster approved stop probe cannot resolve an overlapping stop observed w
   // Assert
   assert.equal(end.outcome, 'unknown')
   assert.equal(end.stopEvidence.stopped.to, at(4))
+})
+
+for (const [name, grantlessWindow, expired, outcome] of [
+  [
+    'a stop query straddles the only running observation',
+    [1, 5],
+    false,
+    'unknown',
+  ],
+  ['a stop query straddles the trial deadline', [1, 11], false, 'unknown'],
+  [
+    'the stop query has no usable observation time',
+    [null, null],
+    false,
+    'unknown',
+  ],
+  ['an admitted probe expired without a result', null, true, 'unknown'],
+  [
+    'the only earlier stop finished before any running observation',
+    [0, 1],
+    false,
+    'planned-stop',
+  ],
+]) {
+  test(`the CLI preserves the confirmed stop window when ${name}`, async (t) => {
+    // Arrange: a running witness at two seconds, a grant, then a confirmed stop from three to four.
+    const { root, put, at, start } = await startedTrial(t)
+    await put('plan-stop.json', { at: at(1.5), requiresAuthorization: true })
+    await put('observation-abcd.json', {
+      ...sample(start + 2100),
+      additionalObservation: true,
+      afterPlanAt: at(1.5),
+      guest: {
+        ...sample(start).guest,
+        stateObservedFrom: at(2),
+        stateObservedTo: at(2.1),
+      },
+    })
+    await put('plan-stop-authorization.json', {
+      status: 'accepted',
+      witness: 'observation-abcd.json',
+      acceptedAt: at(2.2),
+    })
+    const approved = sample(start + 4000, 'stopped', null)
+    approved.guest.stateObservedFrom = at(3)
+    approved.guest.stateObservedTo = at(4)
+    await put('sample-slot-3.json', {
+      ...approved,
+      stopPlanWitness: 'observation-abcd.json',
+    })
+    if (grantlessWindow) {
+      const [from, to] = grantlessWindow
+      const older = sample(start + 5000, 'stopped', null)
+      older.guest.stateObservedFrom = from === null ? null : at(from)
+      older.guest.stateObservedTo = to === null ? null : at(to)
+      await put('sample-slot-2.json', { ...older, stopPlanWitness: null })
+    }
+    if (expired) await put('pending-abcd.json', { expiresAt: 0 })
+    const script = fileURLToPath(
+      new URL('../native-trial.mjs', import.meta.url),
+    )
+    const cli = async (...args) =>
+      JSON.parse(
+        (
+          await promisify(execFile)(process.execPath, [
+            script,
+            ...args,
+            '--root',
+            root,
+          ])
+        ).stdout,
+      )
+
+    // Act: all commands read or close the same durable observations without probing the VM.
+    const end = await cli('finish', '--id', options.id, '--outcome', 'unknown')
+    const replay = await cli(
+      'watch',
+      '--id',
+      options.id,
+      '--profile',
+      options.profile,
+      '--cycle',
+      '151',
+      '--duration',
+      '4',
+      '--interval',
+      '1',
+    )
+    const report = await cli('report', '--json')
+
+    // Assert
+    assert.equal(end.outcome, outcome)
+    assert.deepEqual(end.stopEvidence.stopped, { from: at(3), to: at(4) })
+    assert.deepEqual(replay, end)
+    assert.equal(report.trials[0].outcome, outcome)
+    assert.deepEqual(report.trials[0].stopEvidence, end.stopEvidence)
+    if (expired) assert.equal(end.reason, 'incomplete-observation')
+  })
+}
+
+test('a missing or unreadable deadline refuses monitoring and finishing before taking a sample', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  for (const deadline of [undefined, 'invalid', null]) {
+    await put('trial.json', { ...options, started: at(0), deadline })
+    const sample = () => assert.fail('the trial admitted a probe')
+    const expected = /invalid deadline.*trial\.json/i
+
+    // Act and Assert
+    await assert.rejects(
+      watchTrial(root, options, { now: () => start, sample }),
+      expected,
+    )
+    await assert.rejects(
+      controlTrial(root, options.id, 'finish', 'unknown', sample, () => start),
+      expected,
+    )
+    await assert.rejects(reportTrials(root), expected)
+  }
 })
 
 test('a scheduled stop closes immediately when an independent planner supplied the only running observation', async (t) => {

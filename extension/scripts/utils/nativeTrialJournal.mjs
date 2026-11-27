@@ -54,6 +54,22 @@ async function readRecord(path) {
   }
 }
 
+/**
+ * Rejects a damaged declaration before admitting an observer or aggregating a bounded timeout.
+ * @example trialDeadline(dir, trial)
+ */
+function trialDeadline(dir, trial) {
+  const deadline =
+    typeof trial.deadline === 'string' ? Date.parse(trial.deadline) : NaN
+  if (!Number.isFinite(deadline))
+    throw new Error(`Invalid deadline in ${join(dir, 'trial.json')}`)
+  const started =
+    typeof trial.started === 'string' ? Date.parse(trial.started) : NaN
+  if (!Number.isFinite(started) || started >= deadline)
+    throw new Error(`Invalid observation window in ${join(dir, 'trial.json')}`)
+  return deadline
+}
+
 /** Confirms the directory entry of a linked record, including when the original publisher's sync failed. */
 async function syncDirectory(dir) {
   const directory = await open(dir, 'r')
@@ -294,13 +310,26 @@ async function recordedStop(dir, rows, deadline) {
       (r) => r.afterPlanAt === intent.at && plannedAt <= r.from,
     )
     const authorized = afterPlan.find((r) => r.file === authorization?.witness)
+    const earliestPossibleRunning = running.reduce(
+      (earliest, r) => Math.min(earliest, r.from),
+      Infinity,
+    )
     if (
       authorization?.status === 'accepted' &&
       authorized &&
-      // A slower overlapping inventory can have observed the same stop before the grant was published.
-      confirmed.every(
-        (s) => s.from > first.to || s.row.stopPlanWitness === authorized.file,
-      ) &&
+      // Proving a transition needs ordered readings. Ruling out an earlier stop must also include queries that straddle the running witness or trial deadline.
+      rows.every((row) => {
+        if (
+          row.guest.state !== 'stopped' ||
+          row.stopPlanWitness === authorized.file
+        )
+          return true
+        const window = stateWindow(row.guest, row.at, Infinity)
+        return (
+          window &&
+          (window.to < earliestPossibleRunning || window.from > first.to)
+        )
+      }) &&
       Date.parse(authorization.acceptedAt) <= first.from
     ) {
       witness = authorized
@@ -360,10 +389,12 @@ async function closeObserver(dir, fallback, at, deadline, sampleAt) {
   const stopped = await recordedStop(dir, rows, deadline)
   const final = stopped ?? {
     ...claim,
-    ...(evidence.incomplete
-      ? { outcome: 'unknown', reason: 'incomplete-observation' }
-      : {}),
     sampleAt: claim.sampleAt ?? rows.at(-1)?.at ?? null,
+  }
+  // A lost probe could have seen the stop before approval. Preserve the confirmed window even when its order is unknown.
+  if (evidence.incomplete && stopped?.outcome !== 'unexpected-stop') {
+    final.outcome = 'unknown'
+    final.reason = 'incomplete-observation'
   }
   return publish(dir, 'end.json', { ...final, evidence: TERMINAL_EVIDENCE })
 }
@@ -409,9 +440,9 @@ export async function watchTrial(
   }
   const alreadyEnded = await durableEnd(dir)
   if (alreadyEnded) return alreadyEnded
+  const deadline = trialDeadline(dir, trial)
   const rows = await history(dir)
   const started = Date.parse(trial.started)
-  const deadline = Date.parse(trial.deadline)
   const clock = () => new Date(now()).toISOString()
   const recovered = await recordedStop(dir, rows, deadline)
   if (recovered)
@@ -486,7 +517,7 @@ export async function controlTrial(
   if (!trial) throw new Error('No trial with that ID. Start watch first.')
   const ended = await durableEnd(dir)
   const at = new Date(now()).toISOString()
-  const deadline = Date.parse(trial.deadline)
+  const deadline = ended ? NaN : trialDeadline(dir, trial)
   if (command === 'plan-stop') {
     if (
       !ended &&
@@ -640,6 +671,11 @@ export async function reportTrials(root) {
     const trial = await readRecord(join(dir, 'trial.json'))
     if (!trial) continue
     const ended = await durableEnd(dir)
+    // Older terminal results retain their recorded outcome. Only an active or timed-out trial requires an intact declared interval.
+    const deadline =
+      !ended || ended.outcome === 'observer-timeout'
+        ? trialDeadline(dir, trial)
+        : Date.parse(trial.deadline)
     let evidence
     if (ended) {
       // Older terminals have no historical manifest. Freeze their surviving evidence on first recovery.
@@ -658,7 +694,7 @@ export async function reportTrials(root) {
       !stopEvidence &&
       ['unexpected-stop', 'planned-stop', 'unknown'].includes(ended.outcome)
     ) {
-      const stop = await recordedStop(dir, rows, Date.parse(trial.deadline))
+      const stop = await recordedStop(dir, rows, deadline)
       if (stop?.sampleAt === ended.sampleAt) stopEvidence = stop.stopEvidence
     }
     // A timeout describes the declared interval, even when the closer recorded a different time.
