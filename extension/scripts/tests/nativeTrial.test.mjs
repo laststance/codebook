@@ -1715,12 +1715,12 @@ for (const [change, response] of [
     t.mock.method(handles, 'sync', async function () {
       const current = await this.stat()
       if (
-        !reachedGrantSync &&
         current.dev === identity.dev &&
         current.ino === identity.ino &&
-        (await readdir(dir)).includes('plan-stop-authorization.json')
+        (await readdir(dir)).includes('plan-stop-authorization.json') &&
+        !reachedGrantSync
       ) {
-        // Interleave at the real directory sync after the new grant is visible.
+        // Claim the first matching sync after the directory read, before another caller can interleave.
         reachedGrantSync = true
         if (change === 'finish closes the trial') {
           const end = await controlTrial(
