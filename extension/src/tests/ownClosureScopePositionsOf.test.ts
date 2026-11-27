@@ -147,8 +147,8 @@ test('a method made by a named factory never copies the factory closure that hol
   assert.deepEqual([...own], [0])
 })
 
-// Value: protects=a block scope before the closures is passed over and the closures after it are judged; fails_when=the rule copies a `locals` scope twice or stops at it; seam=a block then closures of an anonymous function; no_claim=V8 behaviour
-test('a leading block scope is passed over and the closures after it are judged', async () => {
+// Value: protects=a block scope before the closures is own (returned with its position) and the closures after it are judged; fails_when=the leading block is left out of the own set or stops the judgement; seam=a block then closures of an anonymous function; no_claim=V8 behaviour
+test('a leading block scope is own and the closures after it are judged', async () => {
   // Arrange
   const scopes = [
     { name: 'Block', presentationHint: 'locals', variablesReference: 1 },
@@ -166,7 +166,30 @@ test('a leading block scope is passed over and the closures after it are judged'
     MAX_NAMES,
   )
   // Assert
-  assert.deepEqual([...own], [1])
+  assert.deepEqual([...own], [0, 1])
+})
+
+// Value: protects=a block after any closure (an enclosing catch or block a callback retains) is never own, and nothing after it is read; fails_when=a later `locals` scope is copied or the rule goes on past it; seam=[own closure, catch block, factory closure, module closure]; no_claim=js-debug's real scope hints
+test('a block scope after a closure ends the copy', async () => {
+  // Arrange
+  const scopes = [
+    closure('Closure', 1),
+    { name: 'Catch Block', presentationHint: 'locals', variablesReference: 2 },
+    closure('Closure', 3),
+    closure('Closure', 4),
+    { name: 'Global', variablesReference: 5 },
+  ]
+  const contents = { 1: ['item'], 3: ['item'] }
+  // Act
+  const own = await ownClosureScopePositionsOf(
+    scopes,
+    variablesOf(contents),
+    new Set(['item']),
+    '<anonymous>',
+    MAX_NAMES,
+  )
+  // Assert
+  assert.deepEqual([...own], [0])
 })
 
 // Value: protects=without a stop file text or position nothing is copied (fail-closed); fails_when=closures are copied with no evidence of what the function declares; seam=undefined declared names; no_claim=why the names are unknown

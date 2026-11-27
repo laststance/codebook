@@ -5,10 +5,12 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import * as vscode from 'vscode'
 
 import {
+  BUN_SCOPE_CLASSIFICATION_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_MAX_DEPTH,
   NODE_REPLAY_DEBUG_MAX_FRAMES,
   NODE_REPLAY_DEBUG_MAX_VARIABLES,
+  REPLAY_DEBUG_MAX_SCOPES,
   NODE_SERVER_SESSION_NAME_PREFIX,
   NODE_TEST_ATTACH_TIMEOUT_MS,
 } from './constants'
@@ -41,13 +43,17 @@ import {
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
-import { ownClosureScopePositionsOf } from './utils/ownClosureScopePositionsOf'
+import {
+  leadingBlockPositionsOf,
+  ownClosureScopePositionsOf,
+} from './utils/ownClosureScopePositionsOf'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
+import { redactSecretText } from './utils/redactSecretText'
 import { SharedAttempt } from './utils/sharedAttempt'
-import { shouldCaptureReplayScope } from './utils/shouldCaptureReplayScope'
 import { sourceImportBindings } from './utils/sourceImportBindings'
 import { stoppedFunctionDeclaredNamesOf } from './utils/stoppedFunctionDeclaredNamesOf'
 import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
+import { stripTerminalControls } from './utils/stripTerminalControls'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
 
@@ -863,7 +869,13 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       maskKnownText: (text) => this.input.maskKnownText?.(text) ?? text,
       // Bun reports the stopped function's own scopes as closures; the capture copies one only when the stopped function's own source declares every name in it.
       ...(bunScopes
-        ? { bunClosures: true as const, ownClosurePositions: bunScopes.own }
+        ? {
+            bunClosures: true as const,
+            classifiedTopFrame: {
+              scopes: scopes.scopes,
+              ownPositions: bunScopes.own,
+            },
+          }
         : {}),
       limits: {
         timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
@@ -917,10 +929,16 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }> {
     let own: ReadonlySet<number> = new Set<number>()
     let limitation: string | undefined
+    // One deadline for every classification read, so slow answers cannot hold the live handler scope by scope.
+    const deadline = performance.now() + BUN_SCOPE_CLASSIFICATION_TIMEOUT_MS
     try {
       own = await ownClosureScopePositionsOf(
-        scopes,
+        // Only the scopes the snapshot may keep are examined; the rest are never own.
+        scopes.slice(0, REPLAY_DEBUG_MAX_SCOPES),
         async (variablesReference) => {
+          const remainingMs = deadline - performance.now()
+          if (remainingMs <= 0)
+            throw new Error('Closure classification time limit reached.')
           const body = (await awaitResponse(
             session.customRequest('variables', {
               variablesReference,
@@ -930,6 +948,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
             }),
             "a closure scope's names",
             signal,
+            remainingMs,
           )) as DebugProtocol.VariablesResponse['body']
           return body.variables.map((variable) => variable.name)
         },
@@ -941,18 +960,20 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       // A resume or cancellation still ends the capture; any other failed read leaves no closure own, so nothing of one is read or saved.
       assertCurrent()
       signal.throwIfAborted()
-      limitation = classificationLimitationOf(
+      // Nothing own was proven; only the leading blocks, which need no closure facts, stay.
+      own = leadingBlockPositionsOf(scopes)
+      // Masked exactly as the snapshot masks saved text, before the cut, so no secret or fragment of one reaches history.
+      const plainCause = stripTerminalControls(
         error instanceof Error ? error.message : String(error),
+      )
+      limitation = classificationLimitationOf(
+        redactSecretText(this.input.maskKnownText?.(plainCause) ?? plainCause),
       )
     }
     return {
       own,
-      // Block scopes plus own closures, exactly what the snapshot copies for the stopped frame.
-      inspectable: scopes.filter(
-        (scope, position) =>
-          own.has(position) ||
-          shouldCaptureReplayScope(0, scope.name, scope.presentationHint),
-      ),
+      // Exactly the verified own prefix the snapshot copies for the stopped frame: no default `locals` policy.
+      inspectable: scopes.filter((_scope, position) => own.has(position)),
       ...(limitation !== undefined && { limitation }),
     }
   }

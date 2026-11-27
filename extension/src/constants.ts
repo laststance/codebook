@@ -3096,6 +3096,8 @@ export const PRESENTATION_SETTLE_CEILING_MS =
   REPLAY_DEBUG_INSPECTION_GRACE_MS +
   PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500
+/** One shared budget for every `variables` read that classifies a Bun stop's closures, about the snapshot's own budget ({@link NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}), so slow answers cannot hold the live handler for long. */
+export const BUN_SCOPE_CLASSIFICATION_TIMEOUT_MS = 1_500
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64
 export const NODE_REPLAY_DEBUG_MAX_DEPTH = 2

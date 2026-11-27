@@ -27,7 +27,10 @@ import { isEngineInternalVariable } from './isEngineInternalVariable'
 import { isInsideFolder } from './isInsideFolder'
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { moduleScopePositionOf } from './moduleScopePositionOf'
-import { ownClosureScopePositionsOf } from './ownClosureScopePositionsOf'
+import {
+  leadingBlockPositionsOf,
+  ownClosureScopePositionsOf,
+} from './ownClosureScopePositionsOf'
 import { redactSecretText } from './redactSecretText'
 import {
   previewShowsCredentialShape,
@@ -85,8 +88,11 @@ interface CaptureInput {
   moduleEvaluation?: boolean
   /** A Bun stop: the stopped function's own scopes arrive as closures, so the stopped frame's closures are copied like local values only when every name in one is declared in the stopped function's own source (`verifiedSource.text` at the top frame's line and column; {@link ownClosureScopePositionsOf}, {@link stoppedFunctionDeclaredNamesOf}). */
   bunClosures?: true
-  /** The positions, among the stopped frame's scopes, of the closures already decided to be the stopped function's own ({@link ownClosureScopePositionsOf}); a caller that decided it for another read of the same stop (a Bun stop's declared inspections) passes it so both reads share one decision, and it replaces the classification `bunClosures` would otherwise run. */
-  ownClosurePositions?: ReadonlySet<number>
+  /** The top frame's scopes response a Bun stop's caller already classified, with the positions decided to be the stopped function's own ({@link ownClosureScopePositionsOf}, leading blocks included); the capture copies frame 0 from exactly this response, with no second `scopes` read, so positions never apply to a different answer, and `bunClosures` classification is not run again. */
+  classifiedTopFrame?: {
+    scopes: DebugProtocol.Scope[]
+    ownPositions: ReadonlySet<number>
+  }
   limits?: {
     timeoutMs: number
     maxFrames: number
@@ -305,6 +311,23 @@ function ownModuleScopePositionOf(
     : undefined
 }
 
+/**
+ * Says whether a frame's scopes are copied only at the positions a Bun classification decided, with no default `locals` policy; called by {@link captureReplayDebugSnapshot} for every scope.
+ * @param frameIndex - The recorded stack-frame position.
+ * @param input - The capture input.
+ * @returns `true` for the top frame of a Bun stop, `false` for every other frame and every other runtime.
+ * @example copiesOnlyOwnPrefix(0, { bunClosures: true, ...rest }) // => true
+ */
+function copiesOnlyOwnPrefix(
+  frameIndex: number,
+  input: Pick<CaptureInput, 'bunClosures' | 'classifiedTopFrame'>,
+): boolean {
+  return (
+    frameIndex === 0 &&
+    (input.bunClosures === true || input.classifiedTopFrame !== undefined)
+  )
+}
+
 /** What a failed Bun closure classification records before its cause. */
 const CLASSIFICATION_FAILURE_PREFIX =
   "The stopped frame's closure scopes could not be classified ("
@@ -360,7 +383,9 @@ export async function captureReplayDebugSnapshot(
     isOwnFunctionOrModuleScope: boolean,
   ) =>
     (isOwnFunctionOrModuleScope ||
-      shouldCaptureReplayScope(frameIndex, scopeName, presentationHint)) &&
+      // A Bun top frame copies exactly its verified own prefix: no default `locals` policy there.
+      (!copiesOnlyOwnPrefix(frameIndex, input) &&
+        shouldCaptureReplayScope(frameIndex, scopeName, presentationHint))) &&
     (input.limits?.includeScope?.(frameIndex, scopeName) ?? true)
   const isTopLevelFirst = isTopLevelFirstCapture(input)
   const deadline = performance.now() + timeoutMs
@@ -390,6 +415,16 @@ export async function captureReplayDebugSnapshot(
     input.assertCurrent()
     input.signal?.throwIfAborted()
     return result
+  }
+  // Frame 0 of a classified Bun stop reuses the classified response (a second read could answer other scopes at the decided positions), with the read's current-pause, cancellation and deadline checks; every other frame is read.
+  const scopesOfFrame = async (index: number, frameId: number) => {
+    if (index !== 0 || !input.classifiedTopFrame)
+      return read('scopes', { frameId })
+    input.assertCurrent()
+    input.signal?.throwIfAborted()
+    if (deadline - performance.now() <= 0)
+      throw new Error('Historical debugger capture time limit reached.')
+    return { scopes: input.classifiedTopFrame.scopes }
   }
   const unavailable = (error: unknown) => {
     // A target resume/cancellation is not a partial snapshot of the old pause.
@@ -577,8 +612,8 @@ export async function captureReplayDebugSnapshot(
     scopes: z.infer<typeof scopeResponse>['scopes'],
   ): Promise<ReadonlySet<number>> => {
     if (frameIndex !== 0) return new Set<number>()
-    // A decision the caller already made for this stop is the one used; it is never computed a second way.
-    if (input.ownClosurePositions) return input.ownClosurePositions
+    // A decision the caller already made for this stop is the one used, on the response it classified; it is never computed a second way.
+    if (input.classifiedTopFrame) return input.classifiedTopFrame.ownPositions
     if (!input.bunClosures) return new Set<number>()
     try {
       const topFrame = input.stack.stackFrames[0]
@@ -608,7 +643,7 @@ export async function captureReplayDebugSnapshot(
     } catch (error) {
       // A failed classification read copies no closure, and the frame's other scopes are still saved by the default policy; a resume or a cancellation still ends the capture, as `unavailable` rethrows them.
       snapshot.limitations.push(classificationLimitationOf(unavailable(error)))
-      return new Set<number>()
+      return leadingBlockPositionsOf(scopes)
     }
   }
   if (
@@ -622,9 +657,7 @@ export async function captureReplayDebugSnapshot(
     const saved = savedFrameHeaderOf(index, frame, input, shorten)
     snapshot.frames.push(saved)
     try {
-      const response = scopeResponse.parse(
-        await read('scopes', { frameId: frame.id }),
-      )
+      const response = scopeResponse.parse(await scopesOfFrame(index, frame.id))
       if (response.scopes.length > REPLAY_DEBUG_MAX_SCOPES)
         saved.unavailable = 'Historical scope count limit reached.'
       const pending: PendingExpansion[] = []
