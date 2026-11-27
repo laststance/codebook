@@ -500,6 +500,56 @@ async function check(page, options, collected) {
       actual,
     )
   }
+  /** Delivers a Return just before a real click takes the learner to another place in the article. @example await verifyNewerReadingMove(verifiedMessage) */
+  async function verifyNewerReadingMove(verified) {
+    for (const [buttonId, destination] of [
+      ['contents-wide-1', 'section-1'],
+      ['back-top', 'article-title'],
+    ]) {
+      // Arrange: the host schedules the Return in the capture phase of the learner's click, before the control acts.
+      await openPane(undefined)
+      await page.setViewportSize({ width: 960, height: 654 })
+      await publish({ ...verified, revision: 7 })
+      await page.evaluate((message) => {
+        window.addEventListener(
+          'click',
+          () => {
+            window.sent.length = 0
+            window.dispatchEvent(new MessageEvent('message', { data: message }))
+          },
+          { capture: true, once: true },
+        )
+        document.addEventListener(
+          'click',
+          () => {
+            window.scrollAfterReadingMove = scrollY
+            window.savedReadingMove =
+              window.sent.findLast((item) => item.type === 'location')
+                ?.selection.location.focusId ?? null
+          },
+          { once: true },
+        )
+      }, verified)
+      // Act: let the real control move the viewport and focus, then allow the older frame to run.
+      await page.locator(`#${buttonId}`).click()
+      const actual = await page.evaluate(async () => {
+        await new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        )
+        return {
+          focus: document.activeElement.id,
+          savedFocus: window.savedReadingMove,
+          keptScroll: scrollY === window.scrollAfterReadingMove,
+        }
+      })
+      // Assert: the host receives the new reading place and neither keyboard nor viewport jumps back.
+      addCase(
+        `a newer reading move with ${buttonId} supersedes a pending Wiki Return`,
+        { focus: destination, savedFocus: destination, keptScroll: true },
+        actual,
+      )
+    }
+  }
   /** Leaves the reused title with an earlier article's actual keyboard memory; {@link verifyCitationStatusReturn} calls it before opening a different explicit Return. @example await leavePreviousArticle() */
   async function leavePreviousArticle() {
     const previousArticle = structuredClone(options.message)
@@ -638,6 +688,7 @@ async function check(page, options, collected) {
       ) {
         await verifyPendingLocationSave(checkingMessage, verifiedMessage, true)
         await verifyPendingLocationSave(checkingMessage, verifiedMessage, false)
+        await verifyNewerReadingMove(verifiedMessage)
       }
       // The old-article variants own only the new memory boundary; existing cases already exercise wheel input after Return.
       if (!hasPreviousArticle)

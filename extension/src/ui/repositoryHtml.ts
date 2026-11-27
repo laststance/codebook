@@ -183,6 +183,17 @@ function repositoryClient(
     api.setState({ key: contentKey, location, visited: [...visited] })
     send({ type: 'location', selection: { ...current.selection, location } })
   }
+  /** Retires an older Return when a new host revision or an in-article navigation chooses another reading place. @example cancelPendingNavigation() */
+  const cancelPendingNavigation = (): void => {
+    if (navigationFrame !== undefined) cancelAnimationFrame(navigationFrame)
+    navigationFrame = undefined
+  }
+  /** Saves the destination that Contents or Back to top just scrolled to and focused, even during an earlier restoration. @example persistReadingMove() */
+  const persistReadingMove = (): void => {
+    cancelPendingNavigation()
+    restoring = false
+    persist()
+  }
   /** Restores reading geometry after navigation, resize or status reflow; status updates pass their current pose without replacing saved navigation intent. @param focus - Whether the caller also owes the target keyboard focus. @param target - A temporary current pose, or the saved navigation location by default. @example restore(false, capture()) */
   const restore = (focus: boolean, target = location): void => {
     if (!target) return
@@ -282,7 +293,7 @@ function repositoryClient(
   element('back-top').onclick = (): void => {
     window.scrollTo(0, 0)
     element('article-title').focus({ preventScroll: true })
-    persist()
+    persistReadingMove()
   }
   window.addEventListener('scroll', () => {
     if (!restoring) {
@@ -408,7 +419,7 @@ function repositoryClient(
             button(`${index + 1}. ${part.title}`, `${id}-${index}`, () => {
               element(`section-${index}`).scrollIntoView()
               element(`section-${index}`).focus({ preventScroll: true })
-              persist()
+              persistReadingMove()
             }),
           ),
         )
@@ -656,8 +667,7 @@ function repositoryClient(
     if (!message.loading && presentedRevision !== message.revision) {
       presentedRevision = message.revision
       if (!changed) location = selection.location ?? location
-      if (navigationFrame !== undefined) cancelAnimationFrame(navigationFrame)
-      navigationFrame = undefined
+      cancelPendingNavigation()
       const target = location
       if (target)
         navigationFrame = requestAnimationFrame(() => {
