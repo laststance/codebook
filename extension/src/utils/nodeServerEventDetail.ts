@@ -84,15 +84,26 @@ const NODE_SERVER_EVENT_FIELDS: Record<
     code: boundedText(input.code, NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS),
     cause: boundedText(input.cause, NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS),
   }),
-  // The launch journal's paths and variable names stay in the run; the chat reads what ran and with which Node.
-  'node-server.started': (input) => ({
-    pid: integerField(input.pid),
-    loader: input.loader === 'node' ? 'node' : 'tsx',
-    nodeVersion: boundedText(
-      input.nodeVersion,
-      NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
-    ),
-  }),
+  // The launch journal's paths and variable names stay in the run; the chat reads what ran and with which release (`nodeVersion` for node and tsx, `bunVersion` for Bun).
+  'node-server.started': (input) =>
+    input.loader === 'bun'
+      ? {
+          pid: integerField(input.pid),
+          loader: 'bun',
+          bunVersion: boundedText(
+            input.bunVersion,
+            NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+          ),
+        }
+      : {
+          pid: integerField(input.pid),
+          // Any other value (a loader path included) reads as the tsx loader.
+          loader: input.loader === 'node' ? 'node' : 'tsx',
+          nodeVersion: boundedText(
+            input.nodeVersion,
+            NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+          ),
+        },
   'node-server.ready': (input) => ({
     host: input.host === '::1' ? '::1' : '127.0.0.1',
     port: integerField(input.port),
