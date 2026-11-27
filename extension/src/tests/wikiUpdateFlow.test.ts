@@ -4616,58 +4616,53 @@ function describeWindowForFailure(
 }
 
 // Value: protects=the learner whose Wiki lies outside the project, where the chat asks to approve each step: the confirmation says why before the press, and the watch must not cover those approvals; fails_when=the confirmation loses the note, or such an update is watched with a notification again, or with an entry of its own words; why_new=Cycle 0045 (the note), Cycle 0046 row 336 (the title without it), row 592 (the watch in the status bar); seam=none
-test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there, and its watch is the same status bar entry, with no notification', async () => {
+test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there, and its watch is the same status bar entry, with no notification', async (context) => {
   // Arrange
-  const projectRoot = await realpath(
-    await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-inside-')),
-  )
-  const outsideDirectory = await realpath(
-    await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-outside-')),
-  )
-  await writeFile(join(outsideDirectory, 'index.html'), INDEX_PAGE)
-  await writePublishedWiki(outsideDirectory, projectRoot, 'a'.repeat(64))
+  const fixture = await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-outside-'))
+  context.after(() => removeTestFolder(fixture))
+  const root = await realpath(fixture)
+  const projectRoot = join(root, 'project')
+  await mkdir(projectRoot)
   const approvalsNote =
     'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
-  const fromTheLink = await openWikiUpdateWindow({
-    projectRoot,
-    outputSetting: outsideDirectory,
-  })
-  try {
-    // Act: once through the browser link, which confirms first, and once (in a window of its own) through the command, which does not.
-    await fromTheLink.clickUpdate()
-    const runningFromTheLink = fromTheLink.status()
-    await fromTheLink.close()
-    const fromTheCommand = await openWikiUpdateWindow({
+
+  // Each entry updates its own published Wiki so a closing watch cannot block the other entry.
+  for (const entry of ['link', 'command']) {
+    const outsideDirectory = join(root, entry)
+    await mkdir(outsideDirectory)
+    await writeFile(join(outsideDirectory, 'index.html'), INDEX_PAGE)
+    await writePublishedWiki(outsideDirectory, projectRoot, 'a'.repeat(64))
+    const window = await openWikiUpdateWindow({
       projectRoot,
       outputSetting: outsideDirectory,
     })
-    await fromTheCommand.runUpdateCommand()
-    const runningFromTheCommand = fromTheCommand.status()
-    await fromTheCommand.close()
+    try {
+      // Act: only the browser link asks for confirmation before opening the chat.
+      if (entry === 'link') await window.clickUpdate()
+      else await window.runUpdateCommand()
 
-    // Assert
-    assert.deepEqual(fromTheLink.confirmationDetails, [
-      `${projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat. ${approvalsNote}`,
-    ])
-    for (const [window, running] of [
-      [fromTheLink, runningFromTheLink],
-      [fromTheCommand, runningFromTheCommand],
-    ] as const) {
+      // Assert
+      const running = window.status()
+      if (entry === 'link') {
+        assert.deepEqual(window.confirmationDetails, [
+          `${projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat. ${approvalsNote}`,
+        ])
+      } else {
+        assert.deepEqual(window.confirmations, [])
+      }
       assert.deepEqual(
         [window.statusBarTexts, window.progressTitles],
         [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
-        `The status bar entry or the progress titles differ. The ${window === fromTheLink ? 'fromTheLink' : 'fromTheCommand'} window showed: ${describeWindowForFailure(window, running)}`,
+        `The status bar entry or the progress titles differ for the ${entry}. The window showed: ${describeWindowForFailure(window, running)}`,
       )
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,
         true,
-        `The run was not an output outside the project. The ${window === fromTheLink ? 'fromTheLink' : 'fromTheCommand'} window showed: ${describeWindowForFailure(window, running)}`,
+        `The run was not an output outside the project for the ${entry}. The window showed: ${describeWindowForFailure(window, running)}`,
       )
+    } finally {
+      await window.close()
     }
-    assert.deepEqual(fromTheCommand.confirmations, [])
-  } finally {
-    await removeTestFolder(projectRoot)
-    await removeTestFolder(outsideDirectory)
   }
 })
 
