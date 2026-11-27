@@ -32831,7 +32831,11 @@ for (const moment of [
   })
 }
 
-for (const changedFile of ['config', 'receipt'] as const) {
+for (const changedFile of [
+  'config',
+  'receipt',
+  'receipt without backup',
+] as const) {
   test(`First setup notices a restored ${changedFile} during cleanup after its recovery record was retired`, async (context) => {
     // Value: protects=truthful first-setup result once the pending record is already gone; fails_when=late file changes yield installed or cause recovery on the retired record; no_claim=real background software.
     // Arrange
@@ -32864,7 +32868,9 @@ for (const changedFile of ['config', 'receipt'] as const) {
               return
             restored = true
             if (changedFile === 'config') swapFile(configPath, restoredConfig)
-            else renameSync(receiptPath, savedReceipt)
+            else if (changedFile === 'receipt')
+              renameSync(receiptPath, savedReceipt)
+            else unlinkSync(receiptPath)
           },
         },
       },
@@ -32898,71 +32904,179 @@ for (const changedFile of ['config', 'receipt'] as const) {
           codebook: ENTRY,
         },
       )
-      // The user's restored receipt supplies the ownership evidence for the retry.
-      renameSync(savedReceipt, receiptPath)
+      if (changedFile === 'receipt') {
+        // The saved receipt proves ownership for the retry.
+        renameSync(savedReceipt, receiptPath)
+      } else {
+        assert.match(outcome, /rename the "codebook" entry to an unused name/)
+        const saved = JSON.parse(await readFile(configPath, 'utf8'))
+        saved.mcpServers.saved = saved.mcpServers.codebook
+        delete saved.mcpServers.codebook
+        await writeConfig(configPath, JSON.stringify(saved))
+      }
     }
     const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
     assert.equal(
       next.status,
-      changedFile === 'config' ? 'installed' : 'current',
+      changedFile === 'receipt' ? 'current' : 'installed',
     )
     assert.deepEqual(
       JSON.parse(await readFile(configPath, 'utf8')).mcpServers,
       {
         notes: { command: 'notes' },
         codebook: ENTRY,
+        ...(changedFile === 'receipt without backup' && { saved: ENTRY }),
       },
     )
   })
 }
 
-test('First setup names both conflicting recovery files when the active config also changes', async (context) => {
-  // Value: protects=both recovery directions are available on the first refusal; fails_when=a config conflict hides the saved dropping-name refusal; no_claim=real sync activity.
-  // Arrange
-  const { home, storage, configPath } = await arrange(context)
-  const restoredConfig = '{"mcpServers":{"notes":{"command":"notes"}}}\n'
-  await writeConfig(configPath, restoredConfig)
-  const folder = join(storage, 'devin-mcp')
-  const pendingPath = join(folder, 'pending.json')
-  const receiptPath = join(folder, 'receipt.json')
-  const droppingPath = `${pendingPath}.codebook-dropping`
-  const restoredRecord = '{"other":"saved record"}\n'
-  let placed = false
-  const restoring = await loadWithAfterRename((from, to) => {
-    if (
-      !placed &&
-      existsSync(receiptPath) &&
-      from === pendingPath &&
-      to === droppingPath
-    ) {
-      placed = true
-      swapFile(pendingPath, restoredRecord)
-      swapFile(configPath, restoredConfig)
-    }
-  })
+for (const [changedFile, moment] of [
+  ['config', 'link'],
+  ['receipt', 'link'],
+  ['config', 'put-back'],
+  ['receipt', 'put-back'],
+] as const) {
+  test(`First setup names both conflicting recovery files when the active ${changedFile} also changes during ${moment}`, async (context) => {
+    // Value: protects=both recovery directions are available on the first refusal; fails_when=a config conflict hides the saved dropping-name refusal; no_claim=real sync activity.
+    // Arrange
+    const { home, storage, configPath } = await arrange(context)
+    const restoredConfig = '{"mcpServers":{"notes":{"command":"notes"}}}\n'
+    await writeConfig(configPath, restoredConfig)
+    const folder = join(storage, 'devin-mcp')
+    const pendingPath = join(folder, 'pending.json')
+    const receiptPath = join(folder, 'receipt.json')
+    const droppingPath = `${pendingPath}.codebook-dropping`
+    const restoredRecord = '{"other":"saved record"}\n'
+    let placed = false
+    const restoring = await loadWithAfterRename((from, to) => {
+      if (
+        !placed &&
+        existsSync(receiptPath) &&
+        from === pendingPath &&
+        (moment === 'link'
+          ? to === droppingPath
+          : to.endsWith('.tmp') && existsSync(droppingPath))
+      ) {
+        placed = true
+        if (existsSync(pendingPath)) swapFile(pendingPath, restoredRecord)
+        else writeFileSync(pendingPath, restoredRecord)
+        if (changedFile === 'config') swapFile(configPath, restoredConfig)
+        else unlinkSync(receiptPath)
+      }
+    })
 
-  // Act
-  const outcome = await restoring
-    .writeManagedDevinMcpEntry(storage, ENTRY, home)
-    .then(
+    // Act
+    const outcome = await restoring
+      .writeManagedDevinMcpEntry(storage, ENTRY, home)
+      .then(
+        ({ status }) => status,
+        (error: Error) => error.message,
+      )
+
+    // Assert
+    assert.equal(placed, true)
+    assert.ok(
+      outcome.includes(changedFile === 'config' ? configPath : receiptPath),
+      outcome,
+    )
+    assert.ok(
+      outcome.includes(`at ${pendingPath} and another file at ${droppingPath}`),
+    )
+    assert.match(outcome, /look at both before you use either/)
+    if (changedFile === 'config')
+      assert.equal(await readFile(configPath, 'utf8'), restoredConfig)
+    else {
+      assert.equal(existsSync(receiptPath), false)
+      assert.deepEqual(
+        JSON.parse(await readFile(configPath, 'utf8')).mcpServers,
+        {
+          notes: { command: 'notes' },
+          codebook: ENTRY,
+        },
+      )
+    }
+    assert.equal(await readFile(pendingPath, 'utf8'), restoredRecord)
+    assert.equal(
+      JSON.parse(await readFile(droppingPath, 'utf8')).phase,
+      'completed',
+    )
+  })
+}
+
+for (const editAt of [
+  'receipt write failure',
+  'receipt publication',
+  'take-back mark',
+] as const) {
+  test(`First setup and its retry keep an in-place edit made at ${editAt} without a receipt`, async (context) => {
+    // Value: protects=setup and recovery preserve the user's exact config bytes on concurrent edits; fails_when=either run removes the edited entry or reformats unrelated settings; no_claim=external editor timing.
+    // Arrange
+    const { home, storage, configPath } = await arrange(context)
+    const folder = join(storage, 'devin-mcp')
+    const receiptPath = join(folder, 'receipt.json')
+    const pendingPath = join(folder, 'pending.json')
+    const editedEntry = { ...ENTRY, disabled: true }
+    const notes = { command: 'notes' }
+    const edited =
+      JSON.stringify({ mcpServers: { codebook: editedEntry, notes } }) + '\n'
+    let receiptLost = false
+    let editedInPlace = false
+    const concurrent = await loadWithAfterRename((_from, to) => {
+      if (to === receiptPath && !receiptLost) {
+        unlinkSync(receiptPath)
+        receiptLost = true
+      }
+      if (
+        receiptLost &&
+        !editedInPlace &&
+        (editAt === 'receipt publication' || to === pendingPath)
+      ) {
+        writeFileSync(configPath, edited)
+        editedInPlace = true
+      }
+    })
+
+    // Act
+    await assert.rejects(
+      concurrent.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+        beforeRecordWrite: ({ path }) => {
+          if (editAt === 'receipt write failure' && path === receiptPath) {
+            writeFileSync(configPath, edited)
+            editedInPlace = true
+            throw Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+          }
+        },
+      }),
+      /rename the "codebook" entry to an unused name/,
+    )
+    const afterSetup = await readFile(configPath, 'utf8')
+    const retry = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
       ({ status }) => status,
       (error: Error) => error.message,
     )
 
-  // Assert
-  assert.equal(placed, true)
-  assert.ok(outcome.includes(configPath))
-  assert.ok(
-    outcome.includes(`at ${pendingPath} and another file at ${droppingPath}`),
-  )
-  assert.match(outcome, /look at both before you use either/)
-  assert.equal(await readFile(configPath, 'utf8'), restoredConfig)
-  assert.equal(await readFile(pendingPath, 'utf8'), restoredRecord)
-  assert.equal(
-    JSON.parse(await readFile(droppingPath, 'utf8')).phase,
-    'completed',
-  )
-})
+    // Assert
+    assert.equal(editedInPlace, true)
+    assert.equal(afterSetup, edited)
+    assert.equal(await readFile(configPath, 'utf8'), edited)
+    assert.match(retry, /rename the "codebook" entry to an unused name/)
+    await writeConfig(
+      configPath,
+      JSON.stringify({ mcpServers: { saved: editedEntry, notes } }),
+    )
+    const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+    assert.equal(next.status, 'installed')
+    assert.deepEqual(
+      JSON.parse(await readFile(configPath, 'utf8')).mcpServers,
+      {
+        saved: editedEntry,
+        notes,
+        codebook: ENTRY,
+      },
+    )
+  })
+}
 
 test('A removal whose config and record a backup puts back in the gap of the record’s move aside refuses instead of reporting the entry removed', async (context) => {
   // Value: protects=a removal never reports success when a backup restores the entry while its record moves aside and the move takes the restored file, so the conflict exit that puts that file back rechecks the caller's end state before answering kept, exactly as every other non-delete exit of the delete does, and the removal refuses as one that did not last instead of reporting the entry removed beside an entry that is back (Cycle 0149 round-5 MINOR-5103); fails_when=the removal resolves or refuses with another sentence, the receipt bytes or the restored config change, or the replacement receipt's inode does not survive; no_claim=a real backup tool (the loaded module swaps the config with its entry and a copy of the receipt in once, inside the move's link of receipt.json to its dropping name, right before that link runs, so the move takes the copy), and a swap in the syscall gap after the move's proof at the dropping name

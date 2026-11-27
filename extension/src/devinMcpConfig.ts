@@ -9974,6 +9974,7 @@ type RollbackResult = {
   outcome:
     | 'took-out'
     | 'replaced-config'
+    | 'edited-config'
     | 'not-ours'
     | 'unreadable'
     | 'not-taken-out'
@@ -10037,18 +10038,23 @@ async function confirmPublishedConfig(
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
+ * @param publishedProof - The original config identity during setup or its recorded bytes on recovery, checked against the rollback's guarded snapshot.
  * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name, or another file or nothing there at the take-back's last look before the config moves ({@link assertTakeBackRecordStill}), is `journal-taken`, and nothing moved; another file at that name once the entry is out, as the journal was to be deleted, is `took-out-record-taken`, and a name that could not be read again then is `took-out-record-unread`; what stands there stays.
  * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`, except the {@link RecordConflictError} of a take-back whose publish record no longer stands as its run read or wrote it ({@link assertTakeBackRecordStill}), which {@link finishCutShortSetup} rethrows and {@link takeOutUnrecordedEntry} answers as `record-changed`, because nothing moved.
  */
 async function rollBackPublishedEntry(
   context: Context,
   written: Receipt,
+  publishedProof?: StillLook | string,
 ): Promise<RollbackResult> {
   const confirmed = await confirmPublishedConfig(context, written)
   // Not the file this setup published with its entry, or one that cannot be read again: nothing is touched.
   if (!('look' in confirmed))
     return { outcome: confirmed.outcome, keptLeft: [] }
   const { look } = confirmed
+  // The same snapshot that proves the original config also guards its move during rollback.
+  if (!rollbackConfigStillMatches(look, publishedProof))
+    return { outcome: 'edited-config', keptLeft: [] }
   try {
     const { keptLeft, status } = await takeEntryOut(
       rollbackContextOf(context, written.generation),
@@ -10071,6 +10077,28 @@ async function rollBackPublishedEntry(
     throw error
   }
 }
+
+/**
+ * Checks the snapshot used by {@link rollBackPublishedEntry} against the live setup's original identity or a previous first setup's saved bytes.
+ * Older records without that evidence keep their existing entry and inode checks.
+ * @example
+ * rollbackConfigStillMatches(look, pending.stagedSha256)
+ */
+function rollbackConfigStillMatches(
+  look: Extract<ConfigLook, { kind: 'present' }>,
+  proof: StillLook | string | undefined,
+): boolean {
+  if (typeof proof === 'string') return look.sha256 === proof
+  try {
+    proof?.assert()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Keeps the learner's edited or unowned server entry available when they run setup again. */
+const KEEP_ENTRY_ADVICE = `rename the "${SERVER_NAME}" entry to an unused name to keep its settings`
 
 /** The end of a rollback journal's name beside `pending.json` ({@link rollbackContextOf}); {@link journalConflictError} words a conflict at a name with it as a rollback record's. */
 const ROLLBACK_JOURNAL_SUFFIX = '.rollback'
@@ -10209,6 +10237,7 @@ function rollbackOutcomeClause(
   const journal = rollbackContextOf(context).pendingPath
   return {
     'took-out': 'so it took that entry out again and changed nothing else',
+    'edited-config': `but the file at that path was edited in place, so it left that file unchanged; ${KEEP_ENTRY_ADVICE}`,
     'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
     'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
     unreadable: `and could not read that file again, so it left it unchanged; check that its "${SERVER_NAME}" entry is what you want before you change it`,
@@ -10230,6 +10259,7 @@ function rollbackOutcomeClause(
  * @param cause - The failure of the receipt write, kept for diagnosis.
  * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
  * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link writeTakeBackMark}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
+ * @param publishedLook - The original config check, including when the receipt write itself failed.
  * @returns The error to reject with: whether the entry was taken out again, and the way out that fits why the receipt could not be written ({@link receiptFailureEnding}), followed by the refusal of Codebook's own step at the setup record's dropping name when the take-back mark stopped there ({@link unrecordedEntrySentences}).
  */
 async function takeOutUnrecordedEntry(
@@ -10238,6 +10268,7 @@ async function takeOutUnrecordedEntry(
   cause: unknown,
   { asLeft, asTracked }: LeftCopies,
   isRetiredKept: boolean,
+  publishedLook?: StillLook,
 ): Promise<Error> {
   const recordChanged: RollbackResult = {
     outcome: 'record-changed',
@@ -10249,7 +10280,7 @@ async function takeOutUnrecordedEntry(
   let result = recordChanged
   // No run: the setup's record changed, moved away or could not be read again as the mark read or wrote it, so the config is never changed on this run's word alone.
   if (run)
-    result = await rollBackPublishedEntry(run, written).catch(
+    result = await rollBackPublishedEntry(run, written, publishedLook).catch(
       (error: unknown): RollbackResult =>
         // The setup's record no longer stood right before the config would move, so nothing moved; any other failure leaves the rejection below saying the entry may still stand.
         error instanceof RecordConflictError
@@ -10486,14 +10517,10 @@ async function recordPublishedEntry(
     await lookAndAssertStill(assertPublished)
     // Keep records that name retained copies; otherwise check the same evidence throughout retirement.
     if (keptLeft.length === 0 && !isRetiredKept) {
-      await dropPending(context, {
-        assertStill: assertPublished,
-        onConflict: 'throw',
-      }).catch((error: unknown) => {
-        // The dropping-name refusal is said with the success below, because the entry is installed and recorded once the receipt stands; another program's conflict leaves a stale record the next run reads first, as before. Anything else is the receipt's own look, which the caller answers as a receipt-write failure, as before.
-        if (error instanceof DroppingNameConflictError) droppingConflict = error
-        else if (!(error instanceof JournalConflictError)) throw error
-      })
+      droppingConflict = await dropPublishedSetupRecord(
+        context,
+        assertPublished,
+      )
       // Dropping even a successfully retired record awaits note cleanup. Both published files must still stand after it.
       if (isFirst) await lookAndAssertStill(assertPublished)
     }
@@ -10505,7 +10532,7 @@ async function recordPublishedEntry(
           context,
           cause,
           settled.copies.asTracked,
-          droppingConflict,
+          droppingConflict ?? recordConflict,
         )
       : undefined
     if (refusal) throw refusal
@@ -10515,8 +10542,22 @@ async function recordPublishedEntry(
       cause,
       settled.copies,
       isRetiredKept,
+      settled.configStill,
     )
   }
+  return publishedEntryResult(written.generation, settled, droppingConflict)
+}
+
+/**
+ * Builds the installed result and names any recovery files that survived publication.
+ * @example
+ * publishedEntryResult(generation, settled, undefined)
+ */
+function publishedEntryResult(
+  generation: string,
+  settled: ReceiptWriteSettlement,
+  droppingConflict: DroppingNameConflictError | undefined,
+): PublishedEntry {
   const cleanupFailure = [
     cleanupFailureOf(settled.copies.asTracked),
     settled.sentence,
@@ -10525,15 +10566,36 @@ async function recordPublishedEntry(
   ]
     .filter(Boolean)
     .join(' ')
-  const { generation } = written
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
+}
+
+/**
+ * Retires the setup record once the receipt stands. A conflict at its two recovery names carries directions the final notice needs.
+ * @example
+ * const conflict = await dropPublishedSetupRecord(context, assertPublished)
+ */
+async function dropPublishedSetupRecord(
+  context: Context,
+  assertPublished: StillLook | undefined,
+): Promise<DroppingNameConflictError | undefined> {
+  try {
+    await dropPending(context, {
+      assertStill: assertPublished,
+      onConflict: 'throw',
+    })
+  } catch (error) {
+    if (error instanceof DroppingNameConflictError) return error
+    // Ordinary journal conflicts leave a stale record for the next run. A failed config or receipt proof still refuses setup.
+    if (!(error instanceof JournalConflictError)) throw error
+  }
+  return undefined
 }
 
 /**
  * Describes a failed first setup whose receipt was published but whose final evidence changed.
  * Called by {@link recordPublishedEntry} before considering a rollback on a surviving setup record.
  * @param copies - Recovery copies still named by the publication.
- * @param droppingConflict - The cleanup refusal whose two-file recovery directions must survive.
+ * @param recordConflict - Any earlier conflict during retirement or publication of the recovery record.
  * @returns The refusal when the files must be left alone; otherwise the setup's existing take-back handles the failure.
  * @example
  * firstSetupProofFailure(context, receiptConflictError(context, 'gone'), [], undefined)
@@ -10542,23 +10604,29 @@ function firstSetupProofFailure(
   context: Context,
   cause: unknown,
   copies: KeptFile[],
-  droppingConflict: DroppingNameConflictError | undefined,
+  recordConflict: JournalConflictError | undefined,
 ): Error | undefined {
-  // The active file changed; preserve it and include any separate recovery conflict already identified.
+  // A failed put-back carries the two recovery names on the proof error itself.
+  const conflict = [recordConflict, cause instanceof Error && cause.cause].find(
+    (error): error is DroppingNameConflictError =>
+      error instanceof DroppingNameConflictError,
+  )
   if (cause instanceof PublishUncoveredError)
     return new Error(
       changedWhileWorking(context).message +
         keptCopiesSentence(copies) +
-        (droppingConflict ? ` ${droppingConflict.message}` : ''),
+        (conflict ? ` ${conflict.message}` : ''),
       { cause },
     )
-  // An already retired record cannot authorize taking the entry out when its receipt has changed.
-  if (!context.journalVersion?.current && cause instanceof ReceiptConflictError)
-    return new Error(
-      `Codebook could no longer verify its receipt at ${context.receiptPath} for the entry it wrote in Devin Desktop's MCP config at ${context.path}. It left the current files untouched; check both locations, keep any different receipt separately before restoring the matching one from your backup, ${context.retry}.`,
-      { cause },
-    )
-  return undefined
+  if (!(cause instanceof ReceiptConflictError)) return undefined
+  // A stranded journal cannot authorize a take-back. Both failures have independent recovery steps.
+  if (conflict)
+    return new Error(`${cause.message} ${conflict.message}`, { cause })
+  if (context.journalVersion?.current) return undefined
+  return new Error(
+    `Codebook could no longer verify its receipt at ${context.receiptPath} for the entry it wrote in Devin Desktop's MCP config at ${context.path}. It left the current files untouched. Check both locations and keep any different receipt separately. Restore the matching receipt from backup or, if you have no backup, ${KEEP_ENTRY_ADVICE} in ${context.path}, ${context.retry}.`,
+    { cause },
+  )
 }
 
 /**
@@ -12162,7 +12230,11 @@ async function finishCutShortSetup(
   }
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
   try {
-    result = await rollBackPublishedEntry(context, written)
+    result = await rollBackPublishedEntry(
+      context,
+      written,
+      isFirstSetupRecord(pending) ? pending.stagedSha256 : undefined,
+    )
   } catch (error) {
     // The record this take-back rests on changed or disappeared before the config moved: nothing changed, and the run goes no further.
     if (error instanceof RecordConflictError) throw error
