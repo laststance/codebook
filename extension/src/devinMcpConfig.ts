@@ -6144,13 +6144,18 @@ function bothFilesRefusal(
 /**
  * Builds the record that stays after a recovery: only the unsettled leftovers' names, inodes and hashes, so the next run retries just those.
  * @param pending - The record recovery keeps ({@link recordAfterRecovery}); its phase, and its unverified mark ({@link Pending.bytesUnverified}) while the displaced file stays tracked, carry over.
- * @param tracked - The unsettled leftovers that stay tracked; for a finished or handed record the one reported is left out ({@link unsettledRefusal}).
+ * @param unsettled - All leftovers recovery could not settle, in the order it reports them.
+ * @param phase - The phase the run read, before any handover. A finished or handed record releases the reported leftover unless its original still needs proof ({@link Unsettled.staysTracked}).
  * @returns The reduced record; undefined when nothing stays tracked.
  */
 function retainedRecord(
   pending: Pending,
-  tracked: Unsettled[],
+  unsettled: Unsettled[],
+  phase: Pending['phase'],
 ): Pending | undefined {
+  const tracked = phase
+    ? unsettled.filter((entry, index) => index > 0 || entry.staysTracked)
+    : unsettled
   if (tracked.length === 0) return undefined
   const roles = new Set(tracked.map(({ leftover }) => leftover.role))
   return {
@@ -10811,7 +10816,6 @@ async function settleRollbackJournal(
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   // An unverified put-back's handed journal is read as the change in progress it is, so its displaced file stays tracked.
   const phase = leftoverPhaseOf(pending)
-  const tracked = phase ? unsettled.slice(1) : unsettled
   // A journal of an older build names no publish: the config its recovery just put back helps tell whether it is this publish's.
   const legacy =
     pending.publishGeneration === undefined
@@ -10843,7 +10847,8 @@ async function settleRollbackJournal(
     )
   const retained = retainedRecord(
     await recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
-    tracked,
+    unsettled,
+    phase,
   )
   let held: HeldJournal | undefined
   try {
@@ -12230,9 +12235,6 @@ async function inspect(context: Context): Promise<Inspection> {
   const isHandoverUnrecorded = Boolean(
     pending && isHandedNow && !(await persistHandover(run, pending, unsettled)),
   )
-  const tracked = phase
-    ? unsettled.filter((entry, index) => index > 0 || entry.staysTracked)
-    : unsettled
   const [first] = unsettled
   const reported = first && {
     ...first,
@@ -12242,7 +12244,8 @@ async function inspect(context: Context): Promise<Inspection> {
     pending &&
     retainedRecord(
       await recordAfterRecovery(run, pending, unsettled, isHandedNow),
-      tracked,
+      unsettled,
+      phase,
     )
   const inspection = await settleAfterRecovery(
     run,
@@ -12299,7 +12302,7 @@ function ownRecordContext(
  * - The record handed and unverified ({@link Pending.bytesUnverified}) while its displaced name stays a second name of the config that no check cleared ({@link isUnverifiedSecondName}), also when this run's put-back wrote that mark: an older build then never deletes that name by the shared inode alone, and this build checks the bytes again
  * - Otherwise the record in the phase recovery reads it ({@link leftoverPhaseOf}), without the mark: a displaced file that is no second name of the config leaves an older build nothing to delete by its inode, and an older build would read an empty config name under a handed record as handed over
  * @example
- * retainedRecord(await recordAfterRecovery(context, pending, unsettled, false), tracked)
+ * retainedRecord(await recordAfterRecovery(context, pending, unsettled, false), unsettled, leftoverPhaseOf(pending))
  */
 async function recordAfterRecovery(
   context: Context,

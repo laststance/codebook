@@ -2151,6 +2151,67 @@ test('Recovery keeps the recorded original when the last look at a completed rep
   assert.equal(await readFile(configPath, 'utf8'), edited)
 })
 
+for (const journal of ['pending.json', 'pending.json.rollback']) {
+  test(`A temporary failure at the last config check keeps the original tracked by ${journal} until the next refresh verifies it`, async (context) => {
+    // protects=the current or rollback journal retains a completed change's original on a failed final read; fails_when=the journal disappears or the original is deleted before the live config is verified; no_claim=real storage faults (one final lookup reports EIO).
+    // Arrange
+    const { home, storage, configPath } = await arrange(context)
+    const original =
+      '{"mcpServers":{"alpha":{"command":"a"},"codebook":{"command":"node"}}}\n'
+    const published = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+    await writeConfig(configPath, published)
+    const copyPath = privateNameOf(configPath, 'codebook-displaced')
+    await writeFile(copyPath, original)
+    await writeRecordFile(storage, journal, {
+      targetPath: configPath,
+      createdFile: false,
+      generation: JOURNAL_GENERATION,
+      phase: 'completed',
+      keptName: basename(copyPath),
+      keptIno: (await stat(copyPath)).ino,
+      keptSha256: sha256(original),
+      stagedIno: (await stat(configPath)).ino,
+      stagedSha256: sha256(published),
+      ...(journal === 'pending.json.rollback' && {
+        publishGeneration: JOURNAL_GENERATION,
+      }),
+    })
+    let readConfig = false
+    let refusedLastLook = false
+
+    // Act
+    const recovery = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterStat: (path) => {
+        if (path === configPath) readConfig = true
+      },
+      beforeLeftoverCheck: (path) => {
+        if (path !== configPath || !readConfig || refusedLastLook) return
+        refusedLastLook = true
+        throw Object.assign(new Error('temporary input/output failure'), {
+          code: 'EIO',
+        })
+      },
+    })
+
+    // Assert
+    await assert.rejects(recovery, /still tracks that copy/)
+    assert.equal(refusedLastLook, true)
+    assert.equal(
+      (await readRecordFile(storage, journal)).keptName,
+      basename(copyPath),
+    )
+    assert.equal(await readFile(copyPath, 'utf8'), original)
+    assert.equal(await readFile(configPath, 'utf8'), published)
+    assert.equal(
+      (await refreshManagedDevinMcpEntry(storage, ENTRY, home)).status,
+      'not-managed',
+    )
+    assert.equal(existsSync(copyPath), false)
+    assert.equal(existsSync(join(storage, 'devin-mcp', journal)), false)
+    assert.equal(await readFile(configPath, 'utf8'), published)
+  })
+}
+
 test('A withdrawn first setup leaves its compact original with the learner and a normal retry can install again', async (context) => {
   // protects=withdrawal that formats the config leaves the original bytes intact and ends recovery on a normal retry; fails_when=each retry refuses the compact original; no_claim=real I/O failure (the test refuses the receipt write and the first copy cleanup).
   // Arrange
