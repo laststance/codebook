@@ -51,34 +51,65 @@ const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 type ServedInTurns = { page: number; ordinary: number }
 
 /**
+ * Marks unfinished or over-budget page measurements for the timing tests' failure lists.
+ * @param ratio - The page family's existing acceptance limit relative to an ordinary page.
+ * @example
+ * exceedsServingBound({page: 70, ordinary: 10}, 6) // true
+ */
+function exceedsServingBound(
+  time: ServedInTurns | 'unfinished',
+  ratio: number,
+): boolean {
+  return time === 'unfinished' || time.page > ratio * time.ordinary
+}
+
+/** Start of a worker calibration or measured call, stamped on the process's monotonic clock. */
+type ServingPhase = { startedAt: number; ordinaryMs?: number }
+
+/**
  * Arms the serving worker's watchdog for startup, each calibration, and each measured call.
  * The parent owns the timer so it can stop the worker even while a serving call is synchronous.
  * @param stop - Terminates the worker when the current step exhausts its budget.
  * @param updates - The worker's calibration port. A queued update supersedes the expired interval even when its event has not been dispatched.
+ * @param now - Monotonic clock shared by the parent and worker; tests can supply a virtual clock.
  * @returns Controls for starting the next step and clearing the timer on worker exit.
  * @example
  * const deadline = servingDeadline(() => void worker.terminate())
  * deadline.arm(150)
  * deadline.clear()
  */
-function servingDeadline(stop: () => void, updates?: MessagePort) {
-  const onDeadline = (): void => {
-    // Timers can run before message events when the parent has been busy.
+function servingDeadline(
+  stop: () => void,
+  updates?: MessagePort,
+  now: () => number = () => performance.now(),
+) {
+  // A packet carries the worker's start time on the shared process clock. Read the newest queued phase before deciding whether it expired.
+  function takeLatest(first: ServingPhase): void {
+    let latest = first
+    let next = updates && receiveMessageOnPort(updates)
+    while (next) {
+      latest = next.message as ServingPhase
+      next = updates && receiveMessageOnPort(updates)
+    }
+    arm(latest.ordinaryMs, now() - latest.startedAt)
+  }
+  function onDeadline(): void {
     const queued = updates && receiveMessageOnPort(updates)
-    if (queued) arm(queued.message as number | undefined)
+    if (queued) takeLatest(queued.message as ServingPhase)
     else stop()
   }
   let timer = setTimeout(onDeadline, FILTER_DEADLINE_MS)
-  function arm(ordinaryMs?: number): void {
+  function arm(ordinaryMs?: number, elapsedMs = 0): void {
     clearTimeout(timer)
-    timer = setTimeout(
-      onDeadline,
+    const budgetMs =
       ordinaryMs === undefined
         ? FILTER_DEADLINE_MS
-        : PAGE_DEADLINE_RATIO * ordinaryMs,
-    )
+        : PAGE_DEADLINE_RATIO * ordinaryMs
+    const remainingMs = Math.ceil(budgetMs - elapsedMs)
+    if (remainingMs <= 0) stop()
+    else timer = setTimeout(onDeadline, remainingMs)
   }
-  updates?.on('message', arm)
+  updates?.on('message', takeLatest)
   return {
     arm,
     clear(): void {
@@ -119,6 +150,7 @@ const serveOnce = (page) => {
   if (workerData.tagAtBodyEnd === undefined) serve(page, 'cursor')
   else serve(page, 'cursor', workerData.tagAtBodyEnd)
 }
+const reportTurn = (ordinaryMs) => workerData.calibrations.postMessage({ startedAt: performance.now(), ordinaryMs })
 serveOnce(workerData.warmUp)
 for (const [name, page] of Object.entries(workerData.pages)) {
   const { measured: ordinary, baseline: measured } = shortestTimesInTurns(
@@ -126,9 +158,9 @@ for (const [name, page] of Object.entries(workerData.pages)) {
     () => serveOnce(page),
     workerData.runs,
     undefined,
-    (ordinaryMs) => workerData.calibrations.postMessage(ordinaryMs),
+    reportTurn,
   )
-  workerData.calibrations.postMessage(undefined)
+  reportTurn(undefined)
   parentPort.postMessage({ name, page: measured, ordinary })
 }
 workerData.calibrations.close()`,
@@ -253,6 +285,13 @@ test('a slower Wiki timing turn finishes within its own ordinary-page budget and
   assert.deepEqual(stoppedDuringPage, [false, false])
   assert.deepEqual(sample, { measured: 5, baseline: 10 })
   assert.deepEqual(overRatio, { measured: 10, baseline: 70 })
+  assert.equal(
+    exceedsServingBound(
+      { page: overRatio.baseline, ordinary: overRatio.measured },
+      CLOSED_SVG_PAGE_BOUND_RATIO,
+    ),
+    true,
+  )
   assert.equal(beforeDeadline, false)
   assert.equal(afterDeadline, true)
 })
@@ -284,26 +323,31 @@ test('the Wiki timing worker stops a stuck ordinary-page calibration and clears 
 })
 
 // Value: protects=a healthy worker when the parent event loop is busy; fails_when=an expired timer ignores the next phase already in its port; seam=one real message channel and a scripted parent clock; no_claim=real reader throughput.
-test('a queued Wiki worker calibration takes effect before the old deadline can stop it', (context) => {
+test('a delayed Wiki worker update keeps only the time remaining on the latest call', (context) => {
   // Arrange
-  context.mock.timers.enable({ apis: ['setTimeout'] })
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
   const { port1, port2 } = new MessageChannel()
   let stops = 0
-  const deadline = servingDeadline(() => {
-    stops += 1
-  }, port1)
+  const deadline = servingDeadline(
+    () => {
+      stops += 1
+    },
+    port1,
+    Date.now,
+  )
   context.after(() => {
     deadline.clear()
-    port1.close()
     port2.close()
   })
 
-  // Act: the updated measurement is queued while the parent is unable to dispatch its message event.
-  deadline.arm(5)
-  port2.postMessage(40)
-  context.mock.timers.tick(50)
+  // Act: the first queued phase has expired before the old timer fires. The last phase started at 10 ms and has 400 ms in total.
+  deadline.arm(35)
+  port2.postMessage({ startedAt: 0, ordinaryMs: 5 })
+  context.mock.timers.tick(10)
+  port2.postMessage({ startedAt: 10, ordinaryMs: 40 })
+  context.mock.timers.tick(340)
   const stopsAtPreviousDeadline = stops
-  context.mock.timers.tick(399)
+  context.mock.timers.tick(59)
   const stopsBeforeCurrentDeadline = stops
   context.mock.timers.tick(1)
 
@@ -393,10 +437,8 @@ test('the reader filters a page of more than 1 MB built to make a reading from e
     [true, true, true, true, true, true, true, true, true, true, true],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -545,10 +587,8 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
     ],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -695,10 +735,8 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
     [true, true, true, true],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -741,10 +779,8 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
       .join(', '),
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CLOSED_SVG_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CLOSED_SVG_PAGE_BOUND_RATIO),
     ),
     [],
   )
@@ -873,10 +909,8 @@ test('the reader serves a page of more than 1 MB built to make a pattern of its 
     [true, true, true],
   )
   assert.deepEqual(
-    Object.entries(times).filter(
-      ([, time]) =>
-        time === 'unfinished' ||
-        time.page > CRAFTED_PAGE_BOUND_RATIO * time.ordinary,
+    Object.entries(times).filter(([, time]) =>
+      exceedsServingBound(time, CRAFTED_PAGE_BOUND_RATIO),
     ),
     [],
   )
