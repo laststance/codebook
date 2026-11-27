@@ -36,6 +36,41 @@ const SWAP_LINE_PATTERN =
 /** The names under which Node runs: a row of one of these is read by the script it runs. */
 const NODE_PROGRAMS = new Set(['node', 'node.exe', 'nodejs'])
 
+// Codex root options from its CLI help. Unknown options leave the subcommand unclassified.
+const CODEX_VALUE_OPTIONS = new Set([
+  '-C',
+  '--cd',
+  '-c',
+  '--config',
+  '-m',
+  '--model',
+  '-p',
+  '--profile',
+  '-s',
+  '--sandbox',
+  '-a',
+  '--ask-for-approval',
+  '--enable',
+  '--disable',
+  '--remote',
+  '--remote-auth-token-env',
+  '--local-provider',
+  '--add-dir',
+  '-i',
+  '--image',
+])
+const CODEX_SWITCHES = new Set([
+  '--strict-config',
+  '--oss',
+  '--approve-for-me',
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--dangerously-bypass-hook-trust',
+  '--worktree',
+  '--search',
+  '--no-alt-screen',
+  '--no-daemon',
+])
+
 /**
  * Node options that run their value as the program itself (`node -e "…"`, `node --print "…"`): no script file runs, so every later word is a positional argument, never the script. Matched on the option's name, so the `--eval=…` spelling counts too.
  */
@@ -432,6 +467,35 @@ function programOf({ command, args }) {
 }
 
 /**
+ * Identify a Codex review from its subcommand, keeping option values and ordinary prompts out of workload counts.
+ * Called by {@link kindOf} for a Codex binary.
+ * @param {string[]} args - Words following the executable in the sampled process table.
+ * @returns {boolean} Whether an explicit review subcommand follows the recognized root options.
+ * @example isCodexReview(['-C', '/repo', 'review', '--base', 'main'])
+ */
+function isCodexReview(args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (CODEX_SWITCHES.has(arg)) continue
+    if (!arg.startsWith('-'))
+      return (
+        arg === 'review' ||
+        (['exec', 'e'].includes(arg) && args[i + 1] === 'review')
+      )
+    // Both --cd=DIR and -CDIR carry their value in the same word.
+    const name = arg.startsWith('--') ? optionNameOf(arg) : arg.slice(0, 2)
+    if (!CODEX_VALUE_OPTIONS.has(name)) return false
+    if (arg !== name) continue
+    if (!args[i + 1] || args[i + 1].startsWith('-')) return false
+    if (name === '--image' || name === '-i') {
+      // A bare image option consumes every following positional word, including a file named review.
+      while (i + 1 < args.length && !args[i + 1].startsWith('-')) i++
+    } else i++
+  }
+  return false
+}
+
+/**
  * Names the kind of one process, or none.
  * @param {{ command: string, args: string[] }} row - One process.
  * @returns {string | undefined} The id of the first {@link PROCESS_KINDS} entry it matches; `nodeTest` for a node process with a test-runner option that runs no named program.
@@ -445,10 +509,7 @@ function kindOf(row) {
       ? 'codeRabbitReview'
       : undefined
   if (program === 'codex')
-    return programArgs[0] === 'review' ||
-      (programArgs[0] === 'exec' && programArgs[1] === 'review')
-      ? 'codexReview'
-      : undefined
+    return isCodexReview(programArgs) ? 'codexReview' : undefined
   const named = PROCESS_KINDS.find(
     (kind) =>
       kind.programs.includes(program) &&

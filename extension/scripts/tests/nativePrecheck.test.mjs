@@ -695,6 +695,43 @@ test('active CLI reviews are counted without admitting editor sessions as review
   }
 })
 
+// Value: protects=review counts, RSS and admission with root CLI options; fails_when=an option value or later prompt is counted as a review; no_claim=arguments with spaces flattened by ps
+test('Codex review counts and RSS follow the subcommand after root options', async () => {
+  // Arrange
+  const cases = [
+    ['-C /private-workdir review --base main', 1],
+    ['--cd=/private-workdir --search -m review exec review', 1],
+    ['-C/private-workdir e review --base main', 1],
+    ['--image screen.png --cd /private-workdir review', 1],
+    ['--image=screen.png review', 1],
+    ['--cd review app-server', 0],
+    ['-m review exec build', 0],
+    ['--cd /private-workdir exec build review', 0],
+    ['--image screen.png review', 0],
+    ['-C --search review', 0],
+    ['--image --search review', 0],
+    ['-- review', 0],
+    ['--unknown-option review', 0],
+  ]
+  for (const [args, expected] of cases) {
+    const processRows = parseProcessRows(`2048 41 /bin/codex ${args}`, true)
+
+    // Act
+    const result = await runWithReadings(['--json'], {
+      loadAverages: [1, 1, 1],
+      cores: 8,
+      processRows,
+    })
+
+    // Assert
+    const report = JSON.parse(result.out[0])
+    assert.equal(report.processes.codexReview, expected, args)
+    assert.equal(report.rssMiBByKind.codexReview, expected ? 2 : 0, args)
+    assert.equal(report.verdict, 'clear', args)
+    assert.ok(!result.out[0].includes('private-workdir'))
+  }
+})
+
 // Value: protects=per-workload RSS sums the exact process IDs that were counted; fails_when=shared classification, duplicate rows, or unclassified children inflate the total; no_claim=unique physical memory or unobserved children
 test('workload RSS sums sampled resident sizes once per classified PID in MiB', async () => {
   // Arrange
