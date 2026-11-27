@@ -9,6 +9,7 @@ export type ShortestTimesInTurns = { measured: number; baseline: number }
  * @param baseline - The run whose time the bound is a multiple of.
  * @param runs - How many times each run is timed, at least once.
  * @param now - The clock in milliseconds: `performance.now` unless a test of this helper scripts it.
+ * @param onTurn - Called outside the timed work before the first run of each pair, then with that run's duration before the second. The serving worker times the ordinary page first so the parent can bound its paired page.
  * @returns The shortest time of each run in milliseconds.
  * @example
  * shortestTimesInTurns(() => serve(craftedPage), () => serve(ordinaryPage), 2) // => { measured: 41.2, baseline: 58.7 }
@@ -18,6 +19,7 @@ export function shortestTimesInTurns(
   baseline: () => void,
   runs: number,
   now: () => number = () => performance.now(),
+  onTurn?: (firstMs?: number) => void,
 ): ShortestTimesInTurns {
   const timeOf = (run: () => void): number => {
     const startedMs = now()
@@ -30,7 +32,9 @@ export function shortestTimesInTurns(
   }
   // Each turn times the measured run and then the baseline right after it, so a moment of load falls on runs of both sides.
   for (let turn = 0; turn < runs; turn += 1) {
+    onTurn?.()
     const measuredMs = timeOf(measured)
+    onTurn?.(measuredMs)
     const baselineMs = timeOf(baseline)
     shortest = {
       measured: Math.min(shortest.measured, measuredMs),
