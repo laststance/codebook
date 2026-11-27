@@ -1861,6 +1861,8 @@ async function dropFailedStage(
 /** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise), whether the record says completed (`false`: the completed record could not be written, so no copy of the previous config was deleted; the staged name, only a second name of the config, goes all the same, {@link dropPublishedStage}) and whether a first setup's old record's private name stayed after the link because it no longer showed the record that setup moved there ({@link dropMovedAfterLink}; the pending record stays then too). */
 type Published = {
   config: ConfigNumbers
+  /** Digest of the complete bytes written to the staging file, before Devin could edit the published config. */
+  stagedSha256: string
   keptLeft: KeptFile[]
   isRecorded: boolean
   isRetiredKept: boolean
@@ -2744,6 +2746,7 @@ async function createConfig(
   const stagedKept = await dropPublishedStage(context, temporary, stagedVersion)
   return {
     config,
+    stagedSha256: stagedVersion.sha256,
     keptLeft: stagedKept ? [stagedKept] : [],
     isRecorded,
     isRetiredKept: linked.isRetiredKept,
@@ -3056,6 +3059,7 @@ async function replaceConfig(
     // From here the config is published; cleanup failures are reported and leave the pending record, written in the shape the link left it.
     return {
       config,
+      stagedSha256: replacement.stagedVersion.sha256,
       isRetiredKept: linked.isRetiredKept,
       ...(await settlePublished(
         context,
@@ -10038,14 +10042,16 @@ async function confirmPublishedConfig(
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
- * @param publishedProof - The original config identity during setup or its recorded bytes on recovery, checked against the rollback's guarded snapshot.
+ * @param stagedSha256 - The hash of the bytes staged for publication, when the setup record supplies it.
+ * @param configStill - During the current setup, the additional identity check from receipt settlement.
  * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name, or another file or nothing there at the take-back's last look before the config moves ({@link assertTakeBackRecordStill}), is `journal-taken`, and nothing moved; another file at that name once the entry is out, as the journal was to be deleted, is `took-out-record-taken`, and a name that could not be read again then is `took-out-record-unread`; what stands there stays.
  * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`, except the {@link RecordConflictError} of a take-back whose publish record no longer stands as its run read or wrote it ({@link assertTakeBackRecordStill}), which {@link finishCutShortSetup} rethrows and {@link takeOutUnrecordedEntry} answers as `record-changed`, because nothing moved.
  */
 async function rollBackPublishedEntry(
   context: Context,
   written: Receipt,
-  publishedProof?: StillLook | string,
+  stagedSha256: string | undefined,
+  configStill?: StillLook,
 ): Promise<RollbackResult> {
   const confirmed = await confirmPublishedConfig(context, written)
   // Not the file this setup published with its entry, or one that cannot be read again: nothing is touched.
@@ -10053,7 +10059,7 @@ async function rollBackPublishedEntry(
     return { outcome: confirmed.outcome, keptLeft: [] }
   const { look } = confirmed
   // The same snapshot that proves the original config also guards its move during rollback.
-  if (!rollbackConfigStillMatches(look, publishedProof))
+  if (!rollbackConfigStillMatches(look, stagedSha256, configStill))
     return { outcome: 'edited-config', keptLeft: [] }
   try {
     const { keptLeft, status } = await takeEntryOut(
@@ -10079,19 +10085,19 @@ async function rollBackPublishedEntry(
 }
 
 /**
- * Checks the snapshot used by {@link rollBackPublishedEntry} against the live setup's original identity or a previous first setup's saved bytes.
+ * Checks the snapshot used by {@link rollBackPublishedEntry} against the bytes staged for publication and, during the same setup, the identity found before writing the receipt.
  * Older records without that evidence keep their existing entry and inode checks.
  * @example
  * rollbackConfigStillMatches(look, pending.stagedSha256)
  */
 function rollbackConfigStillMatches(
   look: Extract<ConfigLook, { kind: 'present' }>,
-  proof: StillLook | string | undefined,
+  stagedSha256: string | undefined,
+  configStill?: StillLook,
 ): boolean {
-  if (typeof proof === 'string') return look.sha256 === proof
   try {
-    proof?.assert()
-    return true
+    configStill?.assert()
+    return stagedSha256 === undefined || look.sha256 === stagedSha256
   } catch {
     return false
   }
@@ -10258,7 +10264,7 @@ function rollbackOutcomeClause(
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
  * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
- * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link writeTakeBackMark}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
+ * @param published - The staged digest and whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link writeTakeBackMark}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
  * @param publishedLook - The original config check, including when the receipt write itself failed.
  * @returns The error to reject with: whether the entry was taken out again, and the way out that fits why the receipt could not be written ({@link receiptFailureEnding}), followed by the refusal of Codebook's own step at the setup record's dropping name when the take-back mark stopped there ({@link unrecordedEntrySentences}).
  */
@@ -10267,7 +10273,7 @@ async function takeOutUnrecordedEntry(
   written: Receipt,
   cause: unknown,
   { asLeft, asTracked }: LeftCopies,
-  isRetiredKept: boolean,
+  { isRetiredKept, stagedSha256 }: Published,
   publishedLook?: StillLook,
 ): Promise<Error> {
   const recordChanged: RollbackResult = {
@@ -10280,12 +10286,16 @@ async function takeOutUnrecordedEntry(
   let result = recordChanged
   // No run: the setup's record changed, moved away or could not be read again as the mark read or wrote it, so the config is never changed on this run's word alone.
   if (run)
-    result = await rollBackPublishedEntry(run, written, publishedLook).catch(
-      (error: unknown): RollbackResult =>
-        // The setup's record no longer stood right before the config would move, so nothing moved; any other failure leaves the rejection below saying the entry may still stand.
-        error instanceof RecordConflictError
-          ? recordChanged
-          : { outcome: 'not-taken-out', keptLeft: [] },
+    result = await rollBackPublishedEntry(
+      run,
+      written,
+      stagedSha256,
+      publishedLook,
+    ).catch((error: unknown): RollbackResult =>
+      // The setup's record no longer stood right before the config would move, so nothing moved; any other failure leaves the rejection below saying the entry may still stand.
+      error instanceof RecordConflictError
+        ? recordChanged
+        : { outcome: 'not-taken-out', keptLeft: [] },
     )
   const { outcome } = result
   // The rollback replaced the published file, so the next run hands an untracked copy over instead of deleting it, also when it then found another file at its own record's name or could not read that name again; another file found at the config path may still give way to the published one before then.
@@ -10541,7 +10551,7 @@ async function recordPublishedEntry(
       written,
       cause,
       settled.copies,
-      isRetiredKept,
+      published,
       settled.configStill,
     )
   }

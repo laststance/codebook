@@ -33004,6 +33004,54 @@ for (const [changedFile, moment] of [
   })
 }
 
+for (const config of ['new', 'existing'] as const) {
+  test(`First setup preserves Devin settings saved immediately after publishing the ${config} config when its receipt write fails`, async (context) => {
+    // Value: protects=Devin settings saved before the first receipt check; fails_when=rollback removes those settings or rewrites the edited file; no_claim=native Devin timing.
+    // Arrange
+    const { home, storage, configPath } = await arrange(context)
+    const notes = { command: 'notes' }
+    if (config === 'existing')
+      await writeConfig(configPath, JSON.stringify({ mcpServers: { notes } }))
+    const edited = JSON.stringify({
+      mcpServers: {
+        notes,
+        codebook: { ...ENTRY, disabled: true, disabledTools: ['example'] },
+      },
+    })
+    const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+    const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+
+    let saved = false
+
+    // Act
+    const first = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        if (saved) return
+        saved = true
+        writeFileSync(configPath, edited)
+      },
+      beforeRecordWrite: ({ path }) => {
+        if (path === receiptPath) throw new Error('receipt write failed')
+      },
+    }).then(
+      ({ status }) => status,
+      (error: Error) => error.message,
+    )
+
+    // Assert
+    assert.equal(saved, true)
+    assert.equal(await readFile(configPath, 'utf8'), edited)
+    assert.match(first, /rename the "codebook" entry to an unused name/)
+    assert.equal(existsSync(receiptPath), false)
+    assert.ok(existsSync(pendingPath))
+    await assert.rejects(
+      writeManagedDevinMcpEntry(storage, ENTRY, home),
+      /rename the "codebook" entry to an unused name/,
+    )
+    assert.equal(await readFile(configPath, 'utf8'), edited)
+  })
+}
+
 for (const editAt of [
   'receipt write failure',
   'receipt publication',
