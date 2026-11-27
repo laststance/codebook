@@ -81,6 +81,8 @@ export type HarnessOptions = {
   connectionHolders?: number[]
   /** Holds the request's peer check (which process holds the connection) until the test settles it. */
   peerCheckGate?: Promise<void>
+  /** Called each time the request's peer check begins, so a test waits for that moment instead of guessing it from run-view changes. */
+  onPeerCheckEntered?: () => void
   inspectorPort?: number
   /** The server ends the close call by hand: the test settles `closeGate`. */
   holdClose?: boolean
@@ -597,6 +599,7 @@ export function createHarness(options: HarnessOptions = {}) {
     },
     readListeningPorts: async () => options.listeningPorts ?? [],
     readConnectionServerPid: async () => {
+      options.onPeerCheckEntered?.()
       await options.peerCheckGate
       return options.connectionHolders ?? [server.pid]
     },

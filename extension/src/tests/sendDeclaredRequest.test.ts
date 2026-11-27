@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { getEventListeners } from 'node:events'
 import { createServer } from 'node:http'
+import { createServer as createTcpServer, type Socket } from 'node:net'
 import { test } from 'node:test'
 
 import { z } from 'zod'
@@ -457,3 +458,104 @@ test('a throwing onSetCookie hook rejects the response with REQUEST_FAILED witho
     'The server answered with HTTP 200, but Codebook could not process its session cookies.',
   )
 })
+
+/**
+ * Starts a loopback TCP server that counts every byte it receives and answers each connection with a fixed HTTP 200.
+ * @param t - The test context; the server and its sockets close when the test ends.
+ * @returns The listening port and a live count of received request bytes.
+ */
+async function startByteCountingServer(t: {
+  after: (hook: () => void) => void
+}): Promise<{ port: number; receivedBytes: () => number }> {
+  let received = 0
+  const sockets = new Set<Socket>()
+  const server = createTcpServer((socket) => {
+    sockets.add(socket)
+    socket.on('data', (chunk) => {
+      received += chunk.length
+      socket.end(
+        'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n',
+      )
+    })
+    socket.on('error', () => undefined)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => {
+    for (const socket of sockets) socket.destroy()
+    server.close()
+  })
+  const address = server.address()
+  if (address === null || typeof address === 'string')
+    throw new Error('The byte-counting server has no port.')
+  return { port: address.port, receivedBytes: () => received }
+}
+
+// protects=a run's last synchronous check (beforeWrite) can stop the real sender after the peer passed and before any request byte leaves; fails_when=the sender writes the request although beforeWrite threw, or rejects with another error; no_claim=the run's own stop bookkeeping
+test(
+  'a beforeWrite that throws leaves zero request bytes on the wire and rejects the send with its error',
+  { timeout: 15_000 },
+  async (t) => {
+    // Arrange
+    const server = await startByteCountingServer(t)
+    const refusal = new StudyError(
+      'RUN_NOT_READY',
+      'A declared stop was withdrawn.',
+    )
+    // Act
+    const { written, response } = sendDeclaredRequest({
+      host: '127.0.0.1',
+      port: server.port,
+      request: { method: 'GET', path: '/health' },
+      runId: 'run-1',
+      verifyPeer: acceptPeer,
+      beforeWrite: () => {
+        throw refusal
+      },
+      signal: new AbortController().signal,
+    })
+    const writtenOutcome = await written.then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    )
+    const responseOutcome = await response.then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    )
+    // Give the server a moment to receive bytes that should never arrive.
+    // gstack-timing-ok: the wait only lets bytes a regression wrote reach the server; a slower machine can make it miss a regression, never fail a correct build
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // Assert
+    assert.equal(writtenOutcome, refusal)
+    assert.equal(responseOutcome, refusal)
+    assert.equal(server.receivedBytes(), 0)
+  },
+)
+
+// protects=a beforeWrite that returns lets the real sender write its request; fails_when=the hook blocks or drops the write on the passing path; no_claim=response parsing
+test(
+  'a beforeWrite that returns lets the request reach the server',
+  { timeout: 15_000 },
+  async (t) => {
+    // Arrange
+    const server = await startByteCountingServer(t)
+    let beforeWriteCalls = 0
+    // Act
+    const { written, response } = sendDeclaredRequest({
+      host: '127.0.0.1',
+      port: server.port,
+      request: { method: 'GET', path: '/health' },
+      runId: 'run-1',
+      verifyPeer: acceptPeer,
+      beforeWrite: () => {
+        beforeWriteCalls += 1
+      },
+      signal: new AbortController().signal,
+    })
+    await written
+    const observed = await response
+    // Assert
+    assert.equal(beforeWriteCalls, 1)
+    assert.equal(observed.status, 200)
+    assert.ok(server.receivedBytes() > 0)
+  },
+)
