@@ -6,6 +6,9 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { readNativeTrialSample } from './nativeTrialSample.mjs'
 
 const SLUG = /^[a-z0-9][a-z0-9_-]{0,71}$/i
+// Guest inventory and guest measurements each allow up to 12 seconds. Leave time to publish their evidence.
+const PROBE_LEASE_MS = 30_000
+
 const OUTCOMES = [
   'healthy',
   'unexpected-stop',
@@ -78,7 +81,9 @@ async function publish(dir, name, record) {
 
 async function history(dir) {
   const names = (await readdir(dir))
-    .filter((n) => /^sample-(slot-\d+|\d+-[\da-f-]+)\.json$/.test(n))
+    .filter((n) =>
+      /^(sample-(slot-\d+|\d+-[\da-f-]+)|observation-[\da-f-]+)\.json$/.test(n),
+    )
     .sort()
   // The maximum trial has 7,200 slots. Keep one file open at a time, independent of trial length.
   const records = []
@@ -92,18 +97,25 @@ async function history(dir) {
  */
 export function swapoutChange(previous, sample, side) {
   if (!previous) return null
-  const seconds = (Date.parse(sample.at) - Date.parse(previous.at)) / 1000
   const before = previous[side]
   const after = sample[side]
+  const since = counterAt(previous, side)
+  const seconds =
+    (Date.parse(counterAt(sample, side)) - Date.parse(since)) / 1000
   if (
     !(seconds > 0) ||
+    !Number.isSafeInteger(before?.pageSize) ||
+    before.pageSize <= 0 ||
+    before.pageSize !== after?.pageSize ||
     !Number.isSafeInteger(before?.swapouts) ||
-    !Number.isSafeInteger(after?.swapouts)
+    before.swapouts < 0 ||
+    !Number.isSafeInteger(after?.swapouts) ||
+    after.swapouts < 0
   )
     return null
   const pages = after.swapouts - before.swapouts
   return {
-    since: previous.at,
+    since,
     seconds,
     pages,
     pagesPerSecond: pages / seconds,
@@ -111,33 +123,56 @@ export function swapoutChange(previous, sample, side) {
   }
 }
 
-async function observe(dir, records, sample, slot) {
-  const latest = records.at(-1)
-  const row = {
-    ...sample,
-    change: {
-      host: swapoutChange(latest, sample, 'host'),
-      guest: swapoutChange(latest, sample, 'guest'),
-    },
-  }
-  const key =
-    slot === undefined
-      ? `${Date.parse(row.at)}-${randomUUID()}`
-      : `slot-${slot}`
-  return publish(dir, `sample-${key}.json`, row)
+/** Per-counter timestamp on new records, with the original sample clock retained for older journals. */
+function counterAt(row, side) {
+  const reading = row[side]
+  return reading && Object.hasOwn(reading, 'swapoutsObservedAt')
+    ? reading.swapoutsObservedAt
+    : row.at
 }
 
-async function end(dir, outcome, at, sampleAt) {
-  return publish(dir, 'end.json', { outcome, at, sampleAt: sampleAt ?? null })
+/**
+ * Announce a probe before starting it, then publish its raw facts before releasing its reservation.
+ * The closing claim fences new probes. An overlapping slot contributes one workload sample, while an
+ * independent observation that lost publication of the slot still contributes its own state and counters.
+ * @example await observe(dir, readNativeTrialSample, {slot: 1}, deadline, Date.now)
+ */
+async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
+  const id = randomUUID()
+  const name = `pending-${id}.json`
+  await publish(dir, name, { expiresAt: Date.now() + PROBE_LEASE_MS })
+  try {
+    if (
+      now() >= deadline ||
+      (await readRecord(join(dir, 'closing.json'))) ||
+      (await readRecord(join(dir, 'end.json')))
+    )
+      return null
+    const row = await collect()
+    if (!afterPlanAt) {
+      const key =
+        slot === undefined ? `${Date.parse(row.at)}-${id}` : `slot-${slot}`
+      const winner = await publish(dir, `sample-${key}.json`, row)
+      if (winner === row) return row
+    }
+    // Wait for directory sync before releasing the pending observation to a concurrent finisher.
+    return await publish(dir, `observation-${id}.json`, {
+      ...row,
+      additionalObservation: true,
+      ...(afterPlanAt ? { afterPlanAt } : {}),
+    })
+  } finally {
+    await unlink(join(dir, name))
+  }
 }
 
 /**
  * Recover the earliest provable running-to-stopped transition from durable samples before closing a trial.
  * A guest inventory query brackets the observation. Older samples provide only their original point timestamp.
- * @example await settleRecordedStop(dir, rows, Date.parse(trial.deadline))
+ * @example await recordedStop(dir, rows, Date.parse(trial.deadline))
  */
-async function settleRecordedStop(dir, rows, deadline) {
-  let earliestRunning = Infinity
+async function recordedStop(dir, rows, deadline) {
+  const running = []
   const stopped = []
   for (const row of rows) {
     const { state, stateObservedFrom, stateObservedTo } = row.guest
@@ -148,9 +183,14 @@ async function settleRecordedStop(dir, rows, deadline) {
     const to = Date.parse(legacy ? row.at : stateObservedTo)
     // Incomplete or inverted observation windows cannot prove temporal order, nor can a later response prove a timely stop.
     if (!(from <= to && to <= deadline)) continue
-    if (state === 'running') earliestRunning = Math.min(earliestRunning, to)
+    if (state === 'running')
+      running.push({ from, to, afterPlanAt: row.afterPlanAt })
     else stopped.push({ row, from, to, legacy })
   }
+  const earliestRunning = running.reduce(
+    (earliest, r) => Math.min(earliest, r.to),
+    Infinity,
+  )
   const first = stopped
     .filter((s) => earliestRunning < s.from)
     .sort((a, b) => a.to - b.to)[0]
@@ -160,25 +200,61 @@ async function settleRecordedStop(dir, rows, deadline) {
   let outcome = 'unexpected-stop'
   if (intent) {
     const plannedAt = Date.parse(intent.at)
-    if (plannedAt < first.from || (first.legacy && plannedAt === first.from))
+    // A written intention alone cannot establish that the VM was still running when the operator planned the stop.
+    if (
+      running.some(
+        (r) =>
+          (plannedAt < r.from ||
+            (plannedAt === r.from && r.afterPlanAt === intent.at)) &&
+          r.to < first.from,
+      )
+    )
       outcome = 'planned-stop'
-    // Intent within the observation interval cannot establish which happened first.
     else if (!(plannedAt > first.to)) outcome = 'unknown'
   }
-  return end(dir, outcome, first.row.at, first.row.at)
+  return { outcome, at: first.row.at, sampleAt: first.row.at }
 }
 
 /**
- * Re-read immutable samples before publishing an observer timeout or interruption.
- * Another watcher may have committed stop evidence since this observer last sampled.
+ * Seal admission, wait for previously admitted probes, then derive the terminal record from all durable evidence.
+ * Every finisher uses the same immutable claim, including anyone resuming after the first closer was interrupted.
+ * A missing observer has a bounded lease. Its incomplete evidence cannot prove a healthy completion or a timeout.
  * @example await closeObserver(dir, 'observer-timeout', clock(), deadline)
  */
-async function closeObserver(dir, fallback, at, deadline) {
+async function closeObserver(dir, fallback, at, deadline, sampleAt) {
+  const claim = await publish(dir, 'closing.json', {
+    outcome: fallback,
+    at,
+    sampleAt: sampleAt ?? null,
+  })
+  let incomplete = false
+  const limit = Date.now() + PROBE_LEASE_MS
+  while (true) {
+    const existing = await readRecord(join(dir, 'end.json'))
+    if (existing) return existing
+    const names = (await readdir(dir)).filter((name) =>
+      /^pending-[\da-f-]+\.json$/.test(name),
+    )
+    let waiting = false
+    for (const name of names) {
+      const probe = await readRecord(join(dir, name))
+      if (!probe) continue
+      if (Date.now() < Math.min(probe.expiresAt, limit)) waiting = true
+      else incomplete = true
+    }
+    if (!waiting) break
+    await delay(20)
+  }
   const rows = await history(dir)
-  return (
-    (await settleRecordedStop(dir, rows, deadline)) ??
-    end(dir, fallback, at, rows.at(-1)?.at)
-  )
+  const stopped = await recordedStop(dir, rows, deadline)
+  const final = stopped ?? {
+    ...claim,
+    ...(incomplete
+      ? { outcome: 'unknown', reason: 'incomplete-observation' }
+      : {}),
+    sampleAt: claim.sampleAt ?? rows.at(-1)?.at ?? null,
+  }
+  return publish(dir, 'end.json', final)
 }
 
 /**
@@ -227,11 +303,20 @@ export async function watchTrial(
   const started = Date.parse(trial.started)
   const deadline = Date.parse(trial.deadline)
   const clock = () => new Date(now()).toISOString()
-  const recovered = await settleRecordedStop(dir, rows, deadline)
-  if (recovered) return recovered
+  const recovered = await recordedStop(dir, rows, deadline)
+  if (recovered)
+    return closeObserver(
+      dir,
+      recovered.outcome,
+      recovered.at,
+      deadline,
+      recovered.sampleAt,
+    )
   while (true) {
     const existing = await readRecord(join(dir, 'end.json'))
     if (existing) return existing
+    if (await readRecord(join(dir, 'closing.json')))
+      return closeObserver(dir, 'unknown', clock(), deadline)
     if (signal?.aborted)
       return closeObserver(dir, 'observer-interrupted', clock(), deadline)
     if (now() >= deadline)
@@ -239,7 +324,9 @@ export async function watchTrial(
     const slot = Math.floor((now() - started) / (declaration.interval * 1000))
     // Retries and overlapping observers share a single durable sample per scheduled interval.
     const recorded = await readRecord(join(dir, `sample-slot-${slot}.json`))
-    const row = recorded ?? (await observe(dir, rows, await sample(), slot))
+    const row =
+      recorded ?? (await observe(dir, sample, { slot }, deadline, now))
+    if (!row) return closeObserver(dir, 'observer-timeout', clock(), deadline)
     note({
       id,
       at: row.at,
@@ -249,9 +336,19 @@ export async function watchTrial(
     })
     if (!recorded || rows.at(-1)?.at !== row.at) rows.push(row)
     if (row.guest.state === 'running') sawRunning = true
-    if (sawRunning && row.guest.state === 'stopped') {
-      const stopped = await settleRecordedStop(dir, rows, deadline)
-      if (stopped) return stopped
+    if (
+      (sawRunning || row.additionalObservation) &&
+      row.guest.state === 'stopped'
+    ) {
+      const stopped = await recordedStop(dir, await history(dir), deadline)
+      if (stopped)
+        return closeObserver(
+          dir,
+          stopped.outcome,
+          stopped.at,
+          deadline,
+          stopped.sampleAt,
+        )
     }
     // The signal and deadline bound the observer without changing or interrupting the workload it watches.
     try {
@@ -284,21 +381,41 @@ export async function controlTrial(
   const ended = await readRecord(join(dir, 'end.json'))
   if (ended) return ended
   const at = new Date(now()).toISOString()
-  if (command === 'plan-stop') return publish(dir, 'plan-stop.json', { at })
+  const deadline = Date.parse(trial.deadline)
+  if (command === 'plan-stop') {
+    const intent = await publish(dir, 'plan-stop.json', { at })
+    // The normal shutdown command waits for this read; it can establish a running witness after the intent.
+    await observe(dir, sample, { afterPlanAt: intent.at }, deadline, now)
+    return intent
+  }
   if (!['healthy', 'disconnected', 'unknown'].includes(outcome))
     throw new Error('Expected outcome healthy, disconnected or unknown.')
   const rows = await history(dir)
-  const deadline = Date.parse(trial.deadline)
-  const recovered = await settleRecordedStop(dir, rows, deadline)
-  if (recovered) return recovered
+  const recovered = await recordedStop(dir, rows, deadline)
+  if (recovered)
+    return closeObserver(
+      dir,
+      recovered.outcome,
+      recovered.at,
+      deadline,
+      recovered.sampleAt,
+    )
   if (Date.parse(at) >= deadline)
     return closeObserver(dir, 'observer-timeout', at, deadline)
-  const row = await observe(dir, rows, await sample())
+  const row = await observe(dir, sample, {}, deadline, now)
+  if (!row) return closeObserver(dir, 'observer-timeout', at, deadline)
   // Finishing must also honor a stop another observer committed while this fresh probe was in flight.
-  const stopped = await settleRecordedStop(dir, await history(dir), deadline)
-  if (stopped) return stopped
+  const stopped = await recordedStop(dir, await history(dir), deadline)
+  if (stopped)
+    return closeObserver(
+      dir,
+      stopped.outcome,
+      stopped.at,
+      deadline,
+      stopped.sampleAt,
+    )
   if (Date.parse(row.at) > deadline)
-    return end(dir, 'observer-timeout', row.at, row.at)
+    return closeObserver(dir, 'observer-timeout', row.at, deadline, row.at)
   if (
     outcome === 'healthy' &&
     !(row.guest.state === 'running' && row.guest.reachable === true)
@@ -310,7 +427,7 @@ export async function controlTrial(
     throw new Error(
       'Disconnection requires a failed guest probe while its running state is confirmed. Use unknown for unavailable inventory.',
     )
-  return end(dir, outcome, row.at, row.at)
+  return closeObserver(dir, outcome, row.at, deadline, row.at)
 }
 
 function countsByOutcome() {
@@ -376,9 +493,10 @@ export async function reportTrials(root) {
     if (!trial) continue
     const ended = await readRecord(join(dir, 'end.json'))
     const rows = await history(dir)
-    const samples = ended
+    const observations = ended
       ? rows.filter((s) => Date.parse(s.at) <= Date.parse(ended.at))
       : rows
+    const samples = observations.filter((row) => !row.additionalObservation)
     const peaks = {}
     const combinations = new Set()
     for (const { host } of samples) {
@@ -410,7 +528,25 @@ export async function reportTrials(root) {
       ...new Set(samples.map((s) => s.guest?.memoryPressure ?? 'unknown')),
     ].sort()
     const outcome = ended?.outcome ?? 'incomplete'
-    const hostRates = samples.map((s) => s.change?.host).filter(Boolean)
+    const pagingIntervals = {}
+    for (const side of ['host', 'guest']) {
+      // A late publication can precede an already-written counter. Reconstruct adjacent deltas from immutable absolute values.
+      const counters = observations
+        .filter(
+          (row) =>
+            Number.isSafeInteger(row[side]?.swapouts) &&
+            Number.isFinite(Date.parse(counterAt(row, side))),
+        )
+        .sort(
+          (a, b) =>
+            Date.parse(counterAt(a, side)) - Date.parse(counterAt(b, side)),
+        )
+      pagingIntervals[side] = counters
+        .slice(1)
+        .map((row, i) => swapoutChange(counters[i], row, side))
+        .filter(Boolean)
+    }
+    const hostRates = pagingIntervals.host
     const pagingRates = hostRates.filter(
       (s) =>
         !s.counterDecreased &&
@@ -425,6 +561,7 @@ export async function reportTrials(root) {
     }
     const record = {
       ...pressureChanges,
+      pagingIntervals,
       ...guestMemory,
       ...peakWorkloadRss(samples),
       guestPressures,

@@ -82,7 +82,8 @@ test('a running VM followed by a confirmed stop leaves host samples, signed pagi
   // Assert
   assert.equal(result.outcome, 'unexpected-stop')
   assert.equal(trials[0].samples, 3)
-  assert.deepEqual(last.change.host, {
+  assert.equal(last.host.swapouts, 3)
+  assert.deepEqual(trials[0].pagingIntervals.host.at(-1), {
     since: new Date(start + 1000).toISOString(),
     seconds: 1,
     pages: -11,
@@ -113,7 +114,7 @@ test('planned stop evidence precedes the stopped sample and remains stable acros
           options.id,
           'plan-stop',
           undefined,
-          undefined,
+          async () => sample(start),
           () => start,
         ),
     ),
@@ -392,7 +393,7 @@ test('a stop plan created inside the inventory query leaves stop order unknown',
         options.id,
         'plan-stop',
         undefined,
-        undefined,
+        async () => sample(start + 1200, 'unknown', null),
         () => start + 1200,
       ),
   )
@@ -451,7 +452,8 @@ test('a reset-only counter retains its signed difference and has no peak paging 
   )
 
   // Assert
-  assert.equal(row.change.host.pages, -8)
+  assert.equal(row.host.swapouts, 2)
+  assert.equal(trials[0].pagingIntervals.host[0].pages, -8)
   assert.equal(trials[0].hostCounterDecreases, 1)
   assert.equal(trials[0].peakHostSwapoutPagesPerSecond, null)
 })
@@ -534,3 +536,212 @@ test(
     assert.equal(JSON.parse(stdout).trials[0].samples, 160)
   },
 )
+
+test('two observers retain the later stop in a shared polling slot without double-counting workload samples', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  const start = Date.now()
+  const firstStarted = Promise.withResolvers(),
+    secondStarted = Promise.withResolvers()
+  const runningSaved = Promise.withResolvers(),
+    secondEnded = Promise.withResolvers()
+  const first = watchTrial(root, options, {
+    now: () => start,
+    sample: async () => {
+      firstStarted.resolve()
+      await secondStarted.promise
+      return sample(start)
+    },
+    note: () => runningSaved.resolve(),
+    sleep: () => secondEnded.promise,
+  })
+  await firstStarted.promise
+
+  // Act
+  const clock = { at: start }
+  const second = await watchTrial(root, options, {
+    ...clocked(clock, async () => {
+      secondStarted.resolve()
+      await runningSaved.promise
+      return sample(start + 100, 'stopped', null)
+    }),
+    sleep: async () => {
+      clock.at = start + 5000
+    },
+  })
+  secondEnded.resolve()
+  const initial = await first
+  const { trials } = await reportTrials(root)
+
+  // Assert
+  assert.equal(second.outcome, 'unexpected-stop')
+  assert.deepEqual(initial, second)
+  assert.equal(trials[0].samples, 1)
+})
+
+test('a rejected concurrent finish resets the paging baseline for the following measured watch interval', async (t) => {
+  // Arrange
+  const root = await fixture(t),
+    start = Date.now(),
+    clock = { at: start }
+  const cfg = { ...options, interval: 2 }
+  const next = clocked(
+    clock,
+    (at) =>
+      at === start
+        ? sample(at, 'running', true, 100)
+        : sample(at, 'stopped', null, 110),
+    async () => {
+      await assert.rejects(
+        controlTrial(
+          root,
+          options.id,
+          'finish',
+          'healthy',
+          async () => sample(start + 1000, 'running', false, 5),
+          () => start + 1000,
+        ),
+        /running and reachable/,
+      )
+    },
+  )
+
+  // Act
+  await watchTrial(root, cfg, next)
+  const { trials } = await reportTrials(root)
+
+  // Assert
+  assert.equal(trials[0].hostCounterDecreases, 1)
+  assert.equal(trials[0].peakHostSwapoutPagesPerSecond, 105)
+})
+
+test('an intent filed after the last running observation cannot classify an already-stopped guest as a planned stop', async (t) => {
+  // Arrange
+  const root = await fixture(t),
+    start = Date.now(),
+    clock = { at: start }
+  const seams = clocked(
+    clock,
+    (at) => (at === start ? sample(at) : sample(at, 'stopped', null)),
+    () =>
+      controlTrial(
+        root,
+        options.id,
+        'plan-stop',
+        undefined,
+        async () => sample(start + 300, 'stopped', null),
+        () => start + 200,
+      ),
+  )
+
+  // Act
+  const ended = await watchTrial(root, options, seams)
+
+  // Assert
+  assert.equal(ended.outcome, 'unknown')
+})
+
+test('timeout waits for an inventory-confirmed stop observed on time while other measurements are still completing', async (t) => {
+  // Arrange
+  const root = await fixture(t),
+    start = Date.now(),
+    clock = { at: start }
+  const inFlight = Promise.withResolvers(),
+    release = Promise.withResolvers()
+  const watch = watchTrial(
+    root,
+    options,
+    clocked(clock, async (at) => {
+      if (at === start) return sample(start)
+      inFlight.resolve()
+      await release.promise
+      const stopped = sample(start + 5000, 'stopped', null)
+      stopped.guest.stateObservedFrom = new Date(start + 1500).toISOString()
+      stopped.guest.stateObservedTo = new Date(start + 2500).toISOString()
+      return stopped
+    }),
+  )
+  await inFlight.promise
+
+  // Act
+  const finish = controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('expired probe'),
+    () => start + 4500,
+  )
+  try {
+    // Observe either durable closing claim; on the old implementation end.json commits prematurely.
+    for (let n = 0; n < 200; n++) {
+      const ready = await Promise.all(
+        ['closing.json', 'end.json'].map(async (name) =>
+          readFile(join(root, options.id, name)).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      )
+      if (ready.some(Boolean)) break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  } finally {
+    release.resolve()
+  }
+  const [watchEnd, finishEnd] = await Promise.all([watch, finish])
+
+  // Assert
+  assert.equal(finishEnd.outcome, 'unexpected-stop')
+  assert.deepEqual(watchEnd, finishEnd)
+})
+
+test('counter rates use the metric clock for each side and require compatible known page units', () => {
+  // Arrange
+  const start = Date.now(),
+    first = sample(start, 'running', true, 10),
+    last = sample(start + 3000, 'running', true, 22)
+  first.host.swapoutsObservedAt = new Date(start).toISOString()
+  last.host.swapoutsObservedAt = new Date(start + 1000).toISOString()
+  first.guest.swapoutsObservedAt = null
+
+  // Act and Assert
+  assert.equal(swapoutChange(first, last, 'host').pagesPerSecond, 12)
+  assert.equal(swapoutChange(first, last, 'guest'), null)
+  last.host.pageSize = 4096
+  assert.equal(swapoutChange(first, last, 'host'), null)
+})
+
+test('an expired unfinished observation leaves a bounded unknown outcome that a repeated finish can read', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  const start = Date.now() - 60000
+  const cfg = { ...options, id: 'lost-probe' }
+  const dir = join(root, cfg.id)
+  await mkdir(dir)
+  await writeFile(
+    join(dir, 'trial.json'),
+    JSON.stringify({
+      ...cfg,
+      started: new Date(start).toISOString(),
+      deadline: new Date(start + 4000).toISOString(),
+    }),
+  )
+  await writeFile(
+    join(dir, 'pending-cccccccc-dddd-aaaa-bbbb-eeeeeeeeeeee.json'),
+    JSON.stringify({ expiresAt: start + 30000 }),
+  )
+
+  // Act
+  const result = await controlTrial(root, cfg.id, 'finish', 'unknown', () =>
+    assert.fail('expired probe'),
+  )
+  const retry = await watchTrial(root, cfg, {
+    sample: () => assert.fail('closed trial'),
+  })
+
+  // Assert
+  assert.equal(result.outcome, 'unknown')
+  assert.equal(result.reason, 'incomplete-observation')
+  assert.deepEqual(retry, result)
+})
