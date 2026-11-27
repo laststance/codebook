@@ -2217,6 +2217,12 @@ test('Set Up AI Chat identifies both the unreadable configuration and its tracke
       return true
     },
   )
+  assert.equal(await readFile(configPath, 'utf8'), damaged)
+  assert.equal(await readFile(copyPath, 'utf8'), original)
+  assert.equal(
+    (await readRecordFile(storage, 'pending.json')).keptName,
+    basename(copyPath),
+  )
   // Repair the interrupted in-place write, then retry through the same public operation.
   await writeFile(configPath, published)
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
@@ -2348,7 +2354,7 @@ test('A completed record kept by an earlier retry releases the compact original 
     '{"theme":"dark","mcpServers":{"codebook":{"command":"node"}}}\n'
   await writeConfig(configPath, published)
   const publishedIno = (await stat(configPath)).ino
-  await writeFile(configPath, withdrawn)
+  swapFile(configPath, withdrawn)
   const copyPath = privateNameOf(configPath, 'codebook-displaced')
   await writeFile(copyPath, original)
   await writeRecordFile(storage, 'pending.json', {
