@@ -499,6 +499,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       acceptedWithoutListener: true,
     })
     if (!verdict.owned) throw new StudyError(verdict.code, verdict.message)
+    // A Bun launch arms its stops only now, with the server's files loaded and before any request.
+    await this.core.armDeferredStops()
     this.readiness.stop()
     this.address = { host: accepted.host, port }
     this.core.markPrepared()

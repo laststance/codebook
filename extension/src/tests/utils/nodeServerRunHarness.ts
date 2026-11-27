@@ -21,6 +21,7 @@ import type {
   NodeServerCloseOptions,
   NodeServerExit,
 } from '../../utils/launchNodeServer'
+import type { NodeServerLoader } from '../../utils/resolveNodeServerLaunch'
 
 import { createManualClock } from './createManualClock'
 import { defer } from './defer'
@@ -51,6 +52,8 @@ export type HarnessOptions = {
   /** Runs inside the debugger's entry release, to emit pauses before readiness. */
   duringRelease?: (debug: FakeNodeServerDebugger) => void
   resolveLaunchFails?: StudyError
+  /** The loader the fake launch resolves to: node by default; a Bun loader makes the run arm its stops after readiness. */
+  launchLoader?: NodeServerLoader
   portTaken?: StudyError
   listener?: Awaited<ReturnType<NodeServerRunDependencies['verifyListener']>>
   /** Replaces the readiness wait; it gets the run's input. */
@@ -118,8 +121,13 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
     this.order.push('assertSourcesUnchanged')
     if (this.options.sourcesChanged) throw this.options.sourcesChanged
   }
-  async attach(): Promise<void> {
+  /** The runtime each attach named (`node` when the run named none). */
+  readonly attachedRuntimes: string[] = []
+  /** The options each entry release received (`{ entryPause: true }` when none were given). */
+  readonly releaseOptions: { entryPause: boolean }[] = []
+  async attach(input?: { runtime?: 'node' | 'bun' }): Promise<void> {
     this.order.push('attach')
+    this.attachedRuntimes.push(input?.runtime ?? 'node')
     if (this.options.attachFails) throw this.options.attachFails
   }
   subscribe(handlers: NodeServerDebuggerHandlers): { dispose(): void } {
@@ -145,8 +153,12 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
       boundLine: stop.line,
     }))
   }
-  async releaseEntry(): Promise<void> {
+  async releaseEntry(
+    _signal?: AbortSignal,
+    options: { entryPause: boolean } = { entryPause: true },
+  ): Promise<void> {
     this.order.push('releaseEntry')
+    this.releaseOptions.push(options)
     this.options.duringRelease?.(this)
   }
   setRequestWindow(open: boolean): void {
@@ -495,7 +507,7 @@ export function createHarness(options: HarnessOptions = {}) {
       return {
         packageRoot: WORKSPACE,
         entry: `${WORKSPACE}/server.js`,
-        loader: { kind: 'node' },
+        loader: options.launchLoader ?? { kind: 'node' },
       }
     },
     resolveStops: async () => {

@@ -13,6 +13,7 @@ import {
   nodeEntrySchema,
   nodeLoaderSchema,
   nodePackageRootSchema,
+  nodeServerLoaderSchema,
   nodeServerPortSchema,
   withDefaultNodeLoader,
 } from './nodeLaunchSchemas'
@@ -234,7 +235,7 @@ export const nodeServerConfigSchema = z
     entry: nodeEntrySchema.describe(
       'The server entry file, relative to packageRoot, as its package runs it (for example "src/server.ts").',
     ),
-    loader: nodeLoaderSchema,
+    loader: nodeServerLoaderSchema,
     port: nodeServerPortSchema,
     request: requestSchema,
     signIn: signInSchema

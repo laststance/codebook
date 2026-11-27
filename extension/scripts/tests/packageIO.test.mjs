@@ -670,6 +670,26 @@ test('package inspection rejects a VS Code import in the Vite launcher', async (
   )
 })
 
+// Value: protects=a `loader: "bun"` server run, which preloads dist/bunInspectorBootstrap.js into the learner's Bun, where neither the editor's module nor the extension's dependencies exist; fails_when=the bootstrap's bundle may import vscode or a package, so every Bun run fails before its inspector opens; why_new=Cycle 0152 Task 4b ships the bootstrap as its own bundled entry; seam=a metafile written by the test; no_claim=that Bun runs the bootstrap (the real-Bun launch test does)
+test('package inspection rejects a non-built-in import in the Bun inspector bootstrap', async (context) => {
+  // Arrange
+  const fixture = await sourceFixture(context)
+  const metafile = {
+    inputs: {},
+    outputs: {
+      'dist/extension.js': { imports: [{ path: 'vscode', external: true }] },
+      'dist/bunInspectorBootstrap.js': {
+        imports: [{ path: 'vscode', external: true }],
+      },
+    },
+  }
+  // Act / Assert
+  await assert.rejects(
+    inspectBundle(metafile, fixture.repository, new Map()),
+    /Bun inspector bootstrap contains a non-built-in import/,
+  )
+})
+
 test('a bundled dependency without its license text prevents package staging', async (context) => {
   // Arrange
   const fixture = await sourceFixture(context),

@@ -14,6 +14,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'dist/devinMcpBridge.js',
   'dist/wikiPageWorker.js',
   'dist/viteLauncher.js',
+  'dist/bunInspectorBootstrap.js',
   'dist/build.json',
   'src/assets/book.svg',
   'src/assets/learning.svg',

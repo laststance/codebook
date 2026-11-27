@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { apiServerDeclarationSchema } from '../apiServerDeclarationSchema'
+import { nodeScriptConfigSchema } from '../nodeScriptConfigSchemas'
 import { nodeServerConfigSchema } from '../nodeServerConfigSchemas'
 import { describeNodeServerConfigurationIssues } from '../utils/describeNodeServerConfigurationIssues'
 
@@ -25,6 +27,59 @@ function minimalGetDeclaration() {
     inspections: [{ path: 'c.req.path', mode: 'value', required: true }],
   }
 }
+
+// Value: protects=a node-server declaration may name loader "bun" for a TypeScript or a JavaScript entry and keeps it (Cycle 0152); fails_when=the schema refuses bun, rewrites it to tsx/node, or applies the "node runs JavaScript only" rule to Bun; seam=the declaration schema; no_claim=that a Bun is installed (resolveBunRuntime checks that at start)
+test('a node-server declaration runs its TypeScript or JavaScript entry on Bun when it names loader bun', () => {
+  // Arrange
+  const typescriptOnBun = { ...minimalGetDeclaration(), loader: 'bun' }
+  const javascriptOnBun = {
+    ...minimalGetDeclaration(),
+    entry: 'server.js',
+    loader: 'bun',
+  }
+  // Act
+  const typescript = nodeServerConfigSchema.parse(typescriptOnBun)
+  const javascript = nodeServerConfigSchema.parse(javascriptOnBun)
+  // Assert
+  assert.equal(typescript.loader, 'bun')
+  assert.equal(javascript.loader, 'bun')
+})
+
+// Value: protects=Bun stays a node-server choice only: the node-script declaration and the apiServer declaration of a browser run still accept tsx and node alone; fails_when=bun leaks into a route that launches node unconditionally; seam=the two shared schemas; no_claim=future Bun support of those routes
+test('the node-script and apiServer declarations still refuse loader bun', () => {
+  // Arrange
+  const script = {
+    version: 1,
+    adapter: 'node-script',
+    book: minimalGetDeclaration().book,
+    entry: 'scripts/seed.ts',
+    loader: 'bun',
+    source: minimalGetDeclaration().source,
+    inspections: minimalGetDeclaration().inspections,
+  }
+  const apiServer = {
+    packageRoot: 'server',
+    entry: 'src/index.ts',
+    port: 4100,
+    loader: 'bun',
+  }
+  // Act
+  const scriptResult = nodeScriptConfigSchema.safeParse(script)
+  const apiServerResult = apiServerDeclarationSchema.safeParse(apiServer)
+  // Assert
+  assert.equal(scriptResult.success, false)
+  assert.ok(
+    scriptResult.error?.issues.some(
+      (issue) => issue.path.join('.') === 'loader',
+    ),
+  )
+  assert.equal(apiServerResult.success, false)
+  assert.ok(
+    apiServerResult.error?.issues.some(
+      (issue) => issue.path.join('.') === 'loader',
+    ),
+  )
+})
 
 test('a node-server GET declaration runs its TypeScript entry from the repository root through tsx', () => {
   // protects: the defaults the launcher relies on; fails_when: packageRoot or loader lose their defaults; no_claim: the loader exists on disk.

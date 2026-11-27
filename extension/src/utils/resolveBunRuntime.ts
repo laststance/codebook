@@ -1,0 +1,148 @@
+import { execFile } from 'node:child_process'
+import { homedir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
+import { promisify } from 'node:util'
+
+import { z } from 'zod'
+
+import { BUN_MINIMUM_VERSION, BUN_VERSION_READ_TIMEOUT_MS } from '../constants'
+import { StudyError } from '../errors'
+
+import { isNewerExtensionVersion } from './isNewerExtensionVersion'
+
+const executeFile = promisify(execFile)
+
+/** What the Bun asked by {@link BUN_IDENTITY_SCRIPT} prints: its release and its own absolute path. */
+const bunIdentitySchema = z.strictObject({
+  version: z.string().min(1),
+  executable: z.string().min(1),
+})
+
+/** The one-line script Bun runs to name itself: the PATH lookup ends at the real binary, so the run records the path it launches. */
+const BUN_IDENTITY_SCRIPT =
+  'console.log(JSON.stringify({version:Bun.version,executable:process.execPath}))'
+
+/** Where {@link resolveBunRuntime} looks for Bun, in its order, as a refusal sentence names it. */
+export const BUN_LOOKUP_DESCRIPTION =
+  "the first bun on the editor's PATH, then ~/.bun/bin/bun"
+
+/** The Bun a `loader: "bun"` node-server run launches: its absolute path and its release. */
+export type ResolvedBunRuntime = { executable: string; version: string }
+
+/** Runs one program with arguments and answers its stdout; {@link resolveBunRuntime} reads Bun through it, and tests replace it. */
+export type RunBunProgram = (program: string, args: string[]) => Promise<string>
+
+/**
+ * Runs a candidate Bun once within {@link BUN_VERSION_READ_TIMEOUT_MS}; the default reader of {@link resolveBunRuntime}.
+ * @param program - `bun` (looked up on the PATH) or an absolute path.
+ * @param args - The arguments, here the identity script.
+ * @returns The program's stdout.
+ * @throws The `execFile` error: `ENOENT` when no such program exists, a timeout or a non-zero exit otherwise.
+ * @example await runBunProgram('bun', ['-e', 'console.log(Bun.version)']) // => '1.4.5\n'
+ */
+async function runBunProgram(program: string, args: string[]): Promise<string> {
+  const { stdout } = await executeFile(program, args, {
+    timeout: BUN_VERSION_READ_TIMEOUT_MS,
+  })
+  return stdout
+}
+
+/**
+ * Builds the refusal of a `loader: "bun"` run whose Bun is missing, unreadable or too old, raised before anything is launched.
+ * @param message - What was found, in the learner's words.
+ * @param recovery - What the learner does next.
+ * @returns The `NODE_SERVER_SOURCE_REFUSED` {@link StudyError} with that recovery.
+ * @example bunRefusal('… no bun was found …', 'Install Bun 1.4.4 or later …')
+ */
+function bunRefusal(message: string, recovery: string): StudyError {
+  return new StudyError(
+    'NODE_SERVER_SOURCE_REFUSED',
+    message,
+    message,
+    recovery,
+  )
+}
+
+/**
+ * Asks one candidate for its identity; a candidate that does not exist answers `undefined`, so the lookup tries the next one.
+ * @param program - The candidate Bun.
+ * @param runProgram - Runs it ({@link RunBunProgram}).
+ * @returns
+ * - the identity output when the program ran
+ * - `undefined` when no such program exists (`ENOENT`)
+ * @throws The refusal naming the unreadable Bun when it exists but does not answer (a timeout, a crash, a non-zero exit).
+ * @example await askBunIdentity('bun', runBunProgram) // => '{"version":"1.4.5","executable":"/Users/learner/.bun/bin/bun"}\n'
+ */
+async function askBunIdentity(
+  program: string,
+  runProgram: RunBunProgram,
+): Promise<string | undefined> {
+  try {
+    return await runProgram(program, ['-e', BUN_IDENTITY_SCRIPT])
+  } catch (error) {
+    // A missing candidate lets the lookup go on; any other failure is a Bun that exists and does not answer.
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      return undefined
+    throw bunRefusal(
+      `node-server's loader "bun" found a Bun (${BUN_LOOKUP_DESCRIPTION}) that did not answer \`bun -e\` within ${BUN_VERSION_READ_TIMEOUT_MS / 1000} s, so nothing was launched.`,
+      `Check that \`bun --version\` works in a terminal, reinstall Bun ${BUN_MINIMUM_VERSION} or later if it does not, then start a new run.`,
+    )
+  }
+}
+
+/**
+ * Finds the Bun a `loader: "bun"` node-server runs on and checks its release before anything is launched.
+ *
+ * Why it exists: Bun is the learner's own installation, outside the repository and the extension; a missing or too old Bun must be named before the server starts, never discovered as a crash.
+ * When it runs: once per `loader: "bun"` start, from `resolveNodeServerLaunch`, before the port check and the launch.
+ *
+ * @param runProgram - Runs a candidate Bun ({@link RunBunProgram}); tests pass a fake.
+ * @param home - The learner's home folder, where `~/.bun/bin/bun` lives.
+ * @returns The absolute path of the Bun that answered and its release (without a pre-release suffix).
+ * @throws `NODE_SERVER_SOURCE_REFUSED` when no Bun is found ({@link BUN_LOOKUP_DESCRIPTION}), when one does not answer or answers unreadably, or when its release is older than {@link BUN_MINIMUM_VERSION}.
+ * @example
+ * await resolveBunRuntime() // => { executable: '/Users/learner/.bun/bin/bun', version: '1.4.5' }
+ */
+export async function resolveBunRuntime(
+  runProgram: RunBunProgram = runBunProgram,
+  home: string = homedir(),
+): Promise<ResolvedBunRuntime> {
+  const candidates = ['bun', join(home, '.bun', 'bin', 'bun')]
+  let output: string | undefined
+  // The first candidate that exists answers; a later one is asked only when the earlier one does not exist.
+  for (const candidate of candidates) {
+    output = await askBunIdentity(candidate, runProgram)
+    if (output !== undefined) break
+  }
+  if (output === undefined)
+    throw bunRefusal(
+      `node-server's loader "bun" needs Bun ${BUN_MINIMUM_VERSION} or later, and no bun was found (${BUN_LOOKUP_DESCRIPTION}), so nothing was launched.`,
+      `Install Bun ${BUN_MINIMUM_VERSION} or later (https://bun.sh) so that \`bun\` is on the editor's PATH or in ~/.bun/bin, reload the editor window, then start a new run.`,
+    )
+  let identity: unknown
+  // The identity is the last line Bun printed; text that is no JSON leaves it unknown, which the schema refuses.
+  try {
+    identity = JSON.parse(output.trim().split('\n').at(-1) ?? '')
+  } catch {
+    identity = undefined
+  }
+  const parsed = bunIdentitySchema.safeParse(identity)
+  if (!parsed.success || !isAbsolute(parsed.data.executable))
+    throw bunRefusal(
+      `node-server's loader "bun" could not read the release of the Bun it found (${BUN_LOOKUP_DESCRIPTION}), so nothing was launched.`,
+      `Check that \`bun --version\` prints a release in a terminal, reinstall Bun ${BUN_MINIMUM_VERSION} or later if it does not, then start a new run.`,
+    )
+  // A pre-release or build suffix (`1.4.6-canary.3+abc`) does not change which release line the Bun belongs to.
+  const version = parsed.data.version.split(/[-+]/)[0] ?? ''
+  if (!/^\d+\.\d+\.\d+$/.test(version))
+    throw bunRefusal(
+      `node-server's loader "bun" found a Bun whose release (${parsed.data.version}) is not a dotted release number, so nothing was launched.`,
+      `Install a released Bun ${BUN_MINIMUM_VERSION} or later (https://bun.sh), then start a new run.`,
+    )
+  if (isNewerExtensionVersion(BUN_MINIMUM_VERSION, version))
+    throw bunRefusal(
+      `node-server's loader "bun" needs Bun ${BUN_MINIMUM_VERSION} or later, and the Bun found (${BUN_LOOKUP_DESCRIPTION}) is ${version}, so nothing was launched.`,
+      `Update Bun to ${BUN_MINIMUM_VERSION} or later (\`bun upgrade\`), then start a new run.`,
+    )
+  return { executable: parsed.data.executable, version }
+}

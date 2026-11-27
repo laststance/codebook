@@ -309,7 +309,7 @@ test('the node-server help says the target’s own deadlines keep running while 
   assert.ok(matched, limits)
 })
 
-// protects=the NODE_SERVER_SOURCE_REFUSED row names every file a start can refuse (packageRoot, entry, a stop's file, the repository's tsx); fails_when=the row omits a stop's file, which resolveNodeServerStops refuses; no_claim=the recovery wording
+// protects=the NODE_SERVER_SOURCE_REFUSED row names every file a start can refuse (packageRoot, entry, a stop's file, the repository's tsx) and, since API 1.46, a declared loader bun with no usable Bun; fails_when=the row omits a stop's file, which resolveNodeServerStops refuses, or the Bun refusal resolveBunRuntime raises; no_claim=the recovery wording
 test('the node-server help names a stop’s file among the paths NODE_SERVER_SOURCE_REFUSED refuses', async () => {
   // Arrange
   const { body } = await servedHelp()
@@ -322,7 +322,7 @@ test('the node-server help names a stop’s file among the paths NODE_SERVER_SOU
   // Assert
   assert.equal(
     row.when,
-    "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository",
+    "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository, or a declared loader bun finds no Bun 1.4.4 or later (the first bun on the editor's PATH, then ~/.bun/bin/bun), or one that does not answer",
   )
 })
 

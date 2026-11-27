@@ -270,6 +270,8 @@ export class NodeProcessRun {
   private debug?: NodeServerDebugger
   private currentInspectorPort?: number
   private stopViews: NodeServerStop[] = []
+  /** A Bun launch's declared stops, held from the attach until {@link armDeferredStops} arms them once the server listens. */
+  private deferredStops?: NodeServerStopTarget[]
   private prepared = false
   private currentLifecycle: NodeProcessLifecycle = 'live'
   private stopAttempt?: Promise<void>
@@ -528,13 +530,46 @@ export class NodeProcessRun {
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
     ])
     const debug = this.requireDebugger()
-    await this.attachAndArm(server, launched.packageRoot, stops, attachSignal)
+    const runtime = launched.loader.kind === 'bun' ? 'bun' : 'node'
+    await this.attachAndArm(
+      server,
+      launched.packageRoot,
+      stops,
+      attachSignal,
+      runtime,
+    )
     preparation.beforeRelease?.()
+    // Bun offers no paused entry: the debugger's attach already let the server run, so nothing is continued.
     await this.step(`releasing the ${this.words.noun}`, () =>
-      debug.releaseEntry(signal),
+      debug.releaseEntry(signal, { entryPause: runtime === 'node' }),
     )
     this.released = true
     await preparation.afterRelease()
+  }
+
+  /**
+   * Arms the stops a Bun launch deferred, once the owner knows the server is up (its port listens) and before any request is sent.
+   *
+   * Why it exists: Bun has no paused entry, and js-debug's first breakpoint of a not yet loaded TypeScript file is a guess at the source line that it replaces once the file's source map is known; Bun removes the replacement with the guess when both bind the same place, so a stop armed before the load could silently never pause (Cycle 0152 probe E1-M2). Once the files are loaded, each stop is set once, at its mapped place.
+   * When it runs: called by the node-server run when its readiness check passed, before the run is marked prepared; a node launch armed its stops at the entry pause already, so the call does nothing.
+   * @throws The typed error of the arming step: a stop that binds elsewhere or not at all.
+   * @example await core.armDeferredStops()
+   */
+  async armDeferredStops(): Promise<void> {
+    const stops = this.deferredStops
+    if (!stops) return
+    this.deferredStops = undefined
+    const signal = AbortSignal.any([
+      this.abort.signal,
+      AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
+    ])
+    const armed = await this.step('arming the declared stops', () =>
+      this.requireDebugger().armStops(stops, signal),
+    )
+    this.applyBoundLines(armed)
+    this.record('node-server.stops-armed-after-listen', {
+      stops: armed.length,
+    })
   }
 
   /**
@@ -655,12 +690,13 @@ export class NodeProcessRun {
     await this.debug?.release().catch(() => undefined)
   }
 
-  /** Attaches the debugger, verifies the inspector, listens to its pauses and arms every declared stop. */
+  /** Attaches the debugger, verifies the inspector, listens to its pauses and arms every declared stop; a Bun launch defers the arming to {@link armDeferredStops}. */
   private async attachAndArm(
     server: OwnedNodeProcess,
     packageRoot: string,
     stops: NodeServerStopTarget[],
     signal: AbortSignal,
+    runtime: 'node' | 'bun',
   ): Promise<void> {
     const debug = this.requireDebugger()
     const { pid, processGroup } = this.identityOf(server)
@@ -671,7 +707,14 @@ export class NodeProcessRun {
     // The record is written before the attach, while the server waits paused: a window that dies now leaves a record the next activation reaps.
     await this.rememberLaunchedProcess(server, packageRoot)
     await this.step('attaching the debugger', () =>
-      debug.attach({ endpoint, packageRoot, pid, processGroup, signal }),
+      debug.attach({
+        endpoint,
+        packageRoot,
+        pid,
+        processGroup,
+        signal,
+        runtime,
+      }),
     )
     this.record('node-server.attached', { pid })
     debug.subscribe({
@@ -679,6 +722,11 @@ export class NodeProcessRun {
       onResume: (token) => this.onDebuggerResume(token),
       onEnd: (reason) => void this.onDebuggerEnd(reason),
     })
+    // A Bun launch arms its stops once the server listens, before any request (no entry pause holds it).
+    if (runtime === 'bun') {
+      this.deferredStops = stops
+      return
+    }
     // Every declared stop is armed before the server is released (D7).
     const armed = await this.step('arming the declared stops', () =>
       debug.armStops(stops, signal),

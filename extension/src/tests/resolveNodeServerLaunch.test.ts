@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -213,4 +220,72 @@ test('a server entry that does not exist is refused with the folder it was looke
     refusal.message,
     "node-server's entry src/server.ts is not a file inside packageRoot apps/api by its real path.",
   )
+})
+
+// Value: protects=a node-server declaration with loader bun resolves to the learner's checked Bun and the compiled inspector bootstrap beside the extension's code, after the same folder and entry checks; fails_when=the bun loader resolves to node or tsx, skips the Bun check, or names a bootstrap that is not the compiled file in dist (a path computed from dist/utils would leave dist once the package bundles every module into dist/extension.js); seam=a fake Bun lookup; no_claim=a real Bun (resolveBunRuntime's own tests and the real-Bun launch test cover it)
+test('a server declared with loader bun resolves to the checked Bun and the compiled inspector bootstrap', async (t) => {
+  // Arrange
+  const { repository } = await temporaryFolders(t)
+  await writeServerEntry(repository)
+  let lookups = 0
+  const resolveBun = async () => {
+    lookups += 1
+    return { executable: '/Users/learner/.bun/bin/bun', version: '1.4.5' }
+  }
+  // Act
+  const launch = await resolveNodeServerLaunch(
+    repository,
+    { packageRoot: 'apps/api', entry: 'src/server.ts', loader: 'bun' },
+    resolveBun,
+  )
+  // Assert
+  assert.equal(lookups, 1)
+  assert.equal(launch.entry, join(repository, 'apps/api/src/server.ts'))
+  assert.equal(launch.loader.kind, 'bun')
+  assert.ok(launch.loader.kind === 'bun')
+  assert.equal(launch.loader.executable, '/Users/learner/.bun/bin/bun')
+  assert.equal(launch.loader.version, '1.4.5')
+  // The compiled tree puts this test in dist/tests, so the bootstrap is the dist file one folder up.
+  assert.equal(
+    launch.loader.bootstrap,
+    join(__dirname, '..', 'bunInspectorBootstrap.js'),
+  )
+  assert.equal((await stat(launch.loader.bootstrap)).isFile(), true)
+})
+
+// Value: protects=a refused Bun lookup stops the launch with its own refusal, and a missing entry is refused before Bun is even looked up; fails_when=a Bun refusal is swallowed, or Bun is probed for a declaration whose entry does not exist; seam=a fake Bun lookup that refuses; no_claim=the refusal's wording (resolveBunRuntime's tests pin it)
+test('a refused Bun lookup refuses the launch, and a missing entry is refused before Bun is looked up', async (t) => {
+  // Arrange
+  const { repository } = await temporaryFolders(t)
+  await writeServerEntry(repository)
+  let lookups = 0
+  const refusingBun = async () => {
+    lookups += 1
+    throw new StudyError('NODE_SERVER_SOURCE_REFUSED', 'no bun was found')
+  }
+  // Act
+  const refused = await resolveNodeServerLaunch(
+    repository,
+    { packageRoot: 'apps/api', entry: 'src/server.ts', loader: 'bun' },
+    refusingBun,
+  ).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  const lookupsAfterRefusal = lookups
+  const missingEntry = await resolveNodeServerLaunch(
+    repository,
+    { packageRoot: 'apps/api', entry: 'src/missing.ts', loader: 'bun' },
+    refusingBun,
+  ).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(refused instanceof StudyError)
+  assert.equal(refused.message, 'no bun was found')
+  assert.equal(lookupsAfterRefusal, 1)
+  assert.ok(missingEntry instanceof StudyError)
+  assert.match(missingEntry.message, /entry src\/missing\.ts is not a file/)
+  assert.equal(lookups, 1)
 })

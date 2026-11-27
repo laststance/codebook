@@ -1,6 +1,11 @@
 import { z } from 'zod'
 
-import { NODE_SERVER_PORT_MAX, NODE_SERVER_PORT_MIN } from './constants'
+import {
+  BUN_LOADER_API,
+  BUN_MINIMUM_VERSION,
+  NODE_SERVER_PORT_MAX,
+  NODE_SERVER_PORT_MIN,
+} from './constants'
 import { repositoryPathSchema } from './sourceSchemas'
 
 // The launch fields every Node process Codebook starts declares (entry, folder, loader, port), kept free of the repository configuration schemas so the node-server and node-script configurations and the `apiServer` declaration of a version 3 `expo-web-dev` configuration share them without an import cycle. `nodeServerConfigSchemas` re-exports them for its existing importers.
@@ -44,6 +49,21 @@ export const nodeLoaderSchema = z
     'How node runs the entry: "tsx" through the repository\'s own tsx, "node" for a JavaScript entry. Defaults from the entry\'s extension.',
   )
 
+/** Every loader a Node run's declaration can name: the shared `tsx` and `node`, and `bun`, which only a node-server declaration accepts ({@link nodeServerLoaderSchema}). */
+export type NodeRunLoader = 'tsx' | 'node' | 'bun'
+
+/**
+ * How a node-server runs its entry: the shared `tsx` and `node` loaders, or `bun`, which runs the entry on the Bun runtime (Cycle 0152).
+ * Why separate: the node-script and `apiServer` routes launch Node only, so `bun` stays out of {@link nodeLoaderSchema}, which they share.
+ * Used by the node-server configuration schema; `bun` is never a default, only a declared choice.
+ */
+export const nodeServerLoaderSchema = z
+  .enum(['tsx', 'node', 'bun'])
+  .optional()
+  .describe(
+    `How the server runs its entry: "tsx" through the repository's own tsx, "node" for a JavaScript entry, "bun" on the Bun runtime (API ${BUN_LOADER_API}; Bun ${BUN_MINIMUM_VERSION} or later on the PATH or in ~/.bun/bin). Defaults from the entry's extension; "bun" is used only when declared.`,
+  )
+
 /**
  * The port a repository Node server listens on, as its own code binds it.
  * Shared by {@link nodeServerConfigSchema} and the `apiServer` declaration of a version 3 `expo-web-dev` configuration.
@@ -66,7 +86,7 @@ export const nodeServerPortSchema = z
  * @param context - The refinement context that receives the issue at `loader`.
  */
 export function addNodeLoaderIssue(
-  configuration: { entry: string; loader?: 'tsx' | 'node' | undefined },
+  configuration: { entry: string; loader?: NodeRunLoader | undefined },
   context: z.RefinementCtx,
 ): void {
   if (
@@ -88,10 +108,12 @@ export function addNodeLoaderIssue(
  * @returns The configuration with a concrete loader.
  */
 export function withDefaultNodeLoader<
-  Configuration extends { entry: string; loader?: 'tsx' | 'node' | undefined },
+  Configuration extends { entry: string; loader?: NodeRunLoader | undefined },
 >(
   configuration: Configuration,
-): Omit<Configuration, 'loader'> & { loader: 'tsx' | 'node' } {
+): Omit<Configuration, 'loader'> & {
+  loader: NonNullable<Configuration['loader']> | 'tsx' | 'node'
+} {
   return {
     ...configuration,
     loader:

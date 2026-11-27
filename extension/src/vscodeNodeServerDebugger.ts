@@ -37,6 +37,7 @@ import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
+import { moduleBindingNamesOf } from './utils/moduleBindingNamesOf'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
@@ -84,6 +85,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private handlers?: NodeServerDebuggerHandlers
   private entryReleased = false
   private entryToken?: number
+  /** The runtime the attach named: a Bun launch maps Bun's source-map paths and copies its function scopes, which arrive as closures, into history. */
+  private runtime: 'node' | 'bun' = 'node'
   private nextToken = 0
   private classification: Promise<void> = Promise.resolve()
   private releaseBegun = false
@@ -310,8 +313,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     pid: number
     processGroup: number
     signal: AbortSignal
+    runtime?: 'node' | 'bun'
   }): Promise<void> {
     const { workspace, runId } = this.input
+    this.runtime = input.runtime ?? 'node'
     const started = await vscode.debug.startDebugging(
       vscode.workspace.getWorkspaceFolder(vscode.Uri.file(workspace)),
       {
@@ -324,6 +329,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         autoAttachChildProcesses: false,
         continueOnAttach: false,
         sourceMaps: true,
+        // Bun's inline source maps name each file from the folder Bun started in (`/src/index.ts`), which is the package root's real path.
+        ...(this.runtime === 'bun'
+          ? { sourceMapPathOverrides: { '/*': `${input.packageRoot}/*` } }
+          : {}),
         timeout: NODE_TEST_ATTACH_TIMEOUT_MS,
       },
       // The editor would save the learner's modified documents as the session starts; a learner's document is saved by the learner alone.
@@ -436,8 +445,18 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     return this.bound.session
   }
 
-  async releaseEntry(signal: AbortSignal): Promise<void> {
+  async releaseEntry(
+    signal: AbortSignal,
+    options: { entryPause: boolean } = { entryPause: true },
+  ): Promise<void> {
     const session = this.boundSession()
+    // A Bun launch has no paused entry to continue: every stop from here on goes to the run.
+    if (!options.entryPause) {
+      this.entryToken = undefined
+      this.entryReleased = true
+      for (const stop of this.sessionStops) this.enqueueClassification(stop)
+      return
+    }
     const first = await waitUntil(
       () => this.sessionStops.find((stop) => stop.sessionId === session.id),
       'the entry pause of the server',
@@ -635,6 +654,16 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       workspaceRoot: this.input.workspace,
       // Masked before the snapshot's cut, so a secret straddling it leaves no fragment; read at call time.
       maskKnownText: (text) => this.input.maskKnownText?.(text) ?? text,
+      // Bun reports the stopped function's own scopes as closures; its module's top-level names mark where the module's scope begins.
+      ...(this.runtime === 'bun'
+        ? {
+            bunClosures: {
+              moduleBindingNames: moduleBindingNamesOf(
+                sourceBytes.toString('utf8'),
+              ),
+            },
+          }
+        : {}),
       limits: {
         timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
         maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,

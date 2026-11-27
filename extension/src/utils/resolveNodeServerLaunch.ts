@@ -4,15 +4,19 @@ import { pathToFileURL } from 'node:url'
 
 import { z } from 'zod'
 
+import { BUN_INSPECTOR_BOOTSTRAP } from '../bunInspectorBootstrapPath'
 import { StudyError } from '../errors'
 import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
 
 import { isInsideFolder } from './isInsideFolder'
 import { repositoryPosixPath } from './repositoryPosixPath'
+import { resolveBunRuntime, type ResolvedBunRuntime } from './resolveBunRuntime'
 
-/** How node runs the server's entry: directly, or through the repository's own tsx loader, named by its real path and the file URL `--import` receives. */
+/** How the server's entry runs: directly on node, through the repository's own tsx loader (named by its real path and the file URL `--import` receives), or on the learner's Bun with Codebook's inspector bootstrap preloaded. */
 export type NodeServerLoader =
-  { kind: 'node' } | { kind: 'tsx'; path: string; url: string }
+  | { kind: 'node' }
+  | { kind: 'tsx'; path: string; url: string }
+  | ({ kind: 'bun'; bootstrap: string } & ResolvedBunRuntime)
 
 /** The real paths a node-server launch runs: the folder it starts in, its entry and its loader. */
 export type ResolvedNodeServerLaunch = {
@@ -192,6 +196,37 @@ async function resolveTsxLoader(
 }
 
 /**
+ * Resolves the declared loader into what the launch runs; called by {@link resolveNodeServerLaunch} once the folder and the entry are checked.
+ * @param workspace - The opened repository's real root.
+ * @param packageRoot - The package folder's real path.
+ * @param configuration - The declared folder and loader.
+ * @param resolveBun - Finds and checks the learner's Bun ({@link resolveBunRuntime}).
+ * @returns
+ * - `{ kind: 'tsx', … }` for `tsx`, the repository's own tsx
+ * - `{ kind: 'bun', … }` for `bun`, the checked Bun and the bootstrap to preload
+ * - `{ kind: 'node' }` for `node`
+ * @throws `NODE_SERVER_SOURCE_REFUSED` when the tsx or the Bun is missing or unusable.
+ * @example await resolveLoader('/repo', '/repo/apps/api', { packageRoot: 'apps/api', loader: 'bun' }, resolveBunRuntime) // => { kind: 'bun', executable: '/Users/learner/.bun/bin/bun', version: '1.4.5', bootstrap: '…/dist/bunInspectorBootstrap.js' }
+ */
+async function resolveLoader(
+  workspace: string,
+  packageRoot: string,
+  configuration: Pick<NodeServerConfiguration, 'packageRoot' | 'loader'>,
+  resolveBun: () => Promise<ResolvedBunRuntime>,
+): Promise<NodeServerLoader> {
+  if (configuration.loader === 'tsx')
+    return resolveTsxLoader(workspace, packageRoot, configuration.packageRoot)
+  // Bun is the learner's own installation, so it is found and checked before anything is launched.
+  if (configuration.loader === 'bun')
+    return {
+      kind: 'bun',
+      bootstrap: BUN_INSPECTOR_BOOTSTRAP,
+      ...(await resolveBun()),
+    }
+  return { kind: 'node' }
+}
+
+/**
  * Checks a node-server declaration's launch inputs on disk before anything is spawned: the package root is a folder inside the opened repository, the entry a file inside the package root, and a TypeScript entry's loader the repository's own tsx, each by its real path.
  * Called by the node-server run's preparation after the declaration parsed ({@link nodeServerConfigSchema}) and before the launch ({@link launchNodeServer}), which runs exactly these real paths.
  * @param workspace - The opened repository's real root.
@@ -208,6 +243,7 @@ export async function resolveNodeServerLaunch(
     NodeServerConfiguration,
     'packageRoot' | 'entry' | 'loader'
   >,
+  resolveBun: () => Promise<ResolvedBunRuntime> = () => resolveBunRuntime(),
 ): Promise<ResolvedNodeServerLaunch> {
   const packageRoot = await realPathOrNothing(
     join(workspace, configuration.packageRoot),
@@ -229,13 +265,14 @@ export async function resolveNodeServerLaunch(
     throw refusal(
       `node-server's entry ${configuration.entry} is not a file inside packageRoot ${configuration.packageRoot} by its real path.`,
     )
-  const loader =
-    configuration.loader === 'tsx'
-      ? await resolveTsxLoader(
-          workspace,
-          packageRoot,
-          configuration.packageRoot,
-        )
-      : ({ kind: 'node' } as const)
-  return { packageRoot, entry, loader }
+  return {
+    packageRoot,
+    entry,
+    loader: await resolveLoader(
+      workspace,
+      packageRoot,
+      configuration,
+      resolveBun,
+    ),
+  }
 }

@@ -26,6 +26,7 @@ import { isEngineInternalVariable } from './isEngineInternalVariable'
 import { isInsideFolder } from './isInsideFolder'
 import { maskSavedDebugSnapshot } from './maskSavedDebugSnapshot'
 import { moduleScopePositionOf } from './moduleScopePositionOf'
+import { ownClosureScopePositionsOf } from './ownClosureScopePositionsOf'
 import { redactSecretText } from './redactSecretText'
 import {
   previewShowsCredentialShape,
@@ -80,6 +81,8 @@ interface CaptureInput {
   maskKnownText?(text: string): string
   /** The stop paused in its module's own top-level code (a module evaluation): the stopped frame's module scope ({@link moduleScopePositionOf}, js-debug's Eval scope of Next's eval-wrapped module) holds the stop's own values, so it is copied like local values, every top-level binding before any is expanded (one imported module object cannot use the whole budget). */
   moduleEvaluation?: boolean
+  /** A Bun stop: the stopped function's own scopes arrive as closures, so the stopped frame's closures before the module's scope are copied like local values ({@link ownClosureScopePositionsOf}); `moduleBindingNames` are the stopped module's top-level names (`moduleBindingNamesOf`). */
+  bunClosures?: { moduleBindingNames: ReadonlySet<string> }
   limits?: {
     timeoutMs: number
     maxFrames: number
@@ -329,9 +332,9 @@ export async function captureReplayDebugSnapshot(
     frameIndex: number,
     scopeName: string,
     presentationHint: string | undefined,
-    isOwnModuleScope: boolean,
+    isOwnFunctionOrModuleScope: boolean,
   ) =>
-    (isOwnModuleScope ||
+    (isOwnFunctionOrModuleScope ||
       shouldCaptureReplayScope(frameIndex, scopeName, presentationHint)) &&
     (input.limits?.includeScope?.(frameIndex, scopeName) ?? true)
   const isTopLevelFirst = isTopLevelFirstCapture(input)
@@ -542,6 +545,23 @@ export async function captureReplayDebugSnapshot(
       return { variables, pending, unavailable: unavailable(error) }
     }
   }
+  // A Bun stop's own function scopes are closures: only the stopped frame's, before the module's scope, are copied.
+  const ownBunClosurePositionsOf = async (
+    frameIndex: number,
+    frameName: string,
+    scopes: z.infer<typeof scopeResponse>['scopes'],
+  ): Promise<ReadonlySet<number>> =>
+    input.bunClosures && frameIndex === 0
+      ? ownClosureScopePositionsOf(
+          scopes,
+          async (variablesReference) =>
+            variableResponse
+              .parse(await read('variables', { variablesReference }))
+              .variables.map((variable) => variable.name),
+          input.bunClosures.moduleBindingNames,
+          frameName,
+        )
+      : new Set<number>()
   if (
     (input.stack.totalFrames ?? input.stack.stackFrames.length) >
     Math.min(input.stack.stackFrames.length, maxFrames)
@@ -564,6 +584,11 @@ export async function captureReplayDebugSnapshot(
         input.moduleEvaluation,
         response.scopes,
       )
+      const ownClosures = await ownBunClosurePositionsOf(
+        index,
+        frame.name,
+        response.scopes,
+      )
       for (const [position, scope] of response.scopes
         .slice(0, REPLAY_DEBUG_MAX_SCOPES)
         .entries()) {
@@ -572,7 +597,7 @@ export async function captureReplayDebugSnapshot(
             index,
             scope.name,
             scope.presentationHint,
-            position === ownModuleScope,
+            position === ownModuleScope || ownClosures.has(position),
           )
         ) {
           saved.scopes.push({

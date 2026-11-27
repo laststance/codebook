@@ -59,11 +59,11 @@ import { readInspectorThreadIdentity } from './utils/verifyServerInspectorOwners
 import { waitForServerReadiness } from './utils/waitForServerReadiness'
 import { withoutInspectorBanner } from './utils/withoutInspectorBanner'
 
-/** The declaration fields an owned API server needs: where it runs, what it runs, how it is loaded and the port its own code listens on. */
+/** The declaration fields an owned API server needs: where it runs, what it runs, how it is loaded (Node only: the `apiServer` declaration never accepts `bun`) and the port its own code listens on. */
 export type OwnedApiServerDeclaration = Pick<
   NodeServerConfiguration,
   'packageRoot' | 'entry' | 'port'
-> & { loader?: NodeServerConfiguration['loader'] }
+> & { loader?: 'tsx' | 'node' }
 
 /** What {@link OwnedApiServer.check} is given. */
 export type OwnedApiServerInput = {
