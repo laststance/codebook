@@ -125,10 +125,13 @@ export function swapoutChange(previous, sample, side) {
 
 /** Per-counter timestamp on new records, with the original sample clock retained for older journals. */
 function counterAt(row, side) {
+  return readingAt(row, side, 'swapoutsObservedAt')
+}
+
+/** An explicit null means the measurement time is unknown; only records predating that field use completion time. */
+function readingAt(row, side, field) {
   const reading = row[side]
-  return reading && Object.hasOwn(reading, 'swapoutsObservedAt')
-    ? reading.swapoutsObservedAt
-    : row.at
+  return reading && Object.hasOwn(reading, field) ? reading[field] : row.at
 }
 
 /**
@@ -140,8 +143,9 @@ function counterAt(row, side) {
 async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
   const id = randomUUID()
   const name = `pending-${id}.json`
-  await publish(dir, name, { expiresAt: Date.now() + PROBE_LEASE_MS })
   try {
+    // A link can stand even if syncing its directory then fails. Release this reservation on either result.
+    await publish(dir, name, { expiresAt: Date.now() + PROBE_LEASE_MS })
     if (
       now() >= deadline ||
       (await readRecord(join(dir, 'closing.json'))) ||
@@ -162,8 +166,25 @@ async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
       ...(afterPlanAt ? { afterPlanAt } : {}),
     })
   } finally {
-    await unlink(join(dir, name))
+    await unlink(join(dir, name)).catch((error) => {
+      if (error.code !== 'ENOENT') throw error
+    })
   }
+}
+
+/** Reads an inventory interval, falling back to the host timestamp only for legacy point readings. */
+function stateWindow(observation, legacyAt, deadline) {
+  const { stateObservedFrom, stateObservedTo } = observation
+  const legacy =
+    stateObservedFrom === undefined && stateObservedTo === undefined
+  const from = Date.parse(legacy ? legacyAt : stateObservedFrom)
+  const to = Date.parse(legacy ? legacyAt : stateObservedTo)
+  return from <= to && to <= deadline ? { from, to } : null
+}
+
+/** Keeps the two host-clock bounds visible in the terminal record and its report. */
+function isoWindow({ from, to }) {
+  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() }
 }
 
 /**
@@ -175,17 +196,21 @@ async function recordedStop(dir, rows, deadline) {
   const running = []
   const stopped = []
   for (const row of rows) {
-    const { state, stateObservedFrom, stateObservedTo } = row.guest
-    if (state !== 'running' && state !== 'stopped') continue
-    const legacy =
-      stateObservedFrom === undefined && stateObservedTo === undefined
-    const from = Date.parse(legacy ? row.at : stateObservedFrom)
-    const to = Date.parse(legacy ? row.at : stateObservedTo)
-    // Incomplete or inverted observation windows cannot prove temporal order, nor can a later response prove a timely stop.
-    if (!(from <= to && to <= deadline)) continue
+    const { state, initialRunningObservation } = row.guest
+    // A failed guest probe can contain two real inventory reads: the initial running state and the recheck.
+    if (initialRunningObservation) {
+      const initial = stateWindow(
+        initialRunningObservation,
+        undefined,
+        deadline,
+      )
+      if (initial) running.push({ ...initial, afterPlanAt: row.afterPlanAt })
+    }
+    const observed = stateWindow(row.guest, row.at, deadline)
+    if (!observed) continue
     if (state === 'running')
-      running.push({ from, to, afterPlanAt: row.afterPlanAt })
-    else stopped.push({ row, from, to, legacy })
+      running.push({ ...observed, afterPlanAt: row.afterPlanAt })
+    else if (state === 'stopped') stopped.push({ row, ...observed })
   }
   const earliestRunning = running.reduce(
     (earliest, r) => Math.min(earliest, r.to),
@@ -196,23 +221,29 @@ async function recordedStop(dir, rows, deadline) {
     .sort((a, b) => a.to - b.to)[0]
   if (!first) return null
 
+  const beforeStop = running
+    .filter((r) => r.to < first.from)
+    .sort((a, b) => b.to - a.to)
   const intent = await readRecord(join(dir, 'plan-stop.json'))
+  let witness = beforeStop[0]
   let outcome = 'unexpected-stop'
   if (intent) {
     const plannedAt = Date.parse(intent.at)
-    // A written intention alone cannot establish that the VM was still running when the operator planned the stop.
-    if (
-      running.some(
-        (r) =>
-          (plannedAt < r.from ||
-            (plannedAt === r.from && r.afterPlanAt === intent.at)) &&
-          r.to < first.from,
-      )
+    // Only this plan's own post-publication observation establishes that the VM was still running after the intent stood.
+    const afterPlan = beforeStop.find(
+      (r) => r.afterPlanAt === intent.at && plannedAt <= r.from,
     )
+    if (afterPlan) {
+      witness = afterPlan
       outcome = 'planned-stop'
-    else if (!(plannedAt > first.to)) outcome = 'unknown'
+    } else if (!(plannedAt > first.to)) outcome = 'unknown'
   }
-  return { outcome, at: first.row.at, sampleAt: first.row.at }
+  return {
+    outcome,
+    at: first.row.at,
+    sampleAt: first.row.at,
+    stopEvidence: { running: isoWindow(witness), stopped: isoWindow(first) },
+  }
 }
 
 /**
@@ -299,7 +330,10 @@ export async function watchTrial(
   const alreadyEnded = await readRecord(join(dir, 'end.json'))
   if (alreadyEnded) return alreadyEnded
   const rows = await history(dir)
-  let sawRunning = rows.some((row) => row.guest.state === 'running')
+  let sawRunning = rows.some(
+    (row) =>
+      row.guest.state === 'running' || row.guest.initialRunningObservation,
+  )
   const started = Date.parse(trial.started)
   const deadline = Date.parse(trial.deadline)
   const clock = () => new Date(now()).toISOString()
@@ -335,7 +369,8 @@ export async function watchTrial(
       workloads: row.host.workloads,
     })
     if (!recorded || rows.at(-1)?.at !== row.at) rows.push(row)
-    if (row.guest.state === 'running') sawRunning = true
+    if (row.guest.state === 'running' || row.guest.initialRunningObservation)
+      sawRunning = true
     if (
       (sawRunning || row.additionalObservation) &&
       row.guest.state === 'stopped'
@@ -379,15 +414,24 @@ export async function controlTrial(
   const trial = await readRecord(join(dir, 'trial.json'))
   if (!trial) throw new Error('No trial with that ID. Start watch first.')
   const ended = await readRecord(join(dir, 'end.json'))
-  if (ended) return ended
   const at = new Date(now()).toISOString()
   const deadline = Date.parse(trial.deadline)
   if (command === 'plan-stop') {
-    const intent = await publish(dir, 'plan-stop.json', { at })
-    // The normal shutdown command waits for this read; it can establish a running witness after the intent.
-    await observe(dir, sample, { afterPlanAt: intent.at }, deadline, now)
-    return intent
+    if (
+      !ended &&
+      Date.parse(at) < deadline &&
+      !(await readRecord(join(dir, 'closing.json')))
+    ) {
+      const intent = await publish(dir, 'plan-stop.json', { at })
+      // Admission can close between the intent and its observation.
+      if (await observe(dir, sample, { afterPlanAt: intent.at }, deadline, now))
+        return intent
+    }
+    throw new Error(
+      'The trial can no longer observe this stop plan. Do not stop the VM under this trial.',
+    )
   }
+  if (ended) return ended
   if (!['healthy', 'disconnected', 'unknown'].includes(outcome))
     throw new Error('Expected outcome healthy, disconnected or unknown.')
   const rows = await history(dir)
@@ -493,13 +537,49 @@ export async function reportTrials(root) {
     if (!trial) continue
     const ended = await readRecord(join(dir, 'end.json'))
     const rows = await history(dir)
-    const observations = ended
-      ? rows.filter((s) => Date.parse(s.at) <= Date.parse(ended.at))
-      : rows
-    const samples = observations.filter((row) => !row.additionalObservation)
+    // Older terminal files named their stopped sample without storing its inventory interval.
+    let stopEvidence = ended?.stopEvidence
+    if (
+      ended?.sampleAt &&
+      !stopEvidence &&
+      ['unexpected-stop', 'planned-stop', 'unknown'].includes(ended.outcome)
+    ) {
+      const stop = await recordedStop(dir, rows, Date.parse(trial.deadline))
+      if (stop?.sampleAt === ended.sampleAt) stopEvidence = stop.stopEvidence
+    }
+    const cutoff = ended
+      ? Date.parse(stopEvidence?.stopped.to ?? ended.at)
+      : Infinity
+    const within = (timestamp) => Date.parse(timestamp) <= cutoff
+    const regular = rows.filter((row) => !row.additionalObservation)
+    // With no per-metric clock in an older journal, only its completion time bounds the reading.
+    const hostSamples = regular.filter((row) =>
+      within(readingAt(row, 'host', 'workloadsObservedAt')),
+    )
+    const guestSamples = regular.filter((row) =>
+      within(readingAt(row, 'guest', 'measurementsObservedAt')),
+    )
+    const counted = new Set([...hostSamples, ...guestSamples])
+    for (const row of regular) {
+      if (
+        stateWindow(row.guest, row.at, cutoff) ||
+        (row.guest.initialRunningObservation &&
+          stateWindow(
+            row.guest.initialRunningObservation,
+            undefined,
+            cutoff,
+          )) ||
+        ['host', 'guest'].some(
+          (side) =>
+            Number.isSafeInteger(row[side]?.swapouts) &&
+            within(counterAt(row, side)),
+        )
+      )
+        counted.add(row)
+    }
     const peaks = {}
     const combinations = new Set()
-    for (const { host } of samples) {
+    for (const { host } of hostSamples) {
       if (host.workloads === null) {
         combinations.add('unknown')
         continue
@@ -513,29 +593,31 @@ export async function reportTrials(root) {
       }
       combinations.add(active.sort().join('+') || 'none')
     }
-    if (!samples.length) combinations.add('unknown')
+    if (!hostSamples.length) combinations.add('unknown')
     const observedCombinations = [...combinations].sort()
     const observed = observedCombinations.join(' | ')
     const pressures = [
-      ...new Set(samples.map((s) => s.host.memoryPressure)),
+      ...new Set(hostSamples.map((s) => s.host.memoryPressure)),
     ].sort()
-    const swap = samples.map((s) => s.host.usedSwapMb).filter(Number.isFinite)
-    const guestMemory = observedGuestMemory(samples)
-    const guestSwap = samples
+    const swap = hostSamples
+      .map((s) => s.host.usedSwapMb)
+      .filter(Number.isFinite)
+    const guestMemory = observedGuestMemory(guestSamples)
+    const guestSwap = guestSamples
       .map((s) => s.guest?.usedSwapMb)
       .filter(Number.isFinite)
     const guestPressures = [
-      ...new Set(samples.map((s) => s.guest?.memoryPressure ?? 'unknown')),
+      ...new Set(guestSamples.map((s) => s.guest?.memoryPressure ?? 'unknown')),
     ].sort()
     const outcome = ended?.outcome ?? 'incomplete'
     const pagingIntervals = {}
     for (const side of ['host', 'guest']) {
       // A late publication can precede an already-written counter. Reconstruct adjacent deltas from immutable absolute values.
-      const counters = observations
+      const counters = rows
         .filter(
           (row) =>
             Number.isSafeInteger(row[side]?.swapouts) &&
-            Number.isFinite(Date.parse(counterAt(row, side))),
+            within(counterAt(row, side)),
         )
         .sort(
           (a, b) =>
@@ -563,7 +645,8 @@ export async function reportTrials(root) {
       ...pressureChanges,
       pagingIntervals,
       ...guestMemory,
-      ...peakWorkloadRss(samples),
+      ...peakWorkloadRss(hostSamples),
+      stopEvidence: stopEvidence ?? null,
       guestPressures,
       minGuestUsedSwapMb: guestSwap.length ? Math.min(...guestSwap) : null,
       maxGuestUsedSwapMb: guestSwap.length ? Math.max(...guestSwap) : null,
@@ -575,7 +658,7 @@ export async function reportTrials(root) {
       observedCombinations,
       peakProcesses: peaks,
       outcome,
-      samples: samples.length,
+      samples: counted.size,
       pressures,
       minUsedSwapMb: swap.length ? Math.min(...swap) : null,
       maxUsedSwapMb: swap.length ? Math.max(...swap) : null,

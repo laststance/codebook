@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -744,4 +753,212 @@ test('an expired unfinished observation leaves a bounded unknown outcome that a 
   assert.equal(result.outcome, 'unknown')
   assert.equal(result.reason, 'incomplete-observation')
   assert.deepEqual(retry, result)
+})
+
+async function startedTrial(t) {
+  const root = await fixture(t),
+    dir = join(root, options.id)
+  const start = Date.parse('2026-11-27T03:00:00.000Z')
+  const at = (seconds) => new Date(start + seconds * 1000).toISOString()
+  await mkdir(dir)
+  const put = (name, data) => writeFile(join(dir, name), JSON.stringify(data))
+  await put('trial.json', { ...options, started: at(0), deadline: at(10) })
+  return { root, dir, put, at, start }
+}
+
+test('a scheduled running reading without a witness to the published stop plan leaves the stop order unknown', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  await put('plan-stop.json', { at: at(1) })
+  await put('sample-slot-2.json', sample(start + 2000))
+  await put('sample-slot-4.json', sample(start + 4000, 'stopped', null))
+
+  // Act
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('fresh probe'),
+    () => start + 5000,
+  )
+
+  // Assert
+  assert.equal(end.outcome, 'unknown')
+})
+
+test('planning a stop after closing starts tells the operator that no stop observation can be recorded', async (t) => {
+  // Arrange
+  const { root, dir, put, at, start } = await startedTrial(t)
+  await put('closing.json', { outcome: 'unknown', at: at(2), sampleAt: null })
+  // Act and Assert
+  await assert.rejects(
+    controlTrial(
+      root,
+      options.id,
+      'plan-stop',
+      undefined,
+      () => assert.fail('closed probe'),
+      () => start + 3000,
+    ),
+    /do not stop/i,
+  )
+  assert.equal((await readdir(dir)).includes('plan-stop.json'), false)
+})
+
+test('a failed directory sync after publishing a reservation leaves no stale observer and permits healthy retry', async (t) => {
+  // Arrange
+  const { root, dir, start } = await startedTrial(t)
+  const directory = await open(dir, 'r')
+  const handle = Object.getPrototypeOf(directory),
+    original = handle.sync
+  const identity = await directory.stat()
+  await directory.close()
+  let failed = false
+  t.mock.method(handle, 'sync', async function () {
+    const current = await this.stat()
+    if (
+      current.ino === identity.ino &&
+      current.dev === identity.dev &&
+      (await readdir(dir)).some((name) => name.startsWith('pending-')) &&
+      !failed
+    ) {
+      failed = true
+      throw Object.assign(new Error('failed reservation directory sync'), {
+        code: 'EIO',
+      })
+    }
+    return original.call(this)
+  })
+
+  // Act
+  await assert.rejects(
+    controlTrial(
+      root,
+      options.id,
+      'finish',
+      'healthy',
+      () => assert.fail('unreserved probe'),
+      () => start + 1000,
+    ),
+    /failed reservation directory sync/,
+  )
+
+  // Assert
+  assert.equal(failed, true)
+  assert.deepEqual(
+    (await readdir(dir)).filter((name) => name.startsWith('pending-')),
+    [],
+  )
+  const retry = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'healthy',
+    async () => sample(start + 2000),
+    () => start + 2000,
+  )
+  assert.equal(retry.outcome, 'healthy')
+})
+
+test('a late row reports only states, workloads, memory and page counters observed before the confirmed stop', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  const initial = sample(start, 'running', true, 10)
+  initial.host.workloads = {}
+  initial.guest.swapouts = 10
+  const delayed = sample(start + 8000, 'running', true, 16)
+  Object.assign(delayed.guest, {
+    stateObservedFrom: at(1),
+    stateObservedTo: at(1.2),
+    measurementsObservedAt: at(7),
+    memoryBytes: 32 * 2 ** 30,
+    memoryPressure: 'critical',
+    swapoutsObservedAt: at(7),
+    swapouts: 1000,
+  })
+  Object.assign(delayed.host, {
+    workloadsObservedAt: at(2),
+    workloads: { tsc: 1 },
+    rssMiBByKind: { tsc: 202 },
+    memoryPressure: 'warning',
+    usedSwapMb: 123,
+    swapoutsObservedAt: at(3),
+  })
+  const stopped = sample(start + 6000, 'stopped', null, 1000)
+  Object.assign(stopped.guest, {
+    stateObservedFrom: at(3.9),
+    stateObservedTo: at(4),
+    measurementsObservedAt: null,
+  })
+  Object.assign(stopped.host, {
+    workloadsObservedAt: at(5),
+    workloads: { suite: 3 },
+    memoryPressure: 'critical',
+    usedSwapMb: 99999,
+    swapoutsObservedAt: at(5),
+  })
+  await put('sample-slot-0.json', initial)
+  await put('sample-slot-1.json', delayed)
+  await put('sample-slot-3.json', stopped)
+
+  // Act
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('durable stop'),
+    () => start + 9000,
+  )
+  const {
+    trials: [trial],
+  } = await reportTrials(root)
+
+  // Assert
+  assert.equal(end.outcome, 'unexpected-stop')
+  assert.deepEqual(trial.observedCombinations, ['none', 'tsc'])
+  assert.deepEqual(trial.peakHostRssMiBByKind, { tsc: 202 })
+  assert.deepEqual(trial.pressures, ['normal', 'warning'])
+  assert.equal(trial.minUsedSwapMb, 123)
+  assert.equal(trial.maxUsedSwapMb, 12000)
+  assert.equal(trial.guestMemorySamples, 0)
+  assert.deepEqual(trial.guestPressures, ['normal'])
+  assert.equal(trial.peakHostSwapoutPagesPerSecond, 2)
+  assert.deepEqual(trial.pagingIntervals.guest, [])
+  assert.equal(trial.stopEvidence.running.to, at(1.2))
+  assert.equal(trial.stopEvidence.stopped.to, at(4))
+})
+
+test('a single probe that confirms running then stopped leaves both provider readings in the report', async (t) => {
+  // Arrange
+  const root = await fixture(t),
+    start = Date.now(),
+    clock = { at: start }
+  const at = (ms) => new Date(start + ms).toISOString()
+  const row = sample(start + 300, 'stopped', null)
+  Object.assign(row.guest, {
+    initialRunningObservation: {
+      stateObservedFrom: at(0),
+      stateObservedTo: at(50),
+    },
+    stateObservedFrom: at(200),
+    stateObservedTo: at(250),
+  })
+
+  // Act
+  const end = await watchTrial(root, options, {
+    ...clocked(clock, () => row),
+    sleep: () => assert.fail('confirmed transition should finish immediately'),
+  })
+  const {
+    trials: [trial],
+  } = await reportTrials(root)
+
+  // Assert
+  assert.equal(end.outcome, 'unexpected-stop')
+  assert.deepEqual(trial.stopEvidence, {
+    running: { from: at(0), to: at(50) },
+    stopped: { from: at(200), to: at(250) },
+  })
 })
