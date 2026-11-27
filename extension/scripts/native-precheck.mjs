@@ -1,10 +1,9 @@
 // Prints the Mac's load, swap and running builds before a native check in the macOS Space, and says whether the check may start (Discussion 359).
 //
-//   node extension/scripts/native-precheck.mjs [--max-used-swap-mb <n>] [--json]
+//   node extension/scripts/native-precheck.mjs [--experiment] [--max-used-swap-mb <n>] [--json]
 //
-// The Space's VM stops when the Mac's swap fills while builds, suites and package tests run on the Mac beside it. The
-// driving agent runs this from the repository root on the Mac before each native step and starts the step only on
-// `PRECHECK: clear`. See HELP_TEXT (`--help`) for the kinds counted, exit codes and error codes.
+// Check current macOS memory pressure and concurrent heavy work. Retained swap is diagnostic.
+// A controlled trial may overlap a known workload and record whether the QA Space survives.
 import { spawnSync } from 'node:child_process'
 import { availableParallelism, loadavg } from 'node:os'
 import { basename } from 'node:path'
@@ -17,10 +16,7 @@ import {
 } from './utils/commandContract.mjs'
 import { isRunAsScript } from './utils/isRunAsScript.mjs'
 
-/**
- * The most used swap that still counts as clear when `--max-used-swap-mb` is not given.
- * Discussion 359: the Space's VM stopped twice with about 14 to 15.3 GB of the Mac's swap used (15.25 of 16 GB, 13.97 of 15.36 GB); 8 GB leaves that much room for the builds and the native check that follow.
- */
+/** Prior swap setting retained in the JSON for existing callers. Admission uses current pressure. */
 const DEFAULT_MAX_USED_SWAP_MB = 8192
 
 /** How long `ps` or `sysctl` may take, and how much `ps` may print: a table with every argument of every process is a few megabytes at most. */
@@ -184,6 +180,19 @@ const PROCESS_KINDS = [
   },
   { id: 'health', label: 'checkHealth.mjs', programs: ['checkHealth.mjs'] },
   { id: 'gate', label: 'gate.mjs', programs: ['gate.mjs'] },
+  // Review processes supply trial context. Their long-running editor or app-server counterparts do not count.
+  {
+    id: 'codeRabbitReview',
+    label: 'CodeRabbit CLI review',
+    programs: ['coderabbit'],
+    observeOnly: true,
+  },
+  {
+    id: 'codexReview',
+    label: 'Codex CLI review',
+    programs: ['codex'],
+    observeOnly: true,
+  },
 ]
 
 /** Every program name a kind counts: a word of node's script path that ends in one of these ends that path ({@link scriptEndIndexOf}). */
@@ -194,19 +203,15 @@ const VERDICT_BUSY = 'busy'
 
 /** The `--help` text: usage, what it reads and prints, the kinds, options, example, exit codes and error codes. */
 export const HELP_TEXT = `Usage:
-  node extension/scripts/native-precheck.mjs [--max-used-swap-mb <n>] [--json]
+  node extension/scripts/native-precheck.mjs [--experiment] [--max-used-swap-mb <n>] [--json]
 
 Run on the Mac from the repository root before each native step in the macOS Space:
-the Space's VM stops when the Mac's swap fills. Prints the 1, 5 and 15 minute load
-averages and the core count, the swap's total, used and free MB (sysctl -n
-vm.swapusage on macOS; "unknown" elsewhere) and, per kind, how many build or test
-processes run on this machine, then one verdict line:
-  PRECHECK: clear           no such process runs and used swap is at the limit or
-                            below (no swap allocated counts as none used)
-  PRECHECK: busy <reasons>  a kind runs, used swap is above the limit, or the swap
-                            or the process list cannot be read
-Used swap decides, not free: macOS adds swap one swapfile at a time, so free is
-only the unused part of the swap already allocated, not the room left.
+read the current macOS memory pressure, the process counts, load averages, cores and
+allocated swap. Retained swap (including an unknown reading) is diagnostic only.
+  PRECHECK: clear           noncritical memory pressure and no competing heavy work,
+                            or a controlled --experiment with known overlapping work
+  PRECHECK: busy <reasons>  critical memory pressure, unreadable required evidence,
+                            unsupported host, or competing work outside an experiment
 It prints kinds and counts only, never a process's arguments, environment or working
 directory, and it signals no process.
 
@@ -220,11 +225,14 @@ vsce, checkHealth.mjs, gate.mjs. A process counts once, under the program it run
 a script that node runs from a path holding a space still counts, but node itself or
 a native binary (pnpm's, Fallow's) installed under such a path is read as two words
 and is not counted. esbuild is not counted by itself: other projects' dev servers
-keep its service process open for hours.
+keep its service process open for hours. CodeRabbit and Codex CLI review counts
+are observational in both modes.
 
 Options:
-  --max-used-swap-mb <n>  the most used swap that still counts as clear, in MB
-                          (default ${DEFAULT_MAX_USED_SWAP_MB})
+  --experiment            admit and report known overlapping work on the local QA
+                          Space while macOS pressure is normal or warning
+  --max-used-swap-mb <n>  legacy diagnostic setting in MB (default ${DEFAULT_MAX_USED_SWAP_MB});
+                          accepted for compatibility and does not affect admission
   --json                  print the same facts as one JSON object instead of lines
   --help                  print this text
 
@@ -253,15 +261,15 @@ function usageRefusal(message) {
 }
 
 /**
- * Parses the command line into one mode and its limit.
+ * Parses the command line into its output, experiment and compatibility options.
  *
  * Why: a bad limit must stop the run before anything is read, under the delivery commands' usage contract. Called by {@link runNativePrecheck}.
  *
  * @param {string[]} argv - Arguments after the script name.
- * @returns {{ mode: 'help' } | { mode: 'check', json: boolean, maxUsedSwapMb: number }} The mode; `check` carries the output form and the used-swap limit in MB.
+ * @returns {{ mode: 'help' } | { mode: 'check', json: boolean, experiment: boolean, maxUsedSwapMb: number }} The mode; `check` carries the output form, the experiment choice and the legacy swap setting.
  * @throws {CommandRefusal} `E_USAGE` (exit 64) for an unknown option, a stray argument or a limit that is no whole number.
  * @example
- * parsePrecheckArguments(['--json', '--max-used-swap-mb', '4096']) // => { mode: 'check', json: true, maxUsedSwapMb: 4096 }
+ * parsePrecheckArguments(['--json', '--max-used-swap-mb', '4096']) // => { mode: 'check', json: true, experiment: false, maxUsedSwapMb: 4096 }
  */
 function parsePrecheckArguments(argv) {
   let values
@@ -271,6 +279,7 @@ function parsePrecheckArguments(argv) {
       options: {
         help: { type: 'boolean' },
         json: { type: 'boolean' },
+        experiment: { type: 'boolean' },
         'max-used-swap-mb': { type: 'string' },
       },
     }))
@@ -287,6 +296,7 @@ function parsePrecheckArguments(argv) {
   return {
     mode: 'check',
     json: values.json === true,
+    experiment: values.experiment === true,
     maxUsedSwapMb:
       limitText === undefined ? DEFAULT_MAX_USED_SWAP_MB : Number(limitText),
   }
@@ -295,7 +305,7 @@ function parsePrecheckArguments(argv) {
 /**
  * Reads the swap line of `sysctl -n vm.swapusage` as MB.
  *
- * Why: the Space's VM stops when the Mac's swap fills, so used swap is one of the two facts the verdict rests on. Called by {@link gatherFacts}; tests call it with hard-coded lines.
+ * The load report and trial recorder keep allocated swap as context alongside live pressure. Called by {@link gatherFacts}; tests call it with hard-coded lines.
  *
  * @param {string | undefined} text - The line `sysctl` printed, or `undefined` when it could not run (another system).
  * @returns {{ totalMb: number, usedMb: number, freeMb: number } | undefined} The three amounts in MB; `undefined` when the text holds no swap line.
@@ -312,7 +322,7 @@ export function parseSwapUsage(text) {
     usedMb: inMb(match[3], match[4]),
     freeMb: inMb(match[5], match[6]),
   }
-  // A digit string large enough to become Infinity is no amount the verdict may compare.
+  // A digit string large enough to become Infinity cannot describe the machine.
   return Object.values(swap).every(Number.isFinite) ? swap : undefined
 }
 
@@ -417,6 +427,16 @@ function programOf({ command, args }) {
  */
 function kindOf(row) {
   const { program, programArgs, nodeOptions } = programOf(row)
+  // Only the explicit CLI review modes are measured, never ordinary Codex sessions or argument text.
+  if (program === 'coderabbit')
+    return ['review', '--agent'].includes(programArgs[0])
+      ? 'codeRabbitReview'
+      : undefined
+  if (program === 'codex')
+    return programArgs[0] === 'review' ||
+      (programArgs[0] === 'exec' && programArgs[1] === 'review')
+      ? 'codexReview'
+      : undefined
   const named = PROCESS_KINDS.find(
     (kind) =>
       kind.programs.includes(program) &&
@@ -454,33 +474,53 @@ export function countProcessKinds(rows, ownPid) {
 }
 
 /**
- * Decides from the facts whether the native check may start, and why not.
- *
- * Why: the judgement stays a pure function of the facts and the limit, so the tests pin it without a machine. Called by {@link runNativePrecheck}.
- * - Each kind with a count names `<count> <label>`.
- * - Used swap above the limit names both numbers; no swap allocated (used 0) and any amount at or below the limit are clear. Used decides, not free: macOS adds swap one swapfile at a time, so free is only the unused part of the swap already allocated, not the room left.
- * - A process list or swap that could not be read is a reason too: the rule needs the used swap shown within the limit and no build seen.
- *
- * @param {{ swap?: { usedMb: number }, processes?: Record<string, number> }} facts - What {@link gatherFacts} read.
- * @param {number} maxUsedSwapMb - The most used swap that still counts as clear, in MB.
- * @returns {{ verdict: 'clear' | 'busy', reasons: string[] }} `clear` with no reason, or `busy` with every reason in report order.
- * @example
- * decideVerdict({ swap: { totalMb: 0, usedMb: 0, freeMb: 0 }, processes: { nodeTest: 2 } }, 8192) // => { verdict: 'busy', reasons: ['2 node --test'] }
- * decideVerdict({ swap: { totalMb: 10240, usedMb: 9216, freeMb: 1024 }, processes: {} }, 8192) // => { verdict: 'busy', reasons: ['used swap 9216 MB above 8192 MB'] }
+ * Decide whether the QA Space may start under the workload that the Mac actually reports.
+ * {@link runNativePrecheck} uses experiment mode only when the caller explicitly selects that trial.
+ * @param {ReturnType<typeof gatherFacts>} facts - The host pressure and heavy process counts.
+ * @param {boolean} experiment - Permit a known overlap and record the observed counts.
+ * @example decideVerdict({ memoryPressure: 'normal', processes: {} }).verdict // => 'clear'
  */
-export function decideVerdict({ swap, processes }, maxUsedSwapMb) {
+export function decideVerdict(
+  { memoryPressure, processes },
+  experiment = false,
+) {
   const reasons = []
+  const observations = []
   if (processes === undefined) reasons.push('process list unknown')
-  else
+  else {
+    // A controlled overlap still reports every competing workload, even when pressure blocks admission.
+    const workloads = experiment === true ? observations : reasons
     for (const kind of PROCESS_KINDS)
-      if (processes[kind.id] > 0)
-        reasons.push(`${processes[kind.id]} ${kind.label}`)
-  if (swap === undefined) reasons.push('swap unknown')
-  else if (swap.usedMb > maxUsedSwapMb)
-    reasons.push(`used swap ${swap.usedMb} MB above ${maxUsedSwapMb} MB`)
+      if (!kind.observeOnly && processes[kind.id] > 0)
+        workloads.push(`${processes[kind.id]} ${kind.label}`)
+  }
+  if (memoryPressure === 'critical') reasons.push('critical memory pressure')
+  else if (memoryPressure === 'unsupported') reasons.push('macOS host required')
+  else if (memoryPressure !== 'normal' && memoryPressure !== 'warning')
+    reasons.push('memory pressure unknown')
   return {
     verdict: reasons.length === 0 ? VERDICT_CLEAR : VERDICT_BUSY,
     reasons,
+    observations,
+  }
+}
+
+/**
+ * Interpret the current pressure exposed by the macOS sysctl for {@link gatherFacts}.
+ * XNU's sysctl handler returns NOTE_MEMORYSTATUS_PRESSURE flags (normal 1, warning 2, critical 4).
+ * @example memoryPressureOf('darwin', '4\n') // => 'critical'
+ */
+function memoryPressureOf(platform, text) {
+  if (platform !== 'darwin') return 'unsupported'
+  switch (typeof text === 'string' ? text.trim() : '') {
+    case '1':
+      return 'normal'
+    case '2':
+      return 'warning'
+    case '4':
+      return 'critical'
+    default:
+      return 'unknown'
   }
 }
 
@@ -492,17 +532,18 @@ function roundLoad(value) {
 
 /**
  * Turns the raw readings into the facts the report and the verdict use.
- * @param {{ loadAverages: number[], cores: number, swapText?: string, processRows?: Array<{ pid: number, command: string, args: string[] }> }} readings - What the machine reader answered.
+ * @param {{ loadAverages: number[], cores: number, platform: string, pressureText?: string, swapText?: string, processRows?: Array<{ pid: number, command: string, args: string[] }> }} readings - What the machine reader answered.
  * @param {number} ownPid - This precheck's process id.
- * @returns {{ load: { oneMinute: number, fiveMinutes: number, fifteenMinutes: number, cores: number }, swap?: object, processes?: Record<string, number> }} The facts; `swap` and `processes` are `undefined` when unreadable.
- * @example gatherFacts({ loadAverages: [1, 2, 3], cores: 8, swapText: undefined, processRows: [] }, 1).swap // => undefined
+ * @returns {{ load: { oneMinute: number, fiveMinutes: number, fifteenMinutes: number, cores: number }, memoryPressure: string, swap?: object, processes?: Record<string, number> }} The facts; `swap` and `processes` are `undefined` when unreadable.
+ * @example gatherFacts({ platform: 'darwin', loadAverages: [1, 2, 3], cores: 8, processRows: [] }, 1).swap // => undefined
  */
-function gatherFacts(readings, ownPid) {
+export function gatherFacts(readings, ownPid) {
   const [oneMinute, fiveMinutes, fifteenMinutes] =
     readings.loadAverages.map(roundLoad)
   return {
     load: { oneMinute, fiveMinutes, fifteenMinutes, cores: readings.cores },
     swap: parseSwapUsage(readings.swapText),
+    memoryPressure: memoryPressureOf(readings.platform, readings.pressureText),
     processes:
       readings.processRows === undefined || readings.processRows.length === 0
         ? undefined
@@ -517,13 +558,16 @@ function swapLine(swap) {
 }
 
 /**
- * Prints the report as lines: load, swap, one line per kind, and the verdict last.
+ * Prints load, swap, current memory pressure, workload counts, experimental overlaps and the final verdict.
  * @param {ReturnType<typeof gatherFacts>} facts - The facts.
  * @param {ReturnType<typeof decideVerdict>} judgement - The verdict and its reasons.
  * @returns {string[]} The lines; only kinds, counts and amounts.
- * @example reportLines(facts, { verdict: 'clear', reasons: [] }).at(-1) // => 'PRECHECK: clear'
+ * @example reportLines(facts, { verdict: 'clear', reasons: [], observations: [] }).at(-1) // => 'PRECHECK: clear'
  */
-function reportLines({ load, swap, processes }, { verdict, reasons }) {
+function reportLines(
+  { load, swap, memoryPressure, processes },
+  { verdict, reasons, observations },
+) {
   const loads = [load.oneMinute, load.fiveMinutes, load.fifteenMinutes]
     .map((value) => value.toFixed(LOAD_DECIMAL_PLACES))
     .join(', ')
@@ -540,7 +584,9 @@ function reportLines({ load, swap, processes }, { verdict, reasons }) {
   return [
     `Load: ${loads} (1, 5, 15 min) on ${load.cores} cores`,
     swapLine(swap),
+    `Memory pressure: ${memoryPressure}`,
     ...processLines,
+    ...observations.map((item) => `Experimental overlap: ${item}`),
     verdictLine,
   ]
 }
@@ -571,7 +617,7 @@ function readCommandOutput(command, args) {
  * The production seams: this process's id, the real machine reader and stdout.
  *
  * Why: the reading of the machine is the one thin part the tests replace; everything it answers goes through {@link gatherFacts} and {@link decideVerdict}. Called by {@link main}.
- * The reader runs `sysctl -n vm.swapusage` on macOS only and `ps -A -ww -o pid=,args=` on POSIX systems; it signals nothing.
+ * The reader reads swap and current pressure through `sysctl` on macOS only and `ps -A -ww -o pid=,args=` on POSIX systems; it signals nothing.
  *
  * @returns {{ ownPid: number, readMachine: () => object, print: (line: string) => void }} The seams.
  * @example productionSeams().readMachine().cores // => 16
@@ -582,6 +628,14 @@ export function productionSeams() {
     readMachine: () => ({
       loadAverages: loadavg(),
       cores: availableParallelism(),
+      platform: process.platform,
+      pressureText:
+        process.platform === 'darwin'
+          ? readCommandOutput('sysctl', [
+              '-n',
+              'kern.memorystatus_vm_pressure_level',
+            ])
+          : undefined,
       swapText:
         process.platform === 'darwin'
           ? readCommandOutput('sysctl', ['-n', 'vm.swapusage'])
@@ -619,13 +673,15 @@ export async function runNativePrecheck(argv, seams, progress) {
   progress.enter('read the machine')
   const facts = gatherFacts(seams.readMachine(), seams.ownPid)
   progress.enter('judge the facts')
-  const judgement = decideVerdict(facts, parsed.maxUsedSwapMb)
+  const judgement = decideVerdict(facts, parsed.experiment)
   // One JSON object for a caller that parses, else one line per fact.
   if (parsed.json)
     seams.print(
       JSON.stringify({
         load: facts.load,
         swap: facts.swap ?? null,
+        memoryPressure: facts.memoryPressure,
+        experiment: parsed.experiment,
         processes: facts.processes ?? null,
         maxUsedSwapMb: parsed.maxUsedSwapMb,
         ...judgement,
