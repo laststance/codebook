@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
-import { resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import type { DebugProtocol } from '@vscode/debugprotocol'
@@ -19,6 +21,8 @@ async function breakpointHarness(
   requestedColumn = 5,
   /** Replaces the active bound the breakpoint's waits use, so a test can let a retirement time out quickly; the real bound otherwise. */
   activeTimeoutMs?: number,
+  /** Path of the owned source file. */
+  ownedPath = '/repo/actions.ts',
 ) {
   class Position {
     constructor(
@@ -38,6 +42,7 @@ async function breakpointHarness(
   let nextId = 0
   class SourceBreakpoint {
     readonly id = String(++nextId)
+    enabled = true
     constructor(readonly location: Location) {}
   }
   const breakpoints: SourceBreakpoint[] = []
@@ -79,7 +84,7 @@ async function breakpointHarness(
     getDebugProtocolBreakpoint: async () => undefined,
   }
   const breakpoint = new module.OwnedRepositoryBreakpoint(
-    '/repo/actions.ts',
+    ownedPath,
     20,
     requestedColumn,
     acceptsOtherLine,
@@ -94,7 +99,7 @@ async function breakpointHarness(
     seq: sequence,
     type: 'request',
     command: 'setBreakpoints',
-    arguments: { source: { path: '/repo/actions.ts' }, breakpoints: positions },
+    arguments: { source: { path: ownedPath }, breakpoints: positions },
   })
   const response = (
     sequence = 1,
@@ -120,6 +125,12 @@ async function breakpointHarness(
     response,
     signal: new AbortController().signal,
     editorBreakpoints: breakpoints,
+    removeFromEditor: (value: unknown) =>
+      breakpoints.splice(
+        0,
+        breakpoints.length,
+        ...breakpoints.filter((item) => item !== value),
+      ),
     OwnedBreakpointRemovedError: module.OwnedBreakpointRemovedError,
     OwnedBreakpointMovedError: module.OwnedBreakpointMovedError,
   }
@@ -1193,4 +1204,100 @@ test('a retirement whose removal the adapter never answers fails naming the step
     message:
       'Timed out waiting for confirmed owned breakpoint retirement (the adapter had not answered the removal request; the editor no longer listed the breakpoint; its adapter breakpoint was not read)',
   })
+})
+
+/** Reports the adapter's verified 20:5 binding for the owned breakpoint, as every test below starts. */
+function verifyOwned(
+  harness: Awaited<ReturnType<typeof breakpointHarness>>,
+): void {
+  harness.breakpoint.onRequest(harness.session, harness.request())
+  harness.breakpoint.onResponse(
+    harness.session,
+    harness.response(1, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+}
+
+/** Sends one adapter `breakpoint` event for the owned id 8. */
+function sendNews(
+  harness: Awaited<ReturnType<typeof breakpointHarness>>,
+  reason: string,
+  body: Record<string, unknown>,
+): void {
+  harness.breakpoint.onEvent(harness.session, {
+    seq: 300,
+    type: 'event',
+    event: 'breakpoint',
+    body: { reason, breakpoint: { id: 8, ...body } },
+  })
+}
+
+// Value: protects=a Bun pause at an unknown column never being taken as Codebook's after the adapter withdrew the binding and only a line came back; fails_when=the column of the withdrawn 20:5 binding is used again for a line-only report; no_claim=the column of a fresh column-bearing report
+test('a binding restored with a line alone no longer claims the column it had before it was withdrawn', async () => {
+  // Arrange
+  const harness = await breakpointHarness()
+  verifyOwned(harness)
+  sendNews(harness, 'removed', { verified: true, line: 20, column: 5 })
+  // Act
+  sendNews(harness, 'changed', { verified: true, line: 20 })
+  // Assert
+  assert.equal(
+    JSON.stringify(harness.breakpoint.boundPlace(harness.session)),
+    '{"line":20}',
+  )
+})
+
+// Value: protects=a Bun request not being sent for a declared stop the learner removed or disabled in the editor; fails_when=the cached adapter registration is read as the bound place after the editor dropped or disabled the breakpoint; no_claim=the adapter's later removal news
+test('a declared stop the learner removed or disabled in the editor has no bound place', async () => {
+  // Arrange
+  const removed = await breakpointHarness()
+  verifyOwned(removed)
+  const disabled = await breakpointHarness()
+  verifyOwned(disabled)
+  const beforeEdit = JSON.stringify(
+    removed.breakpoint.boundPlace(removed.session),
+  )
+  // Act
+  removed.removeFromEditor(removed.editorBreakpoints[0])
+  for (const editorBreakpoint of disabled.editorBreakpoints)
+    editorBreakpoint.enabled = false
+  // Assert
+  assert.equal(beforeEdit, '{"line":20,"column":5}')
+  assert.equal(removed.breakpoint.boundPlace(removed.session), undefined)
+  assert.equal(disabled.breakpoint.boundPlace(disabled.session), undefined)
+})
+
+// Value: protects=a symlinked workspace keeping its owned binding when the adapter spells the same file by its real path, while news for another file still withdraws it; fails_when=news naming the same file through another spelling withdraws the binding, or news naming a different file keeps it; no_claim=case folding on Linux
+test('news naming the same file through a symlinked folder keeps the binding and news naming another file withdraws it', async () => {
+  // Arrange
+  const root = mkdtempSync(join(tmpdir(), 'owned-bp-'))
+  mkdirSync(join(root, 'real'))
+  writeFileSync(join(root, 'real', 'actions.ts'), '')
+  writeFileSync(join(root, 'real', 'other.ts'), '')
+  symlinkSync(join(root, 'real'), join(root, 'link'))
+  const harness = await breakpointHarness(
+    undefined,
+    5,
+    undefined,
+    join(root, 'link', 'actions.ts'),
+  )
+  verifyOwned(harness)
+  // Act
+  sendNews(harness, 'changed', {
+    verified: true,
+    line: 20,
+    column: 5,
+    source: { path: join(root, 'real', 'actions.ts') },
+  })
+  const afterSameFile = JSON.stringify(
+    harness.breakpoint.boundPlace(harness.session),
+  )
+  sendNews(harness, 'changed', {
+    verified: true,
+    line: 20,
+    column: 5,
+    source: { path: join(root, 'real', 'other.ts') },
+  })
+  // Assert
+  assert.equal(afterSameFile, '{"line":20,"column":5}')
+  assert.equal(harness.breakpoint.boundPlace(harness.session), undefined)
 })

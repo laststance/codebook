@@ -9,6 +9,7 @@ import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
+import { canonicalFsPath } from './utils/canonicalFsPath'
 import { completeBindingPlace } from './utils/completeBindingPlace'
 
 const requestSourceSchema = z.object({ source: z.object({ path: z.string() }) })
@@ -736,6 +737,19 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Says whether the editor still lists the owned breakpoint as enabled, for {@link boundPlace}: a disabled breakpoint sends no stop even while the adapter's registration is cached.
+   * @returns `false` when the editor's copy of the owned breakpoint is disabled; `true` otherwise (removal is {@link isRetiredOrRemoved}'s question).
+   * @example
+   * if (!this.isEnabledInEditor()) return undefined
+   */
+  private isEnabledInEditor(): boolean {
+    return vscode.debug.breakpoints.some(
+      (breakpoint) =>
+        breakpoint.id === this.breakpoint.id && breakpoint.enabled !== false,
+    )
+  }
+
+  /**
    * Fails a registration read whose adapter refused the request or moved the breakpoint to a place the owner refuses; called by {@link registration} for the session's current registration, after the removal check and before the receipt is copied.
    * @param registration - The session's current registration: the adapter's refusal text, and the refused place of its latest news.
    * @throws A plain error with the adapter's refusal when the registration failed, otherwise an {@link OwnedBreakpointMovedError} while a refused place stands.
@@ -858,6 +872,8 @@ export class OwnedRepositoryBreakpoint {
   ): { line: number; column?: number } | undefined {
     const registration = this.standingRegistration(session)
     if (!registration || registration.unverifiedByNews) return undefined
+    // The learner removed or disabled the owned breakpoint in the editor: the adapter's cached place is not authority until it processes the replacement.
+    if (this.isRetiredOrRemoved() || !this.isEnabledInEditor()) return undefined
     const { verifiedAt, verifiedLine } = registration
     // The adapter's latest line decides: news that put the breakpoint on a line the owner refuses leaves it no place.
     if (
@@ -954,9 +970,10 @@ export class OwnedRepositoryBreakpoint {
     breakpoint: z.infer<typeof breakpointEventSchema>['breakpoint'],
   ): boolean {
     if (!breakpoint.verified) return false
+    // Two spellings of one file (symlinked folder, /private prefix, case on macOS and Windows) are the owned source; only another file differs.
     return !(
       breakpoint.source?.path &&
-      resolve(breakpoint.source.path) !== resolve(this.path)
+      canonicalFsPath(breakpoint.source.path) !== canonicalFsPath(this.path)
     )
   }
 
@@ -1033,9 +1050,12 @@ export class OwnedRepositoryBreakpoint {
       registration.verifiedLine = breakpoint.line
       // A line the owner accepts still verifies the breakpoint there, which lifts an earlier withdrawal and an earlier refusal.
       if (this.acknowledgesPosition(breakpoint)) {
+        const columnIsStale = Boolean(
+          registration.refusedAt || registration.unverifiedByNews,
+        )
         registration.unverifiedByNews = false
-        // A refused place no longer stands, and the column of the place before it is unknown now.
-        if (registration.refusedAt) {
+        // A refused or withdrawn place no longer stands, and the column of the place before it is unknown now: a column-bearing report must come before it is used again.
+        if (columnIsStale) {
           registration.refusedAt = undefined
           registration.verifiedAt = undefined
         }
