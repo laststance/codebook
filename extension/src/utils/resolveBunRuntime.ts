@@ -1,11 +1,16 @@
 import { execFile } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { z } from 'zod'
 
-import { BUN_MINIMUM_VERSION, BUN_VERSION_READ_TIMEOUT_MS } from '../constants'
+import {
+  BUN_MINIMUM_VERSION,
+  BUN_PROBE_FOLDER_PREFIX,
+  BUN_VERSION_READ_TIMEOUT_MS,
+} from '../constants'
 import { StudyError } from '../errors'
 
 import { buildNodeServerEnvironment } from './buildNodeServerEnvironment'
@@ -45,7 +50,9 @@ export type RunBunProgram = (program: string, args: string[]) => Promise<string>
 /**
  * Runs a candidate Bun once within {@link BUN_VERSION_READ_TIMEOUT_MS}; the default reader of {@link resolveBunRuntime}.
  *
- * The probe gets the same restricted environment as the server launch ({@link buildNodeServerEnvironment}) and the OS temp folder as its working folder, so a wrapper on the PATH or a `bunfig.toml` preload in the editor's folder never sees the editor's credentials or the opened repository's configuration, even when the version check refuses the run.
+ * The probe gets the same restricted environment as the server launch ({@link buildNodeServerEnvironment}) and a fresh private empty folder (mode 0700, made inside the OS temp folder by `mkdtemp` and removed after the read, also when the read fails or times out) as its working folder. A wrapper on the PATH or a `bunfig.toml` preload therefore never sees the editor's credentials or the opened repository's configuration, and no other local user can plant a `bunfig.toml` or `.env` there first, as they could in a shared `/tmp`, even when the version check refuses the run. A failed removal never replaces the read's own answer or error: a leftover empty private folder is harmless.
+ *
+ * Called by {@link resolveBunRuntime} when a `loader: "bun"` run resolves its Bun.
  * @param program - `bun` (looked up on the PATH) or an absolute path.
  * @param args - The arguments, here the identity script.
  * @returns The program's stdout.
@@ -56,16 +63,23 @@ export async function runBunProgram(
   program: string,
   args: string[],
 ): Promise<string> {
-  const { stdout } = await executeFile(program, args, {
-    timeout: BUN_VERSION_READ_TIMEOUT_MS,
-    // Only the allowlisted variables (PATH and HOME stay so the wrapper and Bun run); no credentials of the editor.
-    env: buildNodeServerEnvironment(),
-    // A neutral folder holds no project configuration (bunfig.toml, .env) for Bun to load.
-    cwd: tmpdir(),
-    // A wrapper that handles SIGTERM must still end at the deadline, or the lookup would never answer.
-    killSignal: 'SIGKILL',
-  })
-  return stdout
+  // mkdtemp creates the folder with mode 0700, so nobody else can plant bunfig.toml or .env in it.
+  const probeFolder = await mkdtemp(join(tmpdir(), BUN_PROBE_FOLDER_PREFIX))
+  try {
+    const { stdout } = await executeFile(program, args, {
+      timeout: BUN_VERSION_READ_TIMEOUT_MS,
+      // Only the allowlisted variables (PATH and HOME stay so the wrapper and Bun run); no credentials of the editor.
+      env: buildNodeServerEnvironment(),
+      // A private empty folder holds no project configuration (bunfig.toml, .env) for Bun to load.
+      cwd: probeFolder,
+      // A wrapper that handles SIGTERM must still end at the deadline, or the lookup would never answer.
+      killSignal: 'SIGKILL',
+    })
+    return stdout
+  } finally {
+    // Cleanup errors are ignored so they never replace the probe's own answer or error.
+    await rm(probeFolder, { recursive: true, force: true }).catch(() => {})
+  }
 }
 
 /**

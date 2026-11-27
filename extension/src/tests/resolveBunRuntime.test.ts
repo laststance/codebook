@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -243,14 +250,79 @@ test('the identity probe runs with the restricted server environment and a neutr
     // Act
     const output = await runBunProgram(fakeBun, ['-e', 'ignored'])
     // Assert
-    assert.deepEqual(output.trim().split('\n'), [
-      'parent=absent',
-      'path=present',
-      await realpath(tmpdir()),
-    ])
+    const [parent, path, probeFolder = ''] = output.trim().split('\n')
+    assert.deepEqual([parent, path], ['parent=absent', 'path=present'])
+    const temp = await realpath(tmpdir())
+    assert.notEqual(probeFolder, temp)
+    assert.equal(join(probeFolder, '..'), temp)
   } finally {
     if (previous === undefined) delete process.env.CODEBOOK_TEST_PARENT_ONLY
     else process.env.CODEBOOK_TEST_PARENT_ONLY = previous
+    await removeTestFolder(folder)
+  }
+})
+
+// Value: protects=the probe's working folder is private to the learner (nobody else can plant bunfig.toml or .env in it); fails_when=the probe folder is group or world accessible; seam=the default reader against a fake bun that prints its folder's mode; no_claim=Windows permissions
+test('the identity probe folder is private to the learner', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') {
+    context.skip('POSIX modes do not apply on Windows')
+    return
+  }
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-bun-probe-'))
+  const fakeBun = join(folder, 'fake-bun')
+  await writeFile(
+    fakeBun,
+    '#!/bin/sh\nstat -f %Lp . 2>/dev/null || stat -c %a .\n',
+  )
+  await chmod(fakeBun, 0o755)
+  try {
+    // Act
+    const output = await runBunProgram(fakeBun, [])
+    // Assert
+    assert.equal(output.trim(), '700')
+  } finally {
+    await removeTestFolder(folder)
+  }
+})
+
+// Value: protects=the probe leaves no folder behind after a successful read; fails_when=the private working folder still exists after the probe returned; seam=the default reader against a fake bun that prints its folder; no_claim=a removal that fails
+test('the identity probe removes its working folder after it answers', async () => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-bun-probe-'))
+  const fakeBun = join(folder, 'fake-bun')
+  await writeFile(fakeBun, '#!/bin/sh\npwd -P\n')
+  await chmod(fakeBun, 0o755)
+  try {
+    // Act
+    const probeFolder = (await runBunProgram(fakeBun, [])).trim()
+    // Assert
+    await assert.rejects(stat(probeFolder), { code: 'ENOENT' })
+  } finally {
+    await removeTestFolder(folder)
+  }
+})
+
+// Value: protects=the probe leaves no folder behind when Bun exits non-zero, and still raises Bun's own error; fails_when=the working folder survives a failed probe or a cleanup error hides the failure; seam=the default reader against a fake bun that records its folder and exits 3; no_claim=a timeout
+test('the identity probe removes its working folder when Bun fails', async () => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-bun-probe-'))
+  const fakeBun = join(folder, 'fake-bun')
+  const recorded = join(folder, 'recorded-folder')
+  await writeFile(
+    fakeBun,
+    `#!/bin/sh\npwd -P > "${recorded}"\necho oops >&2\nexit 3\n`,
+  )
+  await chmod(fakeBun, 0o755)
+  try {
+    // Act
+    const failure = runBunProgram(fakeBun, [])
+    // Assert
+    await assert.rejects(failure, { code: 3 })
+    const probeFolder = (await readFile(recorded, 'utf8')).trim()
+    assert.notEqual(probeFolder, '')
+    await assert.rejects(stat(probeFolder), { code: 'ENOENT' })
+  } finally {
     await removeTestFolder(folder)
   }
 })
