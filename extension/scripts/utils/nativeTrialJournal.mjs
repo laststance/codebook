@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { linkSync } from 'node:fs'
 import { link, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -116,6 +117,52 @@ async function publish(dir, name, record) {
   }
 }
 
+/**
+ * Read the single immutable decision used by planners and observers. Old grants may have a matching
+ * refusal written after publication, in which case the journal cannot prove the caller had permission.
+ * @example await stopDecision(dir)
+ */
+async function stopDecision(dir) {
+  const decision = await readRecord(join(dir, PLAN_AUTHORIZATION))
+  if (decision?.status === 'accepted' && !decision.requiresCommitLink) {
+    if (
+      !EVIDENCE_FILE.test(decision.witness ?? '') ||
+      (await readRecord(join(dir, `refused-${decision.witness}`)))
+    )
+      return null
+  }
+  return decision
+}
+
+/**
+ * Prepare a durable candidate, then compete with closure for one final link. Only that link grants permission.
+ * A later close cannot revoke a winning decision. A failed sync of its link leaves the caller's result uncertain.
+ * @example await commitStopPlan(dir, row, decisionAt, deadline, now)
+ */
+async function commitStopPlan(dir, row, decisionAt, deadline, now) {
+  const name = `prepared-${row.file}`
+  await publish(dir, name, {
+    status: 'accepted',
+    requiresCommitLink: true,
+    witness: row.file,
+    preparedAt: new Date(decisionAt).toISOString(),
+  })
+  // Check legacy closing records too. Make the final link without queuing more asynchronous work after the clock check.
+  if ((await readRecord(join(dir, 'closing.json'))) || now() >= deadline)
+    return false
+  try {
+    linkSync(join(dir, name), join(dir, PLAN_AUTHORIZATION))
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+    // An earlier successful planner may also be retried, but a new caller must still find an open trial.
+    if ((await stopDecision(dir))?.status !== 'accepted') return false
+    await syncDirectory(dir)
+    return !(await readRecord(join(dir, 'closing.json'))) && now() < deadline
+  }
+  await syncDirectory(dir)
+  return true
+}
+
 async function evidenceFiles(dir) {
   return (await readdir(dir)).filter((name) => EVIDENCE_FILE.test(name)).sort()
 }
@@ -215,7 +262,8 @@ async function observe(dir, collect, { slot, afterPlanAt }, deadline, now) {
     )
       return null
     // The grant's decision clock predates its publication. Bind each probe to the durable grant visible before it starts.
-    const grant = await readRecord(join(dir, PLAN_AUTHORIZATION))
+    const grant = await stopDecision(dir)
+    if (grant?.status === 'closed') return null
     const stopPlanWitness = grant?.status === 'accepted' ? grant.witness : null
     if (stopPlanWitness) await syncDirectory(dir)
     if (now() >= deadline) return null
@@ -305,7 +353,7 @@ async function recordedStop(dir, rows, deadline) {
   let outcome = 'unexpected-stop'
   if (intent) {
     const plannedAt = Date.parse(intent.at)
-    const authorization = await readRecord(join(dir, PLAN_AUTHORIZATION))
+    const authorization = await stopDecision(dir)
     const afterPlan = beforeStop.filter(
       (r) => r.afterPlanAt === intent.at && plannedAt <= r.from,
     )
@@ -330,7 +378,8 @@ async function recordedStop(dir, rows, deadline) {
           (window.to < earliestPossibleRunning || window.from > first.to)
         )
       }) &&
-      Date.parse(authorization.acceptedAt) <= first.from
+      Date.parse(authorization.preparedAt ?? authorization.acceptedAt) <=
+        first.from
     ) {
       witness = authorized
       outcome = 'planned-stop'
@@ -359,13 +408,17 @@ async function recordedStop(dir, rows, deadline) {
  * @example await closeObserver(dir, 'observer-timeout', clock(), deadline)
  */
 async function closeObserver(dir, fallback, at, deadline, sampleAt) {
-  const claim = await publish(dir, 'closing.json', {
-    outcome: fallback,
-    at,
-    sampleAt: sampleAt ?? null,
+  const requested = { outcome: fallback, at, sampleAt: sampleAt ?? null }
+  // Fence stop approval first. The winning closer's claim survives a crash before closing.json is written.
+  const decision = await publish(dir, PLAN_AUTHORIZATION, {
+    status: 'closed',
+    closing: requested,
   })
-  // Competes on the same immutable link as plan-stop. Only one command can win authorization.
-  await publish(dir, PLAN_AUTHORIZATION, { status: 'closed' })
+  const claim = await publish(
+    dir,
+    'closing.json',
+    decision.status === 'closed' ? (decision.closing ?? requested) : requested,
+  )
   let incomplete = false
   const limit = Date.now() + PROBE_LEASE_MS
   while (true) {
@@ -548,18 +601,7 @@ export async function controlTrial(
         Date.parse(row.at) < deadline &&
         decisionAt < deadline
       ) {
-        // The evidence is durable before competing with closure. A retry sees the same grant.
-        const authorization = await publish(dir, PLAN_AUTHORIZATION, {
-          status: 'accepted',
-          witness: row.file,
-          acceptedAt: new Date(decisionAt).toISOString(),
-        })
-        // Publishing the grant may outlast the trial. Every finisher seals admission before writing its outcome.
-        if (
-          authorization.status === 'accepted' &&
-          !(await readRecord(join(dir, 'closing.json'))) &&
-          now() < deadline
-        )
+        if (await commitStopPlan(dir, row, decisionAt, deadline, now))
           return intent
       }
       if (row)

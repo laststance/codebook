@@ -1703,25 +1703,14 @@ for (const [change, response] of [
   test(`the stop plan ${response} when ${change} during grant publication`, async (t) => {
     // Arrange
     const { root, dir, start, at } = await startedTrial(t)
-    const directory = await open(dir, 'r')
-    const handles = Object.getPrototypeOf(directory)
-    const sync = handles.sync
-    const identity = await directory.stat()
-    await directory.close()
     let clock = start + 9900
     const now = () => clock
     const running = async () => sample(clock)
-    let reachedGrantSync = false
-    t.mock.method(handles, 'sync', async function () {
-      const current = await this.stat()
-      if (
-        current.dev === identity.dev &&
-        current.ino === identity.ino &&
-        (await readdir(dir)).includes('plan-stop-authorization.json') &&
-        !reachedGrantSync
-      ) {
-        // Claim the first matching sync after the directory read, before another caller can interleave.
-        reachedGrantSync = true
+    const checkSync = await interruptJournalSync(
+      t,
+      dir,
+      preparingGrant,
+      async () => {
         if (change === 'finish closes the trial') {
           const end = await controlTrial(
             root,
@@ -1735,9 +1724,8 @@ for (const [change, response] of [
         } else {
           clock = start + (change === 'the deadline arrives' ? 10_000 : 9999)
         }
-      }
-      return sync.call(this)
-    })
+      },
+    )
 
     // Act
     const plan = controlTrial(
@@ -1755,6 +1743,181 @@ for (const [change, response] of [
     } else {
       await assert.rejects(plan, /Do not stop the VM/)
     }
-    assert.equal(reachedGrantSync, true)
+    checkSync()
   })
 }
+
+/** Interleaves a real journal operation at a specific link's first directory sync. */
+async function interruptJournalSync(t, dir, matches, interrupt) {
+  const handle = await open(dir, 'r')
+  const identity = await handle.stat()
+  const handles = Object.getPrototypeOf(handle)
+  const sync = handles.sync
+  await handle.close()
+  let reached = false
+  t.mock.method(handles, 'sync', async function () {
+    const entry = await this.stat()
+    if (
+      entry.dev === identity.dev &&
+      entry.ino === identity.ino &&
+      matches(await readdir(dir)) &&
+      !reached
+    ) {
+      reached = true
+      await interrupt()
+    }
+    return sync.call(this)
+  })
+  return () =>
+    assert.ok(reached, 'the operation reached the selected directory sync')
+}
+
+const grantFile = 'plan-stop-authorization.json'
+const preparingGrant = (files) =>
+  files.some((name) => name.startsWith('prepared-observation-')) ||
+  files.includes(grantFile)
+
+for (const step of [
+  'the watcher closes before commitment',
+  'the planner cannot sync its preparation',
+  'the watcher closes after commitment',
+]) {
+  test(`the recorded stop and operator response agree when ${step}`, async (t) => {
+    // Arrange
+    const { root, dir, start, at } = await startedTrial(t)
+    const committed = step === 'the watcher closes after commitment'
+    const interrupted = step === 'the planner cannot sync its preparation'
+    const watchStop = () =>
+      watchTrial(root, options, {
+        now: () => start + 3000,
+        sample: async () => sample(start + 3000, 'stopped', null),
+        sleep: () => assert.fail('the watcher already observed the stop'),
+      })
+    let end
+    const checkSync = await interruptJournalSync(
+      t,
+      dir,
+      committed ? (files) => files.includes(grantFile) : preparingGrant,
+      async () => {
+        if (interrupted) throw new Error('preparation sync interrupted')
+        end = await watchStop()
+      },
+    )
+
+    // Act
+    const plan = controlTrial(
+      root,
+      options.id,
+      'plan-stop',
+      undefined,
+      async () => sample(start + 2000),
+      () => start + 2000,
+    )
+    if (committed)
+      assert.deepEqual(await plan, { at: at(2), requiresAuthorization: true })
+    else if (interrupted) {
+      await assert.rejects(plan, /preparation sync interrupted/)
+      end = await watchStop()
+    } else await assert.rejects(plan, /Do not stop the VM/)
+    const row = JSON.parse(
+      await readFile(join(dir, 'sample-slot-3.json'), 'utf8'),
+    )
+    const report = await reportTrials(root)
+
+    // Assert
+    checkSync()
+    const expected = committed ? 'planned-stop' : 'unexpected-stop'
+    assert.equal(end.outcome, expected)
+    assert.deepEqual(end.stopEvidence.stopped, { from: at(3), to: at(3) })
+    if (committed) assert.match(row.stopPlanWitness, /^observation-/)
+    else assert.equal(row.stopPlanWitness, null)
+    assert.deepEqual(await watchStop(), end)
+    assert.deepEqual(
+      await controlTrial(root, options.id, 'finish', 'unknown', () =>
+        assert.fail('terminal trial'),
+      ),
+      end,
+    )
+    assert.equal(report.trials[0].outcome, expected)
+  })
+}
+
+test('restarting after the closer wins the stop decision recovers its healthy finish and refuses shutdown', async (t) => {
+  // Arrange
+  const { root, dir, at, start } = await startedTrial(t)
+  const now = () => start + 1000
+  const checkSync = await interruptJournalSync(
+    t,
+    dir,
+    (files) => files.includes(grantFile),
+    async () => {
+      throw new Error('closing sync interrupted')
+    },
+  )
+
+  // Act
+  await assert.rejects(
+    controlTrial(
+      root,
+      options.id,
+      'finish',
+      'healthy',
+      async () => sample(now()),
+      now,
+    ),
+    /closing sync interrupted/,
+  )
+  checkSync()
+  assert.ok(!(await readdir(dir)).includes('closing.json'))
+  const noProbe = () =>
+    assert.fail('the closing decision fences the restarted trial')
+  await assert.rejects(
+    controlTrial(root, options.id, 'plan-stop', undefined, noProbe, now),
+    /Do not stop the VM/,
+  )
+  const ended = await watchTrial(root, options, {
+    now: () => start + 11000,
+    sample: noProbe,
+  })
+
+  // Assert
+  assert.equal(ended.outcome, 'healthy')
+  assert.equal(ended.at, at(1))
+  assert.deepEqual(
+    await controlTrial(root, options.id, 'finish', 'unknown', noProbe, now),
+    ended,
+  )
+})
+
+test('a legacy grant with a refusal for its own witness cannot attribute an observed stop to the operator', async (t) => {
+  // Arrange
+  const { root, put, at, start } = await startedTrial(t)
+  const witness = 'observation-abcd.json'
+  await put('plan-stop.json', { at: at(1), requiresAuthorization: true })
+  await put(witness, {
+    ...sample(start + 2000),
+    additionalObservation: true,
+    afterPlanAt: at(1),
+  })
+  await put(grantFile, { status: 'accepted', witness, acceptedAt: at(2) })
+  await put(`refused-${witness}`, { status: 'rejected', witness })
+  await put('sample-slot-3.json', {
+    ...sample(start + 3000, 'stopped', null),
+    stopPlanWitness: witness,
+  })
+
+  // Act
+  const end = await controlTrial(
+    root,
+    options.id,
+    'finish',
+    'unknown',
+    () => assert.fail('stop is recorded'),
+    () => start + 4000,
+  )
+
+  // Assert
+  assert.equal(end.outcome, 'unknown')
+  assert.deepEqual(end.stopEvidence.stopped, { from: at(3), to: at(3) })
+  assert.equal((await reportTrials(root)).groups[0].counts['planned-stop'], 0)
+})
