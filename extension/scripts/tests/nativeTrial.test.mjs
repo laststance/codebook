@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 import {
   controlTrial,
@@ -104,7 +107,15 @@ test('planned stop evidence precedes the stopped sample and remains stable acros
     clocked(
       clock,
       (at) => (at === start ? sample(at) : sample(at, 'stopped', null)),
-      () => controlTrial(root, options.id, 'plan-stop'),
+      () =>
+        controlTrial(
+          root,
+          options.id,
+          'plan-stop',
+          undefined,
+          undefined,
+          () => start,
+        ),
     ),
   )
   // Assert
@@ -309,3 +320,217 @@ test('reports separate 16 GiB, 32 GiB and previously unmeasured trials even with
   assert.equal(trials[2].minGuestUsedSwapMb, null)
   assert.equal(trials[2].peakHostRssMiBByKind, null)
 })
+
+for (const command of ['watch', 'finish']) {
+  test(`a restarted ${command} preserves the earliest durable stop even after the deadline`, async (t) => {
+    // Arrange
+    const root = await fixture(t)
+    const start = Date.now() - 60000
+    const clock = { at: start }
+    const seams = clocked(clock, (at) =>
+      sample(at, at === start ? 'running' : 'stopped', at === start),
+    )
+    // The sample publication succeeded, then the observer exited before writing end.json.
+    await assert.rejects(
+      watchTrial(root, options, {
+        ...seams,
+        note: (row) => {
+          if (row.guest === 'stopped') throw new Error('observer exited')
+        },
+      }),
+      /observer exited/,
+    )
+    const dir = join(root, options.id)
+    await writeFile(
+      join(dir, 'sample-slot-2.json'),
+      JSON.stringify(sample(start + 2000)),
+    )
+    await writeFile(
+      join(dir, 'plan-stop.json'),
+      JSON.stringify({ at: new Date(start + 3000).toISOString() }),
+    )
+    clock.at = Date.now()
+
+    // Act
+    const result =
+      command === 'watch'
+        ? await watchTrial(
+            root,
+            options,
+            clocked(clock, () => assert.fail('new probe')),
+          )
+        : await controlTrial(root, options.id, 'finish', 'healthy', () =>
+            assert.fail('new probe'),
+          )
+
+    // Assert
+    assert.equal(result.outcome, 'unexpected-stop')
+    assert.equal(result.sampleAt, new Date(start + 1000).toISOString())
+    assert.equal((await reportTrials(root)).trials[0].samples, 2)
+  })
+}
+
+test('a stop plan created inside the inventory query leaves stop order unknown', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  const start = Date.now() - 60000
+  const clock = { at: start }
+  const seams = clocked(
+    clock,
+    (at) => {
+      const row = sample(at, at === start ? 'running' : 'stopped', at === start)
+      if (at !== start) {
+        row.guest.stateObservedFrom = new Date(start + 1000).toISOString()
+        row.guest.stateObservedTo = new Date(start + 1400).toISOString()
+        row.at = new Date(start + 1500).toISOString()
+      }
+      return row
+    },
+    () =>
+      controlTrial(
+        root,
+        options.id,
+        'plan-stop',
+        undefined,
+        undefined,
+        () => start + 1200,
+      ),
+  )
+
+  // Act
+  const result = await watchTrial(root, options, seams)
+
+  // Assert
+  assert.equal(result.outcome, 'unknown')
+  assert.equal(result.sampleAt, new Date(start + 1500).toISOString())
+})
+
+test('a stopped guest whose inventory query finishes beyond the deadline cannot establish a timely stop', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  const start = Date.now()
+  const clock = { at: start }
+
+  // Act
+  const result = await watchTrial(
+    root,
+    options,
+    clocked(clock, (at) => {
+      if (at === start) return sample(at)
+      const row = sample(start + 5500, 'stopped', null)
+      row.guest.stateObservedFrom = new Date(start + 1000).toISOString()
+      row.guest.stateObservedTo = new Date(start + 5000).toISOString()
+      clock.at = start + 5500
+      return row
+    }),
+  )
+
+  // Assert
+  assert.equal(result.outcome, 'observer-timeout')
+})
+
+test('a reset-only counter retains its signed difference and has no peak paging rate', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  const start = Date.now()
+  const clock = { at: start }
+  await watchTrial(
+    root,
+    options,
+    clocked(clock, (at) =>
+      at === start
+        ? sample(at, 'running', true, 10)
+        : sample(at, 'stopped', null, 2),
+    ),
+  )
+
+  // Act
+  const { trials } = await reportTrials(root)
+  const row = JSON.parse(
+    await readFile(join(root, options.id, 'sample-slot-1.json'), 'utf8'),
+  )
+
+  // Assert
+  assert.equal(row.change.host.pages, -8)
+  assert.equal(trials[0].hostCounterDecreases, 1)
+  assert.equal(trials[0].peakHostSwapoutPagesPerSecond, null)
+})
+
+test('trials observing separate builds and suites have a different denominator from simultaneous workloads', async (t) => {
+  // Arrange
+  const root = await fixture(t)
+  for (const [id, actual] of [
+    ['serial', [{ build: 1 }, { suite: 1 }]],
+    [
+      'overlap',
+      [
+        { build: 1, suite: 1 },
+        { build: 1, suite: 1 },
+      ],
+    ],
+  ]) {
+    const start = Date.now()
+    const clock = { at: start }
+    await watchTrial(
+      root,
+      { ...options, id },
+      clocked(clock, (at) => {
+        const row = sample(
+          at,
+          at === start ? 'running' : 'stopped',
+          at === start,
+        )
+        row.host.workloads = actual.shift()
+        return row
+      }),
+    )
+  }
+
+  // Act
+  const { groups } = await reportTrials(root)
+
+  // Assert
+  assert.deepEqual(
+    groups.map((g) => [g.ids, g.observedCombinations]),
+    [
+      [['overlap'], ['build+suite']],
+      [['serial'], ['build', 'suite']],
+    ],
+  )
+})
+
+test(
+  'report reads long journal histories under a constrained open-file limit',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    // Arrange
+    const root = await fixture(t)
+    const dir = join(root, options.id)
+    await mkdir(dir)
+    await writeFile(join(dir, 'trial.json'), JSON.stringify(options))
+    const first = join(dir, 'sample-slot-0.json')
+    await writeFile(first, JSON.stringify(sample(Date.now())))
+    // Shared immutable fixture bytes exercise 160 distinct file opens with minimal storage.
+    for (let i = 1; i < 160; i++)
+      await link(first, join(dir, `sample-slot-${i}.json`))
+    const script = fileURLToPath(
+      new URL('../native-trial.mjs', import.meta.url),
+    )
+
+    // Act
+    const { stdout } = await promisify(execFile)('/bin/sh', [
+      '-c',
+      'ulimit -n 48 && exec "$@"',
+      'test',
+      process.execPath,
+      script,
+      'report',
+      '--root',
+      root,
+      '--json',
+    ])
+
+    // Assert
+    assert.equal(JSON.parse(stdout).trials[0].samples, 160)
+  },
+)
