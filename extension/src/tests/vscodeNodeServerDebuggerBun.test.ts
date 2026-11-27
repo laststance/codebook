@@ -146,3 +146,76 @@ test('a stop that ran on before a Bun release is not reported at the release, an
   assert.equal(first.reason, 'breakpoint')
   await debug.release()
 })
+
+/** Arms the two declared stops of {@link TWO_STOPS} in the harness's stop file. */
+async function armTwoStops(debug: NodeServerDebugger): Promise<void> {
+  await debug.armStops(
+    TWO_STOPS.map((stop, index) => ({
+      declaredStopIndex: index,
+      path: 'src/routes/users.ts',
+      file: STOP_FILE,
+      line: stop.line,
+      column: stop.column,
+      hash: 'a'.repeat(64),
+      inspections: [],
+    })),
+    AbortSignal.timeout(5_000),
+  )
+}
+
+// Value: protects=the first hit of a declared stop in a Bun module, which js-debug sends without hit ids (it handles a Bun module's first pause as the module's entry pause and rewrites it as a plain breakpoint), is the declared stop by its place; fails_when=a Bun stop without ids on the armed stop's line is reported as the learner's pause, so the run holds it, captures nothing and ends with PAUSE_HOLD_EXPIRED (Cycle 0152 N0 attempt 1 in VS Code 1.148.0); seam=the editor harness reporting a breakpoint stop with no ids on the declared line; no_claim=js-debug's real event (trace of probe E1-M2 and the N0 run)
+test('a Bun breakpoint stop without hit ids on an armed stop line is that declared stop', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    firstStop: { reason: 'breakpoint', frame: { file: STOP_FILE, line: 14 } },
+  })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armTwoStops(debug)
+  // Act
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  const first = await nextPause()
+  // Assert
+  assert.equal(first.declaredStopIndex, 0)
+  await debug.release()
+})
+
+// Value: protects=a Bun stop without hit ids anywhere else (a learner's own breakpoint on another line) stays the learner's pause; fails_when=the judgment by place accepts any breakpoint stop of a Bun run; seam=the editor harness reporting a breakpoint stop with no ids on an unarmed line; no_claim=which lines learners break on
+test('a Bun breakpoint stop without hit ids on another line stays the learner pause', async () => {
+  // Arrange
+  const editor = await editorHarness({
+    firstStop: { reason: 'breakpoint', frame: { file: STOP_FILE, line: 30 } },
+  })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armTwoStops(debug)
+  // Act
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  const first = await nextPause()
+  // Assert
+  assert.equal(first.declaredStopIndex, undefined)
+  await debug.release()
+})
+
+// Value: protects=a node run keeps the strict rule: a breakpoint stop without hit ids, even on an armed stop's line, stays the learner's (only Bun's js-debug path drops the ids); fails_when=the judgment by place leaks into node runs, so a learner's own breakpoint at a declared line is taken as Codebook's stop; seam=the editor harness's entry pause, then a breakpoint stop with no ids on the declared line; no_claim=V8's own hit reporting
+test('a node breakpoint stop without hit ids on an armed stop line stays the learner pause', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({
+    ...BUN_ATTACH,
+    runtime: 'node',
+    signal: AbortSignal.timeout(5_000),
+  })
+  const nextPause = nextPauseOf(debug)
+  await armTwoStops(debug)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  // Act
+  editor.adapter.stop('breakpoint', undefined, { file: STOP_FILE, line: 14 })
+  const first = await nextPause()
+  // Assert
+  assert.equal(first.declaredStopIndex, undefined)
+  await debug.release()
+})

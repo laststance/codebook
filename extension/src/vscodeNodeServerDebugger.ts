@@ -559,6 +559,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   /**
    * Tells whether a stop is the hit of an armed declared stop: its reason is `breakpoint`, the adapter names the owned breakpoint's id, and the top frame stands in the stop's file on its verified line (on the declared line while the registration is pending).
+   * A Bun target's stop that names no id is judged by its place alone: js-debug handles a Bun module's first pause as that module's entry pause (Bun has no instrumentation breakpoint), rewrites it as a plain breakpoint and drops the hit ids (Cycle 0152 N0), so an armed stop's own hit arrives without them.
    * @param stop - The adapter's stop.
    * @param session - The bound session.
    * @param frame - The top frame; without one only the ids decide (the entry check).
@@ -570,12 +571,20 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     session: vscode.DebugSession,
     frame?: DebugProtocol.StackFrame,
   ): number | undefined {
-    if (stop.reason !== 'breakpoint' || !stop.hitBreakpointIds) return undefined
+    if (stop.reason !== 'breakpoint') return undefined
+    const hitIds = stop.hitBreakpointIds
+    const isJudgedByPlace = this.runtime === 'bun' && !hitIds?.length
+    if (!hitIds && !isJudgedByPlace) return undefined
     for (const { target, breakpoint } of this.armed) {
       const id = breakpoint.acknowledgedId(session)
-      if (id === undefined || !stop.hitBreakpointIds.includes(id)) continue
+      // An unbound stop is never hit; with ids, only the stop whose id the adapter names can be.
+      if (id === undefined || (!isJudgedByPlace && !hitIds?.includes(id)))
+        continue
       const line = breakpoint.verifiedPlace(session)?.line ?? target.line
-      if (!frame || (frame.source?.path === target.file && frame.line === line))
+      const isAtStop =
+        frame?.source?.path === target.file && frame.line === line
+      // Without a frame only the ids decide (the entry check); a judgment by place always needs the frame.
+      if (isAtStop || (!frame && !isJudgedByPlace))
         return target.declaredStopIndex
     }
     return undefined
