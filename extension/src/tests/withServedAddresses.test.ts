@@ -35,7 +35,7 @@ const SELECT_PAIRS_TIMED_RUNS = 5
 const SERVING_TIMED_RUNS = 2
 /** How long the timing test waits for worker startup and each ordinary-page calibration before marking the remaining work unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
-/** How many times as long as {@link ORDINARY_PAGE} the timing test waits for its paired measured call before it takes the filtering for unfinished: more than every bound of these tests ({@link CLOSED_SVG_PAGE_BOUND_RATIO} the largest), so a page that misses its bound is measured, and a page that never ends is stopped. One fixed deadline for the whole worker cut the last page of the closed-svg test on a CI runner under coverage, where the ordinary page took 1,835 ms and the four pages together about 28 s more. */
+/** How much worker CPU time one measured call may spend relative to its same-turn ordinary page. This exceeds the largest wall-time acceptance ratio ({@link CLOSED_SVG_PAGE_BOUND_RATIO}). The independent wall watchdog uses the larger of this budget and {@link FILTER_DEADLINE_MS}, so a descheduled or blocked worker cannot keep a test open indefinitely. */
 const PAGE_DEADLINE_RATIO = 10
 /** An ordinary Wiki page of more than 1 MB, sections of a heading, text, a link and code; each crafted page of the timing tests is compared with it. */
 const ORDINARY_PAGE =
@@ -64,7 +64,11 @@ function exceedsServingBound(
 }
 
 /** Start of a worker calibration or measured call, stamped on the process's monotonic clock. */
-type ServingPhase = { startedAt: number; ordinaryMs?: number }
+type ServingPhase = {
+  startedAt: number
+  ordinaryMs?: number
+  cpuAtStart?: NodeJS.CpuUsage
+}
 
 /**
  * Arms the serving worker's watchdog for startup, each calibration, and each measured call.
@@ -72,6 +76,7 @@ type ServingPhase = { startedAt: number; ordinaryMs?: number }
  * @param stop - Terminates the worker when the current step exhausts its budget.
  * @param updates - The worker's calibration port. A queued update supersedes the expired interval even when its event has not been dispatched.
  * @param now - Monotonic clock shared by the parent and worker; tests can supply a virtual clock.
+ * @param cpuElapsed - CPU milliseconds used by the worker since its measured call began. Wall-clock samples still decide every ratio.
  * @returns Controls for starting the next step and clearing the timer on worker exit.
  * @example
  * const deadline = servingDeadline(() => void worker.terminate())
@@ -82,8 +87,17 @@ function servingDeadline(
   stop: () => void,
   updates?: MessagePort,
   now: () => number = () => performance.now(),
+  cpuElapsed?: (start: NodeJS.CpuUsage) => Promise<number>,
 ) {
-  // A packet carries the worker's start time on the shared process clock. Read the newest queued phase before deciding whether it expired.
+  let active: ServingPhase | undefined
+  let wallTimer: NodeJS.Timeout | undefined
+  let cpuTimer: NodeJS.Timeout | undefined
+  function disarm(): void {
+    active = undefined
+    clearTimeout(wallTimer)
+    clearTimeout(cpuTimer)
+  }
+  // The worker may already have started a later turn while the parent's timer or CPU query was pending.
   function takeLatest(first: ServingPhase): void {
     let latest = first
     let next = updates && receiveMessageOnPort(updates)
@@ -91,29 +105,60 @@ function servingDeadline(
       latest = next.message as ServingPhase
       next = updates && receiveMessageOnPort(updates)
     }
-    arm(latest.ordinaryMs, now() - latest.startedAt)
+    start(latest)
   }
-  function onDeadline(): void {
+  function superseded(phase: ServingPhase): boolean {
+    if (active !== phase) return true
     const queued = updates && receiveMessageOnPort(updates)
-    if (queued) takeLatest(queued.message as ServingPhase)
-    else stop()
+    if (!queued) return false
+    takeLatest(queued.message as ServingPhase)
+    return true
   }
-  let timer = setTimeout(onDeadline, FILTER_DEADLINE_MS)
-  function arm(ordinaryMs?: number, elapsedMs = 0): void {
-    clearTimeout(timer)
-    const budgetMs =
-      ordinaryMs === undefined
+  function expire(phase: ServingPhase): void {
+    if (superseded(phase)) return
+    disarm()
+    stop()
+  }
+  function start(phase: ServingPhase): void {
+    disarm()
+    active = phase
+    const age = now() - phase.startedAt
+    const budget =
+      phase.ordinaryMs === undefined
         ? FILTER_DEADLINE_MS
-        : PAGE_DEADLINE_RATIO * ordinaryMs
-    const remainingMs = Math.ceil(budgetMs - elapsedMs)
-    if (remainingMs <= 0) stop()
-    else timer = setTimeout(onDeadline, remainingMs)
+        : PAGE_DEADLINE_RATIO * phase.ordinaryMs
+    const cpuAtStart = phase.cpuAtStart
+    // An unscheduled worker spends wall time without spending its compute budget. Keep the existing absolute calibration bound for such waits.
+    const hardLimit =
+      cpuAtStart && cpuElapsed ? Math.max(FILTER_DEADLINE_MS, budget) : budget
+    if (age >= hardLimit) {
+      expire(phase)
+      return
+    }
+    wallTimer = setTimeout(() => expire(phase), Math.ceil(hardLimit - age))
+    if (!cpuAtStart || !cpuElapsed || hardLimit === budget) return
+    const readCpu = () => cpuElapsed(cpuAtStart)
+    async function checkCpu(): Promise<void> {
+      if (superseded(phase)) return
+      const used = await readCpu().catch(() => Number.POSITIVE_INFINITY)
+      if (superseded(phase)) return
+      if (!Number.isFinite(used) || used < 0 || used >= budget) expire(phase)
+      else
+        cpuTimer = setTimeout(() => void checkCpu(), Math.ceil(budget - used))
+    }
+    cpuTimer = setTimeout(
+      () => void checkCpu(),
+      Math.max(0, Math.ceil(budget - age)),
+    )
   }
+  const arm = (ordinaryMs?: number, cpuAtStart?: NodeJS.CpuUsage): void =>
+    start({ startedAt: now(), ordinaryMs, cpuAtStart })
+  arm()
   updates?.on('message', takeLatest)
   return {
     arm,
     clear(): void {
-      clearTimeout(timer)
+      disarm()
       updates?.close()
     },
   }
@@ -150,7 +195,10 @@ const serveOnce = (page) => {
   if (workerData.tagAtBodyEnd === undefined) serve(page, 'cursor')
   else serve(page, 'cursor', workerData.tagAtBodyEnd)
 }
-const reportTurn = (ordinaryMs) => workerData.calibrations.postMessage({ startedAt: performance.now(), ordinaryMs })
+const reportTurn = (ordinaryMs) => workerData.calibrations.postMessage({
+  startedAt: performance.now(), ordinaryMs,
+  cpuAtStart: ordinaryMs === undefined ? undefined : process.threadCpuUsage(),
+})
 serveOnce(workerData.warmUp)
 for (const [name, page] of Object.entries(workerData.pages)) {
   const { measured: ordinary, baseline: measured } = shortestTimesInTurns(
@@ -181,9 +229,17 @@ workerData.calibrations.close()`,
     },
   )
   await new Promise<void>((resolve) => {
-    const deadline = servingDeadline(() => {
-      void worker.terminate()
-    }, port1)
+    const deadline = servingDeadline(
+      () => {
+        void worker.terminate()
+      },
+      port1,
+      undefined,
+      async (start) => {
+        const { user, system } = await worker.cpuUsage(start)
+        return (user + system) / 1_000
+      },
+    )
     worker.on('message', (message: { name: string } & ServedInTurns) => {
       times[message.name] = { page: message.page, ordinary: message.ordinary }
     })
@@ -354,6 +410,109 @@ test('a delayed Wiki worker update keeps only the time remaining on the latest c
   // Assert
   assert.equal(stopsAtPreviousDeadline, 0)
   assert.equal(stopsBeforeCurrentDeadline, 0)
+  assert.equal(stops, 1)
+})
+
+// Value: protects=a descheduled worker gets its two measured turns, a CPU-bound call stops at its calibrated limit, and a blocked call still has a wall deadline.
+test('the Wiki worker can resume a descheduled turn but still stops a CPU overrun or a blocked call', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const cpuAtStart = { user: 7_000, system: 3_000 }
+  let used = 10
+  const stops: number[] = []
+  const deadline = servingDeadline(
+    () => stops.push(Date.now()),
+    undefined,
+    Date.now,
+    async (start) => {
+      assert.equal(start, cpuAtStart)
+      return used
+    },
+  )
+  context.after(() => deadline.clear())
+
+  // Act: after 100 ms of wall time, the worker has used only 10 of its 100 ms CPU budget.
+  deadline.arm(10, cpuAtStart)
+  context.mock.timers.tick(100)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  const afterDeschedule = [...stops]
+  used = 100
+  context.mock.timers.tick(90)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  const afterCpuOverrun = [...stops]
+
+  // A second turn blocks completely. Its hard wall clock still expires while the CPU check is pending.
+  used = 0
+  deadline.arm(10, cpuAtStart)
+  context.mock.timers.tick(29_999)
+  const beforeWallLimit = [...stops]
+  context.mock.timers.tick(1)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  // Assert
+  assert.deepEqual(afterDeschedule, [])
+  assert.deepEqual(afterCpuOverrun, [190])
+  assert.deepEqual(beforeWallLimit, [190])
+  assert.deepEqual(stops, [190, 30_190])
+})
+
+// Value: protects=missing worker CPU telemetry cannot extend a synchronous call indefinitely.
+test('an unavailable Wiki worker CPU reading expires the current measured call', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  let stops = 0
+  const deadline = servingDeadline(
+    () => {
+      stops++
+    },
+    undefined,
+    Date.now,
+    async () => {
+      throw new Error('Worker CPU reading unavailable')
+    },
+  )
+  context.after(() => deadline.clear())
+
+  // Act
+  deadline.arm(10, { user: 0, system: 0 })
+  context.mock.timers.tick(100)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  // Assert
+  assert.equal(stops, 1)
+})
+
+// Value: protects=an old worker CPU reading cannot terminate a new calibration while the parent awaits the reading.
+test('a delayed CPU result for the previous Wiki worker turn cannot stop the next ordinary calibration', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  let complete!: (used: number) => void
+  const reading = new Promise<number>((resolve) => {
+    complete = resolve
+  })
+  let stops = 0
+  const deadline = servingDeadline(
+    () => {
+      stops++
+    },
+    undefined,
+    Date.now,
+    () => reading,
+  )
+  context.after(() => deadline.clear())
+
+  // Act
+  deadline.arm(10, { user: 0, system: 0 })
+  context.mock.timers.tick(100)
+  deadline.arm()
+  complete(500)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  context.mock.timers.tick(29_999)
+  const beforeCalibrationLimit = stops
+  context.mock.timers.tick(1)
+
+  // Assert
+  assert.equal(beforeCalibrationLimit, 0)
   assert.equal(stops, 1)
 })
 
