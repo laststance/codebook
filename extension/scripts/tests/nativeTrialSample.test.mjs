@@ -92,6 +92,8 @@ test('a busy host and ready guest report independent absolute counters and only 
   assert.deepEqual(sample.host.rssMiBByKind, { nodeTest: 183.25, tsc: 0 })
   assert.equal(Object.hasOwn(sample.host.workloads, 'unrelatedDetail'), false)
   assert.deepEqual(sample.guest, {
+    stateObservedFrom: '2026-11-27T06:00:00.000Z',
+    stateObservedTo: '2026-11-27T06:00:00.000Z',
     state: 'running',
     reachable: true,
     memoryPressure: 'critical',
@@ -133,6 +135,8 @@ test('only an explicit stopped state confirms a stop and skips guest execution',
 
     // Assert
     assert.deepEqual(sample.guest, {
+      stateObservedFrom: '2026-11-27T06:00:00.000Z',
+      stateObservedTo: '2026-11-27T06:00:00.000Z',
       state,
       reachable: null,
       memoryPressure: 'unknown',
@@ -183,6 +187,8 @@ test('a running guest distinguishes a failed probe, malformed output and an answ
 
     // Assert
     assert.deepEqual(sample.guest, {
+      stateObservedFrom: '2026-11-27T06:00:00.000Z',
+      stateObservedTo: '2026-11-27T06:00:00.000Z',
       state: 'running',
       reachable,
       memoryPressure,
@@ -270,4 +276,27 @@ test('guest RAM and swap survive independently when one sysctl fails', async () 
     assert.match(guestCalls[0][1][3], /sysctl -n hw\.memsize/)
     assert.match(guestCalls[0][1][3], /sysctl -n vm\.swapusage/)
   }
+})
+
+test('the state evidence brackets only its provider query and the sample timestamp follows the last measurement', async () => {
+  // Arrange
+  const base = Date.parse('2026-11-27T06:00:00Z')
+  let offset = 1000
+  const fixture = fixtureRunner()
+  const run = async (program, args) => {
+    if (program === 'cua' && args[0] === 'sandbox') offset = 3700
+    if (program === 'cua' && args[0] === 'sb') offset = 6400
+    return fixture.run(program, args)
+  }
+
+  // Act
+  const sample = await readNativeTrialSample({
+    run,
+    now: () => new Date(base + offset),
+  })
+
+  // Assert
+  assert.equal(sample.guest.stateObservedFrom, '2026-11-27T06:00:01.000Z')
+  assert.equal(sample.guest.stateObservedTo, '2026-11-27T06:00:03.700Z')
+  assert.equal(sample.at, '2026-11-27T06:00:06.400Z')
 })

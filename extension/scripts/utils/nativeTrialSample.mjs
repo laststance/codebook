@@ -93,15 +93,24 @@ function workloadRss(readings) {
     : null
 }
 
-/** Reads the named guest only after the control plane confirms it is running. @example await readGuest(readCommand) */
-async function readGuest(run) {
+/**
+ * Records the interval in which the provider observed the VM state; a later guest telemetry probe cannot move that interval.
+ * @example await readGuest(readCommand, () => new Date())
+ */
+async function readGuest(run, now) {
+  const stateObservedFrom = now().toISOString()
   const info = readJson(
     await run('cua', ['sandbox', 'info', guestName, '--json']),
     [0],
   )
+  const observation = {
+    stateObservedFrom,
+    stateObservedTo: now().toISOString(),
+  }
   const state =
     typeof info?.state === 'string' ? info.state.trim().toLowerCase() : ''
   const unmeasured = {
+    ...observation,
     reachable: null,
     memoryPressure: 'unknown',
     memoryBytes: null,
@@ -125,6 +134,7 @@ async function readGuest(run) {
   const ram = Number(/^memoryBytes=(\d+)$/m.exec(measurements)?.[1])
   const swapLine = /^swapUsage=([^\n]*)$/m.exec(measurements)?.[1]
   return {
+    ...observation,
     state: 'running',
     reachable: true,
     memoryPressure: Object.hasOwn(guestPressure, lines[1])
@@ -147,7 +157,6 @@ export async function readNativeTrialSample({
   run = readCommand,
   now = () => new Date(),
 } = {}) {
-  const at = now().toISOString()
   // A missing executable or a failed probe must not discard the independent measurements.
   const safeRun = async (program, args) => {
     try {
@@ -159,12 +168,12 @@ export async function readNativeTrialSample({
   const [precheck, hostPages, guest] = await Promise.all([
     safeRun(process.execPath, [precheckPath, '--json']),
     safeRun('/usr/bin/vm_stat', []),
-    readGuest(safeRun),
+    readGuest(safeRun, now),
   ])
   const facts = readJson(precheck, [0, 3])
   const used = facts?.swap?.usedMb
   return {
-    at,
+    at: now().toISOString(),
     host: {
       memoryPressure: pressureLevels.has(facts?.memoryPressure)
         ? facts.memoryPressure
