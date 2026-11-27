@@ -66,6 +66,7 @@ function repositoryClient(
     presentedRevision = -1,
     location: RepositorySelection['location'],
     restoring = false,
+    navigationFrame: number | undefined,
     timer: ReturnType<typeof setTimeout> | undefined
   const element = (id: string) => document.getElementById(id)!
   // The focus the pane owes: the element it would have focused in a document that has the focus. The newest wish replaces an older one, as the newest `focus()` would have. It is the control the learner left the pane at until a part of the pane names another place (an article's title, the place a revision returns to, the same control of a list that was rendered again).
@@ -170,7 +171,14 @@ function repositoryClient(
     }
   }
   const persist = (): void => {
-    if (restoring || !current?.selection || current.loading) return
+    // A save due while an explicit Return is pending would publish intermediate layout as the learner's new place.
+    if (
+      navigationFrame !== undefined ||
+      restoring ||
+      !current?.selection ||
+      current.loading
+    )
+      return
     location = capture()
     api.setState({ key: contentKey, location, visited: [...visited] })
     send({ type: 'location', selection: { ...current.selection, location } })
@@ -648,11 +656,15 @@ function repositoryClient(
     if (!message.loading && presentedRevision !== message.revision) {
       presentedRevision = message.revision
       if (!changed) location = selection.location ?? location
-      if (location)
-        requestAnimationFrame(() => {
-          // A newer or loading model retires this earlier frame's reading and keyboard restoration.
+      if (navigationFrame !== undefined) cancelAnimationFrame(navigationFrame)
+      navigationFrame = undefined
+      const target = location
+      if (target)
+        navigationFrame = requestAnimationFrame(() => {
+          navigationFrame = undefined
+          // A loading model retires this frame's reading and keyboard restoration.
           if (current?.revision === message.revision && !current.loading)
-            restore(true)
+            restore(true, target)
         })
     }
     api.postMessage({
