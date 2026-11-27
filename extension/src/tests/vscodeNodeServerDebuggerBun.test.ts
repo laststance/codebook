@@ -5,6 +5,7 @@ import type {
   NodeServerDebugger,
   NodeServerDebuggerPause,
 } from '../nodeServerDebugger'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { defer } from './utils/defer'
 import {
@@ -309,14 +310,23 @@ test('a Bun stop verified with a line and no column is armed as bound at that li
 // Value: protects=a Bun stop whose registration is pending at first and verified before the arming deadline counts as bound; fails_when=a pending reply is asked once and then read as unbound, so a stop that binds a moment later is refused; seam=the editor harness's pending reply and a later breakpoint event; no_claim=how long js-debug takes to verify
 test('a Bun stop pending at first and verified before the arming deadline is armed as bound', async () => {
   // Arrange
+  let pendingReplies = 0
   const editor = await editorHarness({
-    breakpointReply: (_requested, id) => ({ id, verified: false }),
+    breakpointReply: (_requested, id) => {
+      pendingReplies += 1
+      return { id, verified: false }
+    },
   })
   const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const arming = armStopsAt(debug, [{ line: 14, column: 3 }])
+  // The editor hands its pending reply to the debugger in a microtask after it asked for it, so a poll that sees the reply asked for sees it taken.
+  await waitUntil(
+    () => pendingReplies > 0,
+    'the pending reply to the stop registration',
+    5_000,
+  )
   // Act
-  await new Promise((resolve) => setTimeout(resolve, 100))
   editor.adapter.breakpointNews({
     id: OWNED_IDS[0]!,
     verified: true,
@@ -342,6 +352,48 @@ test('a Bun stop withdrawn by the adapter after arming is reported unbound by th
   // Assert
   assert.deepEqual(current, [
     { declaredStopIndex: 0 },
+    { declaredStopIndex: 1, boundLine: 20 },
+  ])
+  await debug.release()
+})
+
+// Value: protects=a Bun stop whose binding the adapter's news put on another line, without naming a column, is read as unbound by the re-read before the run is prepared, so no request is sent for a stop that left its declared line; fails_when=the re-read keeps the stop's earlier whole position because news without a column on a refused line is ignored; seam=the editor harness's breakpoint event without a column after arming; no_claim=whether js-debug sends news without a column
+test('a Bun stop the adapter moves to another line without a column is reported unbound by the re-read', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  await armTwoStops(debug)
+  // Act
+  editor.adapter.breakpointNews({ id: OWNED_IDS[0]!, verified: true, line: 15 })
+  const current = plain(debug.currentlyBoundStops?.())
+  // Assert
+  assert.deepEqual(current, [
+    { declaredStopIndex: 0 },
+    { declaredStopIndex: 1, boundLine: 20 },
+  ])
+  await debug.release()
+})
+
+// Value: protects=the adapter's latest report decides a Bun stop's place: news with a whole position on the declared line, after news without a column moved it away, binds it again; fails_when=the earlier line without a column keeps deciding, so a stop the adapter bound again reads as unbound; seam=two breakpoint events of the editor harness after arming; no_claim=the order in which js-debug sends its news
+test('a Bun stop moved away by news without a column is bound again by later news that names its whole place', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  await armTwoStops(debug)
+  editor.adapter.breakpointNews({ id: OWNED_IDS[0]!, verified: true, line: 15 })
+  // Act
+  editor.adapter.breakpointNews({
+    id: OWNED_IDS[0]!,
+    verified: true,
+    line: 14,
+    column: 7,
+  })
+  const current = plain(debug.currentlyBoundStops?.())
+  // Assert
+  assert.deepEqual(current, [
+    { declaredStopIndex: 0, boundLine: 14 },
     { declaredStopIndex: 1, boundLine: 20 },
   ])
   await debug.release()

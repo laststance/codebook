@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +10,8 @@ import {
   runBunProgram,
   type RunBunProgram,
 } from '../utils/resolveBunRuntime'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** An error as `execFile` raises it when no such program exists. */
 function missingProgram(): Error {
@@ -249,6 +251,6 @@ test('the identity probe runs with the restricted server environment and a neutr
   } finally {
     if (previous === undefined) delete process.env.CODEBOOK_TEST_PARENT_ONLY
     else process.env.CODEBOOK_TEST_PARENT_ONLY = previous
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   }
 })

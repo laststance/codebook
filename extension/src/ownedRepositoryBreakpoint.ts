@@ -127,7 +127,7 @@ type RegistrationReceipt = {
 /** Where the adapter verified a registration, and whether its latest news about the acknowledged breakpoint called it unverified since (a reloaded script), which {@link OwnedRepositoryBreakpoint.adapterVerifiedPlace} honours. */
 type VerifiedRegistration = {
   verifiedAt?: VerifiedPlace
-  /** The line of a verified reply or news that named a line but no column; read by {@link OwnedRepositoryBreakpoint.boundPlace}, which a Bun run's late arming uses (an editor may drop the column). */
+  /** The line of the adapter's latest verified report: a reply, news with a whole position, or news that named a line but no column (also one the owner refuses); read only by {@link OwnedRepositoryBreakpoint.boundPlace}, which a Bun run's late arming and its pause judgment use (an editor may drop the column). */
   verifiedLine?: number
   unverifiedByNews?: boolean
 }
@@ -846,21 +846,31 @@ export class OwnedRepositoryBreakpoint {
 
   /**
    * Reads where the adapter has this breakpoint verified now, with the column only when the adapter or the editor named one, for a Bun run's late arming and for the judgment of a pause by its place ({@link VscodeNodeServerDebugger}).
-   * Unlike {@link verifiedPlace} a verified binding that names a line alone counts; unlike it, a binding the adapter's latest news withdrew (unverified) counts as none. Like {@link movedTo} it never throws.
+   * Unlike {@link verifiedPlace} a verified binding that names a line alone counts; unlike it, a binding the adapter's latest news withdrew (unverified) counts as none. The adapter's latest report decides: news without a column that names another line than the standing position moves the place to that line, column unknown, and news without a column on a line the owner refuses leaves no place, as refused news with a column does. Like {@link movedTo} it never throws.
    * @param session - The debug session whose adapter acknowledged the breakpoint.
-   * @returns The verified line and, when known, the column; `undefined` while pending, refused, withdrawn or gone.
+   * @returns The verified line and, when known, the column; `undefined` while pending, refused, withdrawn (by unverified news or by news on a refused line) or gone.
    * @example
-   * owned.boundPlace(session) // => { line: 14, column: 3 }, or { line: 14 } for a reply without a column
+   * owned.boundPlace(session) // => { line: 14, column: 3 }, or { line: 14 } for a reply without a column; undefined after news { verified: true, line: 15 } for an owner requested at 14
    */
   boundPlace(
     session: vscode.DebugSession,
   ): { line: number; column?: number } | undefined {
     const registration = this.standingRegistration(session)
     if (!registration || registration.unverifiedByNews) return undefined
-    if (registration.verifiedAt) return registration.verifiedAt
-    return registration.verifiedLine === undefined
-      ? undefined
-      : { line: registration.verifiedLine }
+    const { verifiedAt, verifiedLine } = registration
+    // The adapter's latest line decides: news that put the breakpoint on a line the owner refuses leaves it no place.
+    if (
+      verifiedLine !== undefined &&
+      !this.acknowledgesPosition({ verified: true, line: verifiedLine })
+    )
+      return undefined
+    // A whole position stands while the latest line agrees with it; news without a column on another line gives that line alone.
+    if (
+      verifiedAt &&
+      (verifiedLine === undefined || verifiedLine === verifiedAt.line)
+    )
+      return verifiedAt
+    return verifiedLine === undefined ? undefined : { line: verifiedLine }
   }
 
   /**
@@ -1013,14 +1023,12 @@ export class OwnedRepositoryBreakpoint {
     if (!breakpoint) return
     const { verifiedAt, ...moved } = this.verifiedPlaces(breakpoint)
     if (!verifiedAt) {
-      // News that names a line but no column still verifies the breakpoint on that line, unless the owner refuses the line.
-      if (
-        breakpoint.line !== undefined &&
-        this.acknowledgesPosition(breakpoint)
-      ) {
-        registration.verifiedLine = breakpoint.line
+      if (breakpoint.line === undefined) return
+      // News that names a line but no column is the adapter's latest word on the line, for {@link boundPlace}: a line the owner refuses withdraws the bound place.
+      registration.verifiedLine = breakpoint.line
+      // A line the owner accepts still verifies the breakpoint there, which lifts an earlier withdrawal.
+      if (this.acknowledgesPosition(breakpoint))
         registration.unverifiedByNews = false
-      }
       return
     }
     // The adapter moved the acknowledged breakpoint to a place the owner refuses: the earlier receipt no longer stands.
@@ -1053,6 +1061,8 @@ export class OwnedRepositoryBreakpoint {
   ): void {
     registration.refusedAt = undefined
     registration.verifiedAt = verifiedAt
+    // The whole position is the latest report, so a line named earlier without a column no longer decides {@link boundPlace}.
+    registration.verifiedLine = verifiedAt.line
     registration.receipt = {
       sessionId: receipt.sessionId,
       requestSequence: receipt.requestSequence,
