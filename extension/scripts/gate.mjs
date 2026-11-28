@@ -7,11 +7,16 @@
 //   pnpm --dir extension gate --allow-dirty   also on uncommitted changes (a trial run, not a gate)
 //   pnpm --dir extension gate --silence-seconds <n>  end a check silent this long (default 300)
 //
+// The extension's test suite runs once, inside `15-health`: the measured-health script runs every compiled test under c8
+// and refuses a failed, partial or filtered run, so its pass is the suite's verdict, and the gate adds the runner's own
+// counts of that run to its output. `08-build` only builds `extension/dist` for the Reader DOM checks.
+//
 // Exit 0: every check passed and HEAD did not move. Exit 1: a check failed, or HEAD or the tree changed during the run.
 // Exit 2: refused before any check, because Node, pnpm or Bun differ from the pins or a pin file cannot be read, the checkout has changes, or an option is
 // unknown. Each check's output goes to its own log; stdout gets one line per check and the verdict. A check that prints
-// nothing for the silence bound has its whole process tree ended and counts as exit 124; SIGINT, SIGTERM or SIGHUP to
-// the gate ends the running check's tree and exits 130, 143 or 129.
+// nothing for the silence bound has its whole process tree ended and counts as exit 124; the check that carries the suite
+// counts as exit 3 when it exits 0 without the test runner's summary of a run with tests and no failed or cancelled
+// test; SIGINT, SIGTERM or SIGHUP to the gate ends the running check's tree and exits 130, 143 or 129.
 import { spawn, spawnSync } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
@@ -26,6 +31,7 @@ import { endProcessTree } from './utils/endProcessTree.mjs'
 import { isRunAsScript } from './utils/isRunAsScript.mjs'
 import { listCheckoutChanges } from './utils/listCheckoutChanges.mjs'
 import { plainOutputEnvironment } from './utils/plainOutputEnvironment.mjs'
+import { readRunSummary } from './utils/readRunSummary.mjs'
 
 const extension = fileURLToPath(new URL('../', import.meta.url))
 const repository = join(extension, '..')
@@ -51,13 +57,14 @@ export const GATE_CHECKS = [
   { name: '05-dupes', script: 'dupes' },
   { name: '06-dead-code', script: 'dead-code' },
   { name: '07-architecture', script: 'architecture' },
-  { name: '08-test', script: 'test' },
+  // The suite itself runs in 15-health; the Reader DOM checks below read the build.
+  { name: '08-build', script: 'build' },
   ...READER_DOM_CHECKS.map((check, index) => ({
     name: `${String(9 + index).padStart(2, '0')}-${check}`,
     readerDom: check,
   })),
   { name: '14-test-package', script: 'test:package' },
-  { name: '15-health', script: 'health' },
+  { name: '15-health', script: 'health', carriesSuite: true },
   {
     name: '16-restore-context',
     nodeTest: '.codex/restore-product-context.test.mjs',
@@ -70,6 +77,8 @@ const REFUSED_EXIT_CODE = 2
 const DEFAULT_SILENCE_SECONDS = 300
 /** The exit code a check gets when the silence bound ended it, as `timeout(1)` reports a command it ended. */
 const SILENT_EXIT_CODE = 124
+/** The exit code the check that carries the suite gets when it exited 0 but its log holds no summary of a passed test run. */
+const MISSING_SUITE_EXIT_CODE = 3
 
 /**
  * Reads the versions the repository pins: Node from the root `.node-version`, Bun (the formatter of the format check)
@@ -303,7 +312,8 @@ async function runCheck(check, logPath, out, silenceMs) {
  * before and after, never from a wrapper's exit; a run whose HEAD or tree moved proves nothing about either.
  * Called by {@link main}, and by tests with checks and readers of their own.
  * @param input - The checks, the output folder, the reader of HEAD, the reader of the checkout's changes, the runner of
- * one check and the writer of one line.
+ * one check, the writer of one line and, for tests, the reader of a check's log (the file's text by default).
+ * A check marked `carriesSuite` passes only with the test runner's own summary in its log ({@link suiteVerdict}).
  * @returns `{ passed, results }`: `passed` is `true` only when every check exited 0 and HEAD and the changes stayed as
  * they were; `results` holds each check's `{ name, code, seconds }`.
  * @example
@@ -317,6 +327,7 @@ export async function runGate({
   listChanges,
   runCheck: runOne,
   print,
+  readLog = (logPath) => readFile(logPath, 'utf8'),
 }) {
   const headBefore = await readHead()
   const changesAtStart = await listChanges()
@@ -326,7 +337,14 @@ export async function runGate({
   const results = []
   for (const check of checks) {
     const startedAt = Date.now()
-    const code = await runOne(check, join(out, `${check.name}.log`), out)
+    const logPath = join(out, `${check.name}.log`)
+    let code = await runOne(check, logPath, out)
+    // The suite's verdict is the runner's own summary of the run this check made, not the check's exit code alone.
+    if (code === 0 && check.carriesSuite) {
+      const verdict = suiteVerdict(await readLog(logPath).catch(() => ''))
+      print(`${check.name} ${verdict.line}`)
+      if (!verdict.passed) code = MISSING_SUITE_EXIT_CODE
+    }
     const seconds = Math.round((Date.now() - startedAt) / 1000)
     results.push({ name: check.name, code, seconds })
     print(`${check.name} exit=${code} seconds=${seconds}`)
@@ -347,6 +365,36 @@ export async function runGate({
       : `GATE: fail${failed.length > 0 ? ` (${failed.map((result) => result.name).join(', ')})` : ''} on ${headAfter}`,
   )
   return { passed, results }
+}
+
+/**
+ * Judges the test suite from the log of the check that ran it: the last summary block the test runner printed.
+ * Why: the gate runs the suite once, inside the measured-health check, so that check's pass must come with proof that
+ * tests ran and none failed; a health script that one day stopped running the suite would otherwise pass the gate
+ * without one. Called by {@link runGate} for a check marked `carriesSuite` that exited 0.
+ * @param log - The whole text of the check's log.
+ * @returns `{ passed, line }`: `passed` is `true` only for a summary with at least one test and no failed or cancelled
+ * test; `line` is what the gate prints after the check's name.
+ * @example
+ * suiteVerdict('ℹ tests 3\nℹ pass 3\nℹ fail 0\n') // => { passed: true, line: 'suite: tests=3 pass=3 fail=0 skipped=0 todo=0' }
+ * suiteVerdict('no tests here') // => { passed: false, line: 'suite verdict missing: …' }
+ */
+export function suiteVerdict(log) {
+  const summary = readRunSummary(log)
+  if (summary === undefined)
+    return {
+      passed: false,
+      line: 'suite verdict missing: its log holds no summary of a test run.',
+    }
+  const line = `suite: tests=${summary.tests} pass=${summary.pass} fail=${summary.fail} skipped=${summary.skipped ?? 0} todo=${summary.todo ?? 0}`
+  const passed =
+    summary.tests > 0 && summary.fail === 0 && (summary.cancelled ?? 0) === 0
+  return {
+    passed,
+    line: passed
+      ? line
+      : `suite verdict missing: the test run counts no test, or a failed or cancelled one (${line}).`,
+  }
 }
 
 /** Reads the commit the checkout is on. @example readHead() // => 'ad13920cd16fe8406df662eab904c56b087b843b' */

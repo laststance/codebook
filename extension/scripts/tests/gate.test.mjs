@@ -20,6 +20,7 @@ import {
   readPins,
   runCommand,
   runGate,
+  suiteVerdict,
 } from '../gate.mjs'
 import { plainOutputEnvironment } from '../utils/plainOutputEnvironment.mjs'
 
@@ -277,7 +278,7 @@ test('the gate runs the sixteen delivery checks in their order, the import-cycle
     '05-dupes',
     '06-dead-code',
     '07-architecture',
-    '08-test',
+    '08-build',
     '09-study-bootstrap',
     '10-wiki-reader-dom',
     '11-study-reading-pose',
@@ -294,6 +295,103 @@ test('the gate runs the sixteen delivery checks in their order, the import-cycle
   // Assert
   assert.deepEqual(names, expected)
 })
+
+// protects=the gate runs the extension's suite once: 08 only builds, and 15-health, which runs every test under c8, is the one check that carries the suite's verdict; fails_when=a second suite run returns to the gate, or no check carries the suite, so the gate could pass without one; no_claim=that the health script runs every test file, which its own tests pin
+test('the gate builds in step 08 and takes the suite verdict from the measured-health check alone', () => {
+  // Arrange
+  const byName = new Map(GATE_CHECKS.map((check) => [check.name, check]))
+
+  // Act
+  const carriers = GATE_CHECKS.filter((check) => check.carriesSuite).map(
+    (check) => check.name,
+  )
+
+  // Assert
+  assert.deepEqual(byName.get('08-build'), {
+    name: '08-build',
+    script: 'build',
+  })
+  assert.deepEqual(carriers, ['15-health'])
+  assert.equal(
+    GATE_CHECKS.some((check) => check.script === 'test'),
+    false,
+  )
+})
+
+// protects=a passed suite is reported with the test runner's own counts, read from the last summary block of the carrying check's log; fails_when=the gate passes the suite without counts, or reads a line a test printed instead of the runner's summary; no_claim=none beyond protects
+test('the check that carries the suite passes with the runner’s counts in the gate’s output', async () => {
+  // Arrange
+  const log =
+    'ℹ tests 99\n✔ a test that printed a summary-like line\nℹ tests 15644\nℹ suites 0\nℹ pass 15626\nℹ fail 0\nℹ cancelled 0\nℹ skipped 10\nℹ todo 8\nℹ duration_ms 250000.5\nFallow: no finding beyond the baseline\n'
+  const lines = []
+
+  // Act
+  const verdict = await runGate({
+    checks: [{ name: '15-health', script: 'health', carriesSuite: true }],
+    out: '/gate-out',
+    readHead: async () => 'abc',
+    listChanges: async () => [],
+    runCheck: async () => 0,
+    print: (line) => lines.push(line),
+    readLog: async () => log,
+  })
+
+  // Assert
+  assert.equal(verdict.passed, true)
+  assert.equal(
+    lines[1],
+    '15-health suite: tests=15644 pass=15626 fail=0 skipped=10 todo=8',
+  )
+  assert.equal(lines.at(-1), 'GATE: pass on abc')
+})
+
+for (const [situation, log, line] of [
+  [
+    'holds no summary of a test run',
+    'Fallow: no finding beyond the baseline\n',
+    '15-health suite verdict missing: its log holds no summary of a test run.',
+  ],
+  [
+    'counts a failed test',
+    'ℹ tests 3\nℹ pass 2\nℹ fail 1\n',
+    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=1 skipped=0 todo=0).',
+  ],
+  [
+    'counts a cancelled test',
+    'ℹ tests 3\nℹ pass 2\nℹ fail 0\nℹ cancelled 1\n',
+    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=0 skipped=0 todo=0).',
+  ],
+  [
+    'counts no test',
+    'ℹ tests 0\nℹ pass 0\nℹ fail 0\n',
+    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=0 pass=0 fail=0 skipped=0 todo=0).',
+  ],
+])
+  // protects=the gate fails when the check that carries the suite exits 0 without proof of a passed test run; fails_when=a health check that ran no suite, or whose suite failed or was cut short, passes the gate; no_claim=none beyond protects
+  test(`the gate fails when the log of the check that carries the suite ${situation}`, async () => {
+    // Arrange
+    const lines = []
+
+    // Act
+    const verdict = await runGate({
+      checks: [{ name: '15-health', script: 'health', carriesSuite: true }],
+      out: '/gate-out',
+      readHead: async () => 'abc',
+      listChanges: async () => [],
+      runCheck: async () => 0,
+      print: (printed) => lines.push(printed),
+      readLog: async () => log,
+    })
+
+    // Assert
+    assert.equal(verdict.passed, false)
+    assert.deepEqual(verdict.results, [
+      { name: '15-health', code: 3, seconds: 0 },
+    ])
+    assert.equal(lines[1], line)
+    assert.equal(suiteVerdict(log).passed, false)
+    assert.equal(lines.at(-1), 'GATE: fail (15-health) on abc')
+  })
 
 // Value: protects=the gate's import-cycle check fails a new cycle: 07-architecture runs a package script that fails on findings beyond a baseline holding no cycle, and every script the gate runs exists; fails_when=a retake absorbs a cycle into the baseline, the script loses --fail-on-issues or its baseline, or a gate script is missing from package.json; why_new=Cycle 0062 pt2 task 20 (no new cycle may appear); seam=none; no_claim=that Fallow finds every cycle
 test('the gate fails a new import cycle: its architecture script fails beyond a baseline that holds no cycle', async () => {

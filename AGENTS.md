@@ -314,7 +314,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 
 **Gate and focused runs.**
 
-- Exact-HEAD gate: `pnpm --dir extension gate` = sixteen delivery checks in order (static checks incl. import-cycle check, suite, five Reader DOM checks, package tests, measured health, compaction-hook test), one log each under `artifacts/gate/<HEAD>`; refuses Node, pnpm or Bun off pins and checkout with changes; exits 0 only when every check passed on unmoved HEAD.
+- Exact-HEAD gate: `pnpm --dir extension gate` = sixteen delivery checks in order (static checks incl. import-cycle check, build, five Reader DOM checks, package tests, measured health, compaction-hook test), one log each under `artifacts/gate/<HEAD>`; the suite runs once, in measured health (its c8 run = suite verdict, counts printed as `15-health suite: …`); refuses Node, pnpm or Bun off pins and checkout with changes; exits 0 only when every check passed on unmoved HEAD.
 - `pnpm --dir extension test` = build + Node's isolated runner (files parallel, tests in file serial; never same-process concurrency globally: workspace cases mock shared prototypes and timers). `pnpm --dir extension test:package` = package tests.
 - CI failures: `node extension/scripts/ci-failures.mjs <PR>` (or `--run <id>`) prints each failed job's failing tests + first error line, also mid-run.
 - Focused replay/workspace work: `pnpm --dir extension build` once, then `node --test extension/dist/tests/studyWorkspace*.test.js extension/dist/tests/playbackController.test.js` (every partition; `studyWorkspace.test.js` alone is one); reuse current build.
