@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { defer } from './utils/defer'
 import {
@@ -17,6 +18,8 @@ import {
 } from './utils/nodeServerRunHarness'
 
 const SECRET = 'hunter2-correct-horse'
+/** A signed session cookie as express-session writes it: percent-encoded, with a signature. */
+const SET_COOKIE = 'sid=s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP; Path=/'
 const SIGN_IN = {
   path: '/login',
   fields: { email: 'learner@example.test' },
@@ -286,7 +289,48 @@ test(
   },
 )
 
-const SET_COOKIE = 'sid=s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP; Path=/'
+// protects=a declared stop that hit while the sign-in was out is the sign-in's even when its stack read is delivered after the sign-in answered, and the phase comes from the window the real sign-in send opened; fails_when=the sign-in's send stops marking its window as the sign-in's, or the phase is read when the stack read finishes, so the late stop is captured as the declared request's hit (Cycle 0153 ship pass 1 S14, which replaces the hand-supplied phase of the isolated run test and the manually opened sign-in window of the isolated adapter test with the real send path); seam=the editor's real debugger behind a sign-in run, a held stack read delivered after the sign-in's response (the declared request is refused meanwhile, since a pause is still being read); no_claim=a real server's handler timing
+test(
+  'a declared stop that hit during the sign-in is resumed and not captured when its stack read is delivered after the sign-in answered',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const stackRead = defer<void>()
+    const { editor, harness } = await editorRun({
+      editor: { stackTraceGate: stackRead.promise },
+      run: { signIn: SIGN_IN },
+    })
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    hitDeclaredStop(editor, 0)
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    // The declared request is refused while the stop is still being read; the stop's delivery comes after that.
+    await until(harness, (current) => current.requestFailure !== undefined)
+    // Act
+    stackRead.resolve()
+    const view = await until(
+      harness,
+      (current) => current.stopsHitDuringSignIn?.length === 1,
+    )
+    // Assert
+    assert.deepEqual(view.stopsHitDuringSignIn, [0])
+    assert.deepEqual(view.captures, [])
+    assert.deepEqual(view.stopsReached, [])
+    await waitUntil(
+      () =>
+        editor.requests.filter((request) => request.command === 'continue')
+          .length ===
+        continuesBefore + 1,
+      'the sign-in hit continued',
+      5_000,
+    )
+    await harness.run.stop()
+  },
+)
+
 /** The sentence a declared request carries when the learner's pause refuses it after the sign-in ran. */
 const TERMINAL_PAUSE_SENTENCE =
   'The declared request was not sent because the learner held a pause of the server after the sign-in, which already ran; Codebook never resumes it. Let the learner continue the server in the debugger, then stop this run (codebook_stop) and start a new run.'

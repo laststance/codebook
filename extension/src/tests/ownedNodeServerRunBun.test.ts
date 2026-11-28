@@ -481,6 +481,8 @@ test(
     const harness = createHarness(options)
     await harness.run.prepare()
     await harness.run.sendRequest('key-1', { secret: 'hunter2-correct-horse' })
+    // The window the real sign-in send opened is marked as the sign-in's (Cycle 0153 ship pass 1 S14 added this: only the declared request's window was read before).
+    const signInWindowIsMarked = harness.debug.requestWindowIsSignIn
     const peerCheck = defer<void>()
     const peerCheckEntered = defer<void>()
     options.peerCheckGate = peerCheck.promise
@@ -498,6 +500,7 @@ test(
       5_000,
     )
     // Assert
+    assert.equal(signInWindowIsMarked, true)
     assert.equal(windowWhileVerifying, false)
     assert.equal(harness.debug.requestWindowOpen, true)
     assert.equal(harness.debug.requestWindowIsSignIn, false)
