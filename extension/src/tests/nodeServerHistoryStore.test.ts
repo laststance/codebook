@@ -51,7 +51,8 @@ test('a server header placed in the test folder is refused by the test store', a
   const { repository, learningDirectory } = await openServerRepository(context)
   const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
   const writer = await repository.serverHistories.start(header)
-  writer.abandon()
+  // The folder is copied next: the writer's record must be gone first, not removed while the copy reads the folder.
+  await writer.abandon()
   await mkdir(join(learningDirectory, 'node-tests.v1'), { recursive: true })
   await cp(
     join(learningDirectory, 'node-servers.v1', header.studyId),

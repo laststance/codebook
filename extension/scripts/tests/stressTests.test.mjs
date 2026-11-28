@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -113,13 +120,13 @@ test('the stress command exits 1 and names the test that failed', async (context
   ])
   const keptOutputs = await readdir(join(directory, 'failed-runs'))
   const firstKeptOutput = await readFile(
-    join(directory, 'failed-runs', 'broken.test.mjs.1.log'),
+    join(directory, 'failed-runs', '2-broken.test.mjs.1.log'),
     'utf8',
   )
   // Assert
   assert.deepEqual(keptOutputs.sort(), [
-    'broken.test.mjs.1.log',
-    'broken.test.mjs.2.log',
+    '2-broken.test.mjs.1.log',
+    '2-broken.test.mjs.2.log',
   ])
   assert.match(firstKeptOutput, /✖ the broken behaviour/)
   assert.deepEqual(result, {
@@ -160,4 +167,169 @@ test('the stress command refuses a call that names no test file, with exit 2', a
     stderr:
       'Name at least one compiled test file, e.g. extension/dist/tests/learningSummary.test.js.\n',
   })
+})
+
+// protects=the bound on runs alive at once, the tool's main promise: with a concurrency of 2 never more than 2 runs are in flight, and every run is made; fails_when=the pool starts every job at once, or drops jobs; no_claim=the load a real `node --test` child puts on the machine
+test('a stress run keeps at most the given number of runs alive at once', async () => {
+  // Arrange
+  let inFlight = 0
+  let mostInFlight = 0
+  let made = 0
+  const run = async () => {
+    inFlight++
+    mostInFlight = Math.max(mostInFlight, inFlight)
+    made++
+    // The run ends on a later turn, so runs that the pool starts together are counted together.
+    await new Promise((resolve) => setImmediate(resolve))
+    inFlight--
+    return { code: 0, output: '', timedOut: false }
+  }
+
+  // Act
+  await stressTests(['a.test.js', 'b.test.js', 'c.test.js'], {
+    runs: 4,
+    concurrency: 2,
+    timeoutMs: 1_000,
+    run,
+  })
+
+  // Assert
+  assert.deepEqual({ mostInFlight, made }, { mostInFlight: 2, made: 12 })
+})
+
+// protects=the report's "n of runs": a test name that fails twice in one run (in two suites) counts that run once, and a run ended at its time limit is counted under its own entry, not under the tests its cut-off output lists; fails_when=one run adds 2 to a name, so the report reads "2 of 1", or a hung run is reported as an ordinary failed test; no_claim=that the real runner ends a hung child (the command test below does)
+test('a stress run counts a repeated test name once per run and names a run ended at its time limit', async () => {
+  // Arrange
+  const outputs = {
+    'repeats.test.js': {
+      code: 1,
+      output:
+        '✖ failing tests:\n\ntest at a.js:3:1\n✖ same name (1ms)\n\ntest at a.js:9:1\n✖ same name (2ms)\n',
+      timedOut: false,
+    },
+    'hangs.test.js': {
+      code: 1,
+      output: '✖ failing tests:\n\ntest at b.js:3:1\n✖ an earlier test (1ms)\n',
+      timedOut: true,
+    },
+  }
+
+  // Act
+  const result = await stressTests(['repeats.test.js', 'hangs.test.js'], {
+    runs: 1,
+    concurrency: 2,
+    timeoutMs: 1_000,
+    run: async (file) => outputs[file],
+  })
+
+  // Assert
+  assert.deepEqual(renderStress(result), [
+    'repeats.test.js: 1 runs, 1 failed',
+    '  ✖ same name: 1 of 1',
+    'hangs.test.js: 1 runs, 1 failed',
+    '  ✖ (time limit): 1 of 1',
+    'STRESS: files=2 runs=2 failed_runs=2',
+  ])
+})
+
+// protects=a test that never ends is found: its run is ended at the time limit with every process it started, the report names the limit and the command exits 1 instead of waiting forever; fails_when=a hung run holds its slot for good and no report is printed; no_claim=which test of the file hung
+test('the stress command ends a run that hangs at its time limit and reports it', async (context) => {
+  // Arrange
+  const directory = await createTestFolder(context, {
+    'hangs.test.mjs': `import { test } from 'node:test'
+test('the behaviour that never answers', () => new Promise(() => {
+  setInterval(() => {}, 1_000)
+}))
+`,
+  })
+
+  // Act
+  const result = runStress(directory, [
+    '--runs',
+    '1',
+    '--timeout',
+    '2',
+    'hangs.test.mjs',
+  ])
+
+  // Assert
+  assert.deepEqual(result, {
+    code: 1,
+    stdout:
+      'hangs.test.mjs: 1 runs, 1 failed\n  ✖ (time limit): 1 of 1\nSTRESS: files=1 runs=1 failed_runs=1\n',
+    stderr: '',
+  })
+})
+
+// protects=the kept outputs of two test files that share a base name: each failed run has its own log, told apart by the file's place on the command line; fails_when=the second file's output overwrites the first's; no_claim=none beyond protects
+test('the stress command keeps the failed runs of two files of one base name apart', async (context) => {
+  // Arrange
+  const directory = await createTestFolder(context, {})
+  for (const folder of ['first', 'second']) {
+    await mkdir(join(directory, folder))
+    await writeFile(join(directory, folder, 'same.test.mjs'), BROKEN_TEST)
+  }
+
+  // Act
+  const result = runStress(directory, [
+    '--runs',
+    '1',
+    '--failures',
+    'failed-runs',
+    'first/same.test.mjs',
+    'second/same.test.mjs',
+  ])
+  const keptOutputs = await readdir(join(directory, 'failed-runs'))
+
+  // Assert
+  assert.equal(result.code, 1)
+  assert.deepEqual(keptOutputs.sort(), [
+    '1-same.test.mjs.1.log',
+    '2-same.test.mjs.1.log',
+  ])
+})
+
+// protects=a refused call changes nothing: a number not written in digits and a `--failures` folder that already holds files are each refused in one line with exit 2, before any folder is made or any test run; fails_when=`--runs 1e3` starts a thousand runs, a refused call leaves an empty folder behind, or logs of an earlier call are mixed with this one's; no_claim=none beyond protects
+test('the stress command refuses a number not written in digits and a failures folder that holds files, and writes nothing', async (context) => {
+  // Arrange
+  const directory = await createTestFolder(context, {
+    'steady.test.mjs': STEADY_TEST,
+  })
+  await mkdir(join(directory, 'earlier-run'))
+  await writeFile(join(directory, 'earlier-run', 'old.log'), 'an earlier call')
+
+  // Act
+  const notInDigits = runStress(directory, [
+    '--runs',
+    '1e3',
+    '--failures',
+    'new-folder',
+    'steady.test.mjs',
+  ])
+  const folderInUse = runStress(directory, [
+    '--failures',
+    'earlier-run',
+    'steady.test.mjs',
+  ])
+  const entries = await readdir(directory)
+
+  // Assert
+  assert.deepEqual(
+    [notInDigits, folderInUse],
+    [
+      {
+        code: 2,
+        stdout: '',
+        stderr:
+          '--runs takes a whole number of at least 1, written in digits.\n',
+      },
+      {
+        code: 2,
+        stdout: '',
+        stderr:
+          '--failures takes a folder that is empty or does not exist yet; earlier-run holds 1 entries.\n',
+      },
+    ],
+  )
+  assert.deepEqual(entries.sort(), ['earlier-run', 'steady.test.mjs'])
 })

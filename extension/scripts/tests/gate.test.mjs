@@ -340,7 +340,7 @@ test('the check that carries the suite passes with the runner’s counts in the 
   assert.equal(verdict.passed, true)
   assert.equal(
     lines[1],
-    '15-health suite: tests=15644 pass=15626 fail=0 skipped=10 todo=8',
+    '15-health suite: tests=15644 pass=15626 fail=0 cancelled=0 skipped=10 todo=8',
   )
   assert.equal(lines.at(-1), 'GATE: pass on abc')
 })
@@ -354,17 +354,17 @@ for (const [situation, log, line] of [
   [
     'counts a failed test',
     'ℹ tests 3\nℹ pass 2\nℹ fail 1\n',
-    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=1 skipped=0 todo=0).',
+    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=1 cancelled=0 skipped=0 todo=0).',
   ],
   [
     'counts a cancelled test',
     'ℹ tests 3\nℹ pass 2\nℹ fail 0\nℹ cancelled 1\n',
-    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=0 skipped=0 todo=0).',
+    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=0 cancelled=1 skipped=0 todo=0).',
   ],
   [
     'counts no test',
     'ℹ tests 0\nℹ pass 0\nℹ fail 0\n',
-    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=0 pass=0 fail=0 skipped=0 todo=0).',
+    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=0 pass=0 fail=0 cancelled=0 skipped=0 todo=0).',
   ],
 ])
   // protects=the gate fails when the check that carries the suite exits 0 without proof of a passed test run; fails_when=a health check that ran no suite, or whose suite failed or was cut short, passes the gate; no_claim=none beyond protects
@@ -392,6 +392,33 @@ for (const [situation, log, line] of [
     assert.equal(suiteVerdict(log).passed, false)
     assert.equal(lines.at(-1), 'GATE: fail (15-health) on abc')
   })
+
+// protects=the carrying check's own exit code stands when it fails: measured health that exits 1 for a finding beyond the baseline fails the gate although its log holds a passed suite; fails_when=the suite's summary replaces the check's exit code, so a health check with findings passes the gate; no_claim=none beyond protects
+test('the gate fails when the check that carries the suite exits non-zero although its log holds a passed suite', async () => {
+  // Arrange
+  const lines = []
+
+  // Act
+  const verdict = await runGate({
+    checks: [{ name: '15-health', script: 'health', carriesSuite: true }],
+    out: '/gate-out',
+    readHead: async () => 'abc',
+    listChanges: async () => [],
+    runCheck: async () => 1,
+    print: (line) => lines.push(line),
+    readLog: async () => 'ℹ tests 3\nℹ pass 3\nℹ fail 0\n',
+  })
+
+  // Assert
+  assert.equal(verdict.passed, false)
+  assert.deepEqual(verdict.results, [
+    { name: '15-health', code: 1, seconds: 0 },
+  ])
+  assert.deepEqual(lines.slice(1), [
+    '15-health exit=1 seconds=0',
+    'GATE: fail (15-health) on abc',
+  ])
+})
 
 // Value: protects=the gate's import-cycle check fails a new cycle: 07-architecture runs a package script that fails on findings beyond a baseline holding no cycle, and every script the gate runs exists; fails_when=a retake absorbs a cycle into the baseline, the script loses --fail-on-issues or its baseline, or a gate script is missing from package.json; why_new=Cycle 0062 pt2 task 20 (no new cycle may appear); seam=none; no_claim=that Fallow finds every cycle
 test('the gate fails a new import cycle: its architecture script fails beyond a baseline that holds no cycle', async () => {

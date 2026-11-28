@@ -376,7 +376,7 @@ export async function runGate({
  * @returns `{ passed, line }`: `passed` is `true` only for a summary with at least one test and no failed or cancelled
  * test; `line` is what the gate prints after the check's name.
  * @example
- * suiteVerdict('ℹ tests 3\nℹ pass 3\nℹ fail 0\n') // => { passed: true, line: 'suite: tests=3 pass=3 fail=0 skipped=0 todo=0' }
+ * suiteVerdict('ℹ tests 3\nℹ pass 3\nℹ fail 0\n') // => { passed: true, line: 'suite: tests=3 pass=3 fail=0 cancelled=0 skipped=0 todo=0' }
  * suiteVerdict('no tests here') // => { passed: false, line: 'suite verdict missing: …' }
  */
 export function suiteVerdict(log) {
@@ -386,7 +386,7 @@ export function suiteVerdict(log) {
       passed: false,
       line: 'suite verdict missing: its log holds no summary of a test run.',
     }
-  const line = `suite: tests=${summary.tests} pass=${summary.pass} fail=${summary.fail} skipped=${summary.skipped ?? 0} todo=${summary.todo ?? 0}`
+  const line = `suite: tests=${summary.tests} pass=${summary.pass} fail=${summary.fail} cancelled=${summary.cancelled ?? 0} skipped=${summary.skipped ?? 0} todo=${summary.todo ?? 0}`
   const passed =
     summary.tests > 0 && summary.fail === 0 && (summary.cancelled ?? 0) === 0
   return {
