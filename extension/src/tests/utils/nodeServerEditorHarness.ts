@@ -56,6 +56,8 @@ export async function editorHarness(
     ) => DebugProtocol.Breakpoint
     /** Called for each owned breakpoint's binding lookup (`getDebugProtocolBreakpoint`); the editor's answer waits for the promise it returns, as a slow editor does. */
     bindingLookupGate?: () => Promise<void>
+    /** The adapter announces `supportsSingleThreadExecutionRequests` when the target session starts, and answers a continue that names `singleThread` for that thread only. */
+    supportsSingleThreadExecution?: boolean
     /** Runs the real {@link captureReplayDebugSnapshot} over the Local scope offering these variables, instead of the empty snapshot stand-in. */
     localVariables?: DebugProtocol.Variable[]
     /** Scripts the stopped frame's scopes and each scope's variables (by `variablesReference`) and runs the real capture and the real declared inspections over them, as a Bun stop's closures need. */
@@ -202,7 +204,11 @@ export async function editorHarness(
           request_seq: sequence,
           command,
           success: true,
-          body: { allThreadsContinued: true },
+          body: {
+            allThreadsContinued:
+              (arguments_ as { singleThread?: boolean } | undefined)
+                ?.singleThread !== true,
+          },
         })
       if (command === 'stackTrace' && options.stackTraceFails && entryDone)
         throw new Error('stackTrace timed out')
@@ -329,6 +335,15 @@ export async function editorHarness(
           tracker =
             (await trackerFactory?.createDebugAdapterTracker(session)) ??
             undefined
+          if (options.supportsSingleThreadExecution)
+            tracker?.onDidSendMessage?.({
+              type: 'response',
+              seq: 1,
+              request_seq: 1,
+              command: 'initialize',
+              success: true,
+              body: { supportsSingleThreadExecutionRequests: true },
+            })
           queueMicrotask(() =>
             options.firstStop
               ? adapter.stop(

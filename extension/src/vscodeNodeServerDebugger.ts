@@ -38,6 +38,7 @@ import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
+import { NodeServerResumeRefusedError } from './utils/nodeServerResumeRefusedError'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
@@ -118,6 +119,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly active = new Map<string, vscode.DebugSession>()
   /** The threads the adapter reported stopped that have not run on since, by session, each with the token of its newest stop (the only pause of the thread that a resume may still name). */
   private readonly pausedThreads = new Map<string, Map<number, number>>()
+  /** The sessions whose adapter announced `supportsSingleThreadExecutionRequests`, so a Continue may name one thread alone. */
+  private readonly singleThreadSessions = new Set<string>()
   private readonly sessionStops: NativeStop[] = []
   /** The bound session's stops queued for the run that it has not been told about yet, by token. */
   private readonly unreportedStops = new Map<number, NativeStop>()
@@ -239,21 +242,52 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     session: vscode.DebugSession,
     message: DebugProtocol.ProtocolMessage,
   ): void {
-    if (message.type === 'response') {
-      const response = message as DebugProtocol.Response
-      for (const { breakpoint } of this.armed)
-        breakpoint.onResponse(session, response)
-      const answersResume = this.pendingResumes.isPending(
-        session.id,
-        response.request_seq,
-      )
-      this.onResumeAnswered(session.id, response)
-      this.onLearnerPauseAnswered(session.id, response)
-      // Whatever the answer was, a window verdict that rested on the Continue is now confirmed or taken back.
-      if (answersResume) this.reconcileProvisionalWindows(session.id)
-    }
-    if (message.type !== 'event') return
-    const event = message as DebugProtocol.Event
+    if (message.type === 'response')
+      this.onAdapterResponse(session, message as DebugProtocol.Response)
+    if (message.type === 'event')
+      this.onAdapterEvent(session, message as DebugProtocol.Event)
+  }
+
+  /**
+   * Handles an answer of the adapter: what it announced about its abilities, the breakpoint bookkeeping, and the answers to resume and Pause requests.
+   * Called by {@link onAdapterMessage} for every response of the session.
+   * @param session - The session the response came from.
+   * @param response - The adapter's response.
+   * @example this.onAdapterResponse(session, { type: 'response', seq: 9, request_seq: 7, command: 'continue', success: true }) // threads ran on
+   */
+  private onAdapterResponse(
+    session: vscode.DebugSession,
+    response: DebugProtocol.Response,
+  ): void {
+    if (
+      response.command === 'initialize' &&
+      response.success &&
+      response.body?.supportsSingleThreadExecutionRequests === true
+    )
+      this.singleThreadSessions.add(session.id)
+    for (const { breakpoint } of this.armed)
+      breakpoint.onResponse(session, response)
+    const answersResume = this.pendingResumes.isPending(
+      session.id,
+      response.request_seq,
+    )
+    this.onResumeAnswered(session.id, response)
+    this.onLearnerPauseAnswered(session.id, response)
+    // Whatever the answer was, a window verdict that rested on the Continue is now confirmed or taken back.
+    if (answersResume) this.reconcileProvisionalWindows(session.id)
+  }
+
+  /**
+   * Handles news of the adapter: breakpoint changes, threads that ran on, and stops.
+   * Called by {@link onAdapterMessage} for every event of the session.
+   * @param session - The session the event came from.
+   * @param event - The adapter's event.
+   * @example this.onAdapterEvent(session, { type: 'event', seq: 3, event: 'continued', body: { threadId: 1 } }) // every thread ran on
+   */
+  private onAdapterEvent(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): void {
     if (event.event === 'breakpoint')
       for (const { breakpoint } of this.armed)
         breakpoint.onEvent(session, event)
@@ -736,6 +770,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   private onSessionTerminated(session: vscode.DebugSession): void {
     this.pausedThreads.delete(session.id)
+    this.singleThreadSessions.delete(session.id)
     // An ended session holds no target, so none of its stops can be paused any more.
     for (const [token, stop] of this.unreportedStops)
       if (stop.sessionId === session.id) this.unreportedStops.delete(token)
@@ -1386,6 +1421,14 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     this.assertSourcesUnchanged()
   }
 
+  /**
+   * Continues the paused thread of a pause the run reserved: Codebook's own resume of a sign-in or start hit, an uncaptured hit, or the chat's continue of a capture.
+   * A pause that another stop of its thread replaced is never continued (the continue would act on the newer stop). While any other thread of the session is paused (the learner's exception, say) the request names only this thread (`singleThread`) when the adapter supports that; an adapter that cannot continue one thread alone would run every thread, so nothing is sent and the stop stays held.
+   * @param pause - The pause the caller read.
+   * @param signal - The run's cancellation.
+   * @throws {@link NodeServerResumeRefusedError} `superseded` or `learner-pause-elsewhere` when nothing was sent; the adapter's own failure otherwise.
+   * @example await debug.resume(pause, signal) // sends continue { threadId: 2, singleThread: true } while thread 1 is paused by the learner
+   */
   async resume(
     pause: NodeServerDebuggerPause,
     signal: AbortSignal,
@@ -1393,11 +1436,41 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const session = this.active.get(pause.sessionId)
     // A pause that is not its thread's newest stop was replaced by a later one: a continue now would act on that stop, which the caller never read.
     if (!session || !this.isNewestPausedStop(pause))
-      throw new Error('The owned pause is no longer current.')
+      throw new NodeServerResumeRefusedError(
+        'superseded',
+        'The owned pause is no longer current.',
+      )
+    const isAnotherThreadPaused = this.isAnotherThreadPaused(pause)
+    if (isAnotherThreadPaused && !this.singleThreadSessions.has(session.id))
+      throw new NodeServerResumeRefusedError(
+        'learner-pause-elsewhere',
+        'Another thread of the server is paused, and this debugger cannot continue one thread alone, so Codebook did not continue the stop; it stays paused. Ask the learner to continue the paused threads in the debugger.',
+      )
     await awaitResponse(
-      session.customRequest('continue', { threadId: pause.threadId }),
+      session.customRequest('continue', {
+        threadId: pause.threadId,
+        // Naming the thread alone would let an adapter run every thread, the other paused one included.
+        ...(isAnotherThreadPaused ? { singleThread: true } : {}),
+      }),
       'the continuation',
       signal,
+    )
+  }
+
+  /**
+   * Tells whether a thread of the pause's session other than the pause's own is paused: a continue that names only the pause's thread could still release it.
+   * Called by {@link resume}.
+   * @param pause - The pause about to be continued.
+   * @returns `true` while the session reports another thread stopped that has not run on since.
+   * @example this.isAnotherThreadPaused({ sessionId: 's1', threadId: 2 }) // => true while thread 1 of 's1' is paused
+   */
+  private isAnotherThreadPaused(
+    pause: Pick<NodeServerDebuggerPause, 'sessionId' | 'threadId'>,
+  ): boolean {
+    const threads = this.pausedThreads.get(pause.sessionId)
+    return (
+      threads !== undefined &&
+      [...threads.keys()].some((thread) => thread !== pause.threadId)
     )
   }
 

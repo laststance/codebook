@@ -591,3 +591,79 @@ test(
     await harness.run.stop()
   },
 )
+
+/** The arguments of the `continue` requests Codebook itself sent through the editor's adapter, in order, copied out of the loaded module's realm. */
+function continueRequestsOf(
+  editor: Awaited<ReturnType<typeof editorRun>>['editor'],
+): unknown[] {
+  return editor.requests
+    .filter((request) => request.command === 'continue')
+    .map((request): unknown => JSON.parse(JSON.stringify(request.arguments)))
+}
+
+// protects=Codebook never continues a sign-in hit while the learner holds an exception on another thread when the adapter cannot continue one thread alone: the continue would run every thread and erase the learner's exception; the hit stays held and the run keeps going; fails_when=the automatic continue names thread 2 alone, the adapter answers that every thread ran and the learner's exception disappears without the learner acting (Cycle 0153 ship pass 2 T6); seam=the editor's real debugger behind a sign-in run, an exception held on thread 1 and a declared hit on thread 2 during the sign-in; no_claim=js-debug's per-thread semantics
+test(
+  'a sign-in hit on another thread is held and not continued while the learner holds an exception and the adapter cannot continue one thread alone',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun({ run: { signIn: SIGN_IN } })
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    editor.adapter.stop(
+      'exception',
+      undefined,
+      { file: RUN_STOP_FILE, line: 30 },
+      1,
+    )
+    await until(harness, (view) => view.heldPause !== undefined)
+    const continuesBefore = continueRequestsOf(editor).length
+    // Act
+    hitDeclaredStop(editor, 0, 2)
+    await until(harness, (view) => view.pauseGeneration >= 2)
+    // Assert
+    const view = harness.run.view()
+    assert.equal(continueRequestsOf(editor).length, continuesBefore)
+    assert.equal(view.heldPause?.reason, 'exception')
+    assert.equal(view.state, 'learner-paused')
+    assert.equal(view.runFailure, undefined)
+    await harness.run.stop()
+  },
+)
+
+// protects=Codebook continues a sign-in hit on one thread alone when the adapter supports it, so the learner's exception on another thread stays held; fails_when=the continue names the thread without singleThread, and the adapter runs every thread (Cycle 0153 ship pass 2 T6); seam=the editor's real debugger behind a sign-in run whose adapter announces single-thread execution, an exception held on thread 1 and a declared hit on thread 2 during the sign-in; no_claim=js-debug's per-thread semantics
+test(
+  'a sign-in hit on another thread is continued on its own thread alone while the learner holds an exception',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun({
+      editor: { supportsSingleThreadExecution: true },
+      run: { signIn: SIGN_IN },
+    })
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    editor.adapter.stop(
+      'exception',
+      undefined,
+      { file: RUN_STOP_FILE, line: 30 },
+      1,
+    )
+    await until(harness, (view) => view.heldPause !== undefined)
+    const continuesBefore = continueRequestsOf(editor).length
+    // Act
+    hitDeclaredStop(editor, 0, 2)
+    await waitUntil(
+      () => continueRequestsOf(editor).length === continuesBefore + 1,
+      'the sign-in hit continued',
+      5_000,
+    )
+    await until(harness, (view) => view.stopsHitDuringSignIn?.length === 1)
+    // Assert
+    const view = harness.run.view()
+    assert.deepEqual(continueRequestsOf(editor).slice(continuesBefore), [
+      { threadId: 2, singleThread: true },
+    ])
+    assert.equal(view.heldPause?.reason, 'exception')
+    assert.equal(view.runFailure, undefined)
+    await harness.run.stop()
+  },
+)

@@ -43,6 +43,7 @@ import { isGroupCertainlyGone } from './utils/isGroupCertainlyGone'
 import type { isProcessGone } from './utils/isProcessGone'
 import type { isProcessGroupGone } from './utils/isProcessGroupGone'
 import type { launchNodeServer, NodeServerExit } from './utils/launchNodeServer'
+import { NodeServerResumeRefusedError } from './utils/nodeServerResumeRefusedError'
 import type { ResolvedNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { RunClock } from './utils/runningTimeLimit'
 import type { CauseRoots } from './utils/sanitizeCause'
@@ -1042,8 +1043,47 @@ export class NodeProcessRun {
     this.ownResumes.add(pause.token)
     this.requireDebugger()
       .resume(pause, this.abort.signal)
-      .catch((error: unknown) => this.failRun(this.stepFailed(step, error)))
+      .catch((error: unknown) => this.onOwnResumeRefused(pause, error, step))
     this.notify()
+  }
+
+  /**
+   * Handles a Codebook resume that the debugger did not send or that failed: a pause that a later stop replaced ended by itself; a stop that cannot be continued without releasing the learner's pause on another thread stays held for the learner (Codebook never resumes it) and the journal says why; any other failure fails the run.
+   * @param pause - The pause Codebook tried to resume.
+   * @param error - What the resume threw.
+   * @param step - The step named when the resume fails the run.
+   */
+  private onOwnResumeRefused(
+    pause: NodeServerDebuggerPause,
+    error: unknown,
+    step: string,
+  ): void {
+    this.ownResumes.delete(pause.token)
+    if (!(error instanceof NodeServerResumeRefusedError)) {
+      this.failRun(this.stepFailed(step, error))
+      return
+    }
+    if (error.reason === 'superseded' || this.currentLifecycle !== 'live')
+      return
+    this.holdPauseCodebookCannotResume(pause, error.message)
+  }
+
+  /**
+   * Holds a stop that Codebook meant to continue but could not without releasing the learner's pause: it is the learner's to continue, so the run reads `learner-paused` and no request is written.
+   * @param pause - The stop that stays paused.
+   * @param why - The debugger's sentence for the refusal, journaled.
+   */
+  private holdPauseCodebookCannotResume(
+    pause: NodeServerDebuggerPause,
+    why: string,
+  ): void {
+    this.record('node-server.resume-refused', {
+      declaredStopIndex: pause.declaredStopIndex,
+      cause: why,
+    })
+    // A start or sign-in hit begins no hold of its own, so the hold bound starts here.
+    if (!this.nativeHolds.has(pause.token)) this.beginHold(pause.token)
+    this.holdPause('learner', pause)
   }
 
   /** A pause that is the learner's, or an owned hit outside the request: held, never resumed. */
@@ -1124,6 +1164,13 @@ export class NodeProcessRun {
         !this.nativeHolds.has(pause.token)
       )
         return
+      // A stop that cannot be continued without releasing the learner's pause stays held; one that a later stop replaced ended by itself.
+      if (error instanceof NodeServerResumeRefusedError) {
+        this.ownResumes.delete(pause.token)
+        if (error.reason === 'learner-pause-elsewhere')
+          this.holdPauseCodebookCannotResume(pause, error.message)
+        return
+      }
       this.failRun(
         error instanceof StudyError
           ? error
