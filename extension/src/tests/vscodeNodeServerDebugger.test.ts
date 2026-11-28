@@ -1201,3 +1201,26 @@ test(
     await debug.release()
   },
 )
+
+// protects=a continued event that names another thread and omits allThreadsContinued releases nothing of the learner's Pause of thread 1, while one that says every thread ran on does; fails_when=an omitted flag reads as all threads, so thread 2's own run-on opens the write guard while thread 1 is still stopped (Cycle 0153 ship pass 3 U2); seam=the editor harness's learner Pause and stop of thread 1, then continued events of thread 2 with the flag omitted and true; no_claim=that js-debug ever omits the flag (it sends its own thread id with false)
+test(
+  'a continued event of thread 2 without allThreadsContinued keeps the learner Pause of thread 1 held',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.learnerPauses({}, 1)
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Act
+    editor.adapter.continued(2)
+    const pendingAfterOmittedFlag = debug.learnerPausePending?.()
+    editor.adapter.continued(2, true)
+    // Assert
+    assert.equal(pendingAfterOmittedFlag, true)
+    assert.equal(debug.learnerPausePending?.(), false)
+    await debug.release()
+  },
+)

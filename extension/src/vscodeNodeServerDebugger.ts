@@ -307,13 +307,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         breakpoint.onEvent(session, event)
     if (event.event === 'continued') {
       const continued = (event as DebugProtocol.ContinuedEvent).body
-      // Omitted or true, every thread of the session ran on.
-      this.resumeThreads(
-        session.id,
-        continued.allThreadsContinued === false
-          ? continued.threadId
-          : undefined,
-      )
+      // An event names the thread that ran on, and only an explicit `allThreadsContinued: true` says the others did too: an omitted flag is no evidence about other threads (js-debug sends its own thread id with `false`; the DAP default for an omitted flag holds for a Continue's response, which {@link onResumeAnswered} keeps).
+      // An event that names no thread and does not say all ran on proves nothing (fail closed).
+      if (continued.allThreadsContinued === true) this.resumeThreads(session.id)
+      else if (Number.isInteger(continued.threadId))
+        this.resumeThreads(session.id, continued.threadId)
     }
     if (event.event === 'stopped')
       this.onStopped(session, (event as DebugProtocol.StoppedEvent).body)

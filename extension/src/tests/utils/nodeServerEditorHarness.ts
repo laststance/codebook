@@ -584,12 +584,15 @@ export async function editorHarness(
         body: { reason, breakpoint },
       })
     },
-    /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread. */
-    continued(threadId: number, allThreadsContinued: boolean): void {
+    /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread, `true` says every thread did, and an omitted flag leaves the event naming its thread alone. */
+    continued(threadId: number, allThreadsContinued?: boolean): void {
       tracker?.onDidSendMessage?.({
         type: 'event',
         event: 'continued',
-        body: { threadId, allThreadsContinued },
+        body: {
+          threadId,
+          ...(allThreadsContinued === undefined ? {} : { allThreadsContinued }),
+        },
       })
     },
     /** A child session of the run's attach (a debuggee it spawned) reports a stop; the run's debugger must not report it. */
