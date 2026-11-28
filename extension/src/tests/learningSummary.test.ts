@@ -8,6 +8,7 @@ import { learningSummarySchema } from '../learningSummarySchemas'
 import { presentationReadingPoseSchema } from '../presentationSchemas'
 import { readResource } from '../resources'
 import type { ConfiguredRuntimeView } from '../runtime'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { captureStudy } from '../utils/captureStudy'
 import { decodeRetainedStudy } from '../utils/decodeRetainedStudy'
@@ -414,6 +415,11 @@ test('committed agent learning persists with its exact evidence and survives a f
         learningSummary: { ...content, summary: 'Uncommitted replacement' },
       }),
       { code: 'EVIDENCE_UNAVAILABLE' },
+    )
+    // The failed write ends the run after the rejection reaches the caller; a capture across that transition is discarded by design, so wait for the stopped state.
+    await waitUntil(
+      () => service.state(record).state === 'stopped',
+      'the run stopped after the failed evidence write',
     )
     const afterFailure = await captureStudy(
       service,
