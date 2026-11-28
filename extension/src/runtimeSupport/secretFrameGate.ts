@@ -388,6 +388,15 @@ function installSecretFrameObserver(
       return 'control-replaced'
     return withText ? textCopyReason(watched) : undefined
   }
+  // What the per-paint check never reads: a plain control in a shadow root or a frame, and a copy in rendered text or an attribute.
+  const fullOnlyReason = (
+    watched: string[],
+  ): SecretFrameFailureReason | undefined => {
+    const innerRoots = visibleRoots().filter((root) => root !== document)
+    if (watched.some((value) => plainControlHolds(value, innerRoots)))
+      return 'control-replaced'
+    return textCopyReason(watched)
+  }
   const unsafeReason = (
     withText: boolean,
   ): SecretFrameFailureReason | undefined => {
@@ -484,12 +493,15 @@ function installSecretFrameObserver(
     const reason = unsafeReason(full)
     const now = Date.now()
     if (reason !== undefined) {
-      // What the per-paint check sees too (the armed control, the page's own controls) is found before the paint that shows it, so its unsafe time starts now. What only a full check sees (rendered text, a control in a shadow root or a frame) may have been drawn at any time since the last full check that saw the page safe, with no mutation this observer was told of (a new shadow root, a value a script set there): its unsafe time starts at that check, as a cross-origin interval's does.
-      if (state.open === null)
-        openUnsafe(
-          reason,
-          !full || unsafeReason(false) !== undefined ? now : state.clearSinceMs,
-        )
+      // What the per-paint check sees too (the armed control, the page's own controls) is found before the paint that shows it, so its unsafe time starts now.
+      openUnsafe(reason, now)
+      // What only a full check sees may have been drawn at any time since the last full check that saw the page safe, with no mutation this observer was told of (a new shadow root, a value a script set there): the unsafe time reaches back to that check, as a cross-origin interval's does, also when another reason opened it later or is found beside it.
+      if (
+        full &&
+        state.open !== null &&
+        fullOnlyReason(watchedValues()) !== undefined
+      )
+        state.open = Math.min(state.open, state.clearSinceMs)
     } else if (full) {
       closeUnsafe(now)
       state.clearSinceMs = now

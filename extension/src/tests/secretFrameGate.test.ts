@@ -604,6 +604,36 @@ for (const [shown, showSecret] of [
     assert.deepEqual([verdictBeforeTheSecretShows, verdict], ['pass', 'drop'])
   })
 
+// protects=a secret already on screen in a shadow root is withheld from the last safe check on also when another reason opens the unsafe time first: a show-password toggle that the per-paint check sees must not hide the earlier, unseen copy; fails_when=the unsafe time keeps the toggle's time once it is open, so an image captured after the copy and before the toggle is stored although it shows the secret; seam=a real headless page that painted the copy (two animation frames), then changes the armed control's type before any verification; no_claim=closed shadow roots
+test('an image captured after a secret showed in a new shadow root is dropped also when a show-password toggle opens the unsafe time later', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  const verdictBeforeTheSecretShows = await gate.admitFrame(Date.now())
+  await delay(CLEAR_OF_MARGIN_MS)
+
+  // Act: the copy is painted, an image of it is captured, and only then the page turns the armed control into a text control.
+  await page.evaluate(
+    `(() => { const note = document.createElement('p'); note.textContent = 'you typed typed-secret'; document.getElementById('host').attachShadow({ mode: 'open' }).append(note) })()`,
+  )
+  await page.evaluate(
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(1))))',
+  )
+  const capturedAfterTheCopy = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate("document.getElementById('pw').type = 'text'")
+  await settle(page)
+  const verdict = await gate.admitFrame(capturedAfterTheCopy)
+
+  // Assert
+  assert.deepEqual([verdictBeforeTheSecretShows, verdict], ['pass', 'drop'])
+})
+
 // protects=the withholding of a secret that only a full check can see reaches back to the last full check that saw the page safe and no further: an image captured before that check is still stored; fails_when=an unsafe time found late is dated at the gate's arming or drops every earlier image of the run; no_claim=images captured between that check and the secret's appearance, which are withheld on purpose (the observer cannot tell when in that time the secret was drawn)
 test('an image captured before the last verification that saw the page safe still passes after a secret shows in a new shadow root', async (context) => {
   // Arrange
