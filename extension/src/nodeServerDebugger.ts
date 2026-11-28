@@ -44,6 +44,10 @@ export type NodeServerDebuggerPause = {
    * Whether the open request window belonged to the sign-in request when the adapter's `stopped` arrived. The run takes it with {@link inRequestWindowAtStop} and never re-derives the sign-in phase at classification time, so a stop the sign-in caused (code that runs after its response was written) is no hit of the declared request that follows. Absent when the debugger reports no arrival evidence.
    */
   inSignInAtStop?: boolean
+  /**
+   * Whether the learner asked for this pause: it is the first stop after an accepted Pause request of the editor, or a stop that arrived while such a request was unanswered. The run holds it as the learner's before any other rule (start-hit, sign-in, request), whatever its reason or line, and never resumes it. Absent for every other pause.
+   */
+  learnerRequested?: boolean
 }
 
 /** What a captured owned pause reads, already redacted. */

@@ -178,3 +178,44 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=an accepted learner Pause that lands on an armed declared line before the server is ready stays the learner's: it is held, never continued as a start hit; fails_when=the run takes the stop for a declared stop hit during startup, so Codebook sends a continue the learner never asked for (Cycle 0153 ship pass 1 S8); seam=the editor's real debugger behind the run, a held readiness check, the editor's Pause with its accepted reply and a breakpoint stop on the declared line; no_claim=js-debug's real reason for a pause that lands on a breakpoint
+test(
+  'a learner Pause that lands on a declared line before the server is ready is held and never continued',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const readiness = defer<void>()
+    const { editor, harness } = await editorRun({
+      prepare: false,
+      run: {
+        waitForReadiness: async () => {
+          await readiness.promise
+          return { host: '127.0.0.1', bothAccept: false }
+        },
+      },
+    })
+    const preparing = harness.run.prepare()
+    await harness.readinessStarted
+    const continuesAfterEntry = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Act
+    editor.adapter.learnerPauses()
+    hitDeclaredStop(editor, 0)
+    await until(harness, (view) => view.heldPause !== undefined)
+    readiness.resolve()
+    await preparing
+    // Assert
+    const view = harness.run.view()
+    assert.equal(view.state, 'learner-paused')
+    assert.equal(view.heldPause?.kind, 'learner')
+    assert.deepEqual(view.stopsHitAtStart, [])
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesAfterEntry,
+    )
+    await harness.run.stop()
+  },
+)

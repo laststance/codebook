@@ -56,6 +56,8 @@ type NativeStop = {
   inRequestWindowAtStop?: boolean
   /** Whether the open window belonged to the sign-in request when the adapter's `stopped` arrived; present with `inRequestWindowAtStop`. */
   inSignInAtStop?: boolean
+  /** Whether the learner asked for this stop (the first stop after an accepted Pause request), so the run holds it as the learner's whatever line it landed on. */
+  learnerRequested?: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
 }
@@ -273,8 +275,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         : {}),
     }
     // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
-    if (this.settleAcceptedLearnerPause(session.id))
+    if (this.settleAcceptedLearnerPause(session.id)) {
+      stop.learnerRequested = true
       this.learnerPauseStops.set(stop.token, stop)
+    }
     this.sessionStops.push(stop)
     this.input.record('node-server.dap-stopped', {
       sessionId: session.id,
@@ -883,6 +887,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       reason: stop.reason,
       declaredStopIndex,
       location: this.locationOf(frame),
+      // The learner asked for this stop: the run holds it as the learner's before any other rule.
+      ...(stop.learnerRequested ? { learnerRequested: true } : {}),
       // The window and its sign-in phase as they stood when the stop arrived, the same state the ledger verdict above used; none for a run that does not judge by the arrival window.
       ...(stop.inRequestWindowAtStop === undefined
         ? {}

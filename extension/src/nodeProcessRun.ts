@@ -960,7 +960,7 @@ export class NodeProcessRun {
    * Tells which kind of pause a native pause is.
    * @param pause - The debugger's report.
    * @returns
-   * - `learner` for a pause that is no hit of a declared stop
+   * - `learner` for a pause that is no hit of a declared stop, or one the learner asked for (the Pause button) whatever line it landed on
    * - `start-hit` for a declared stop hit before the run was prepared
    * - `sign-in-hit` for one hit while the owner's sign-in request is out
    * - `request-hit` for one hit inside the owner's window, or one that arrived inside it whatever the window says by the time its stack was read
@@ -970,6 +970,8 @@ export class NodeProcessRun {
     pause: NodeServerDebuggerPause,
   ): 'learner' | 'start-hit' | 'sign-in-hit' | 'request-hit' | 'unattributed' {
     if (pause.declaredStopIndex === undefined) return 'learner'
+    // A stop the learner asked for (the Pause button) is the learner's on any line, before the start, sign-in or request rules: Codebook never resumes it.
+    if (pause.learnerRequested) return 'learner'
     if (!this.prepared) return 'start-hit'
     // The debugger judged the window when the stop arrived: a stop outside it is not the request's, however long the classification took.
     if (pause.inRequestWindowAtStop === false) return 'unattributed'
