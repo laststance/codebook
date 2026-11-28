@@ -80,13 +80,8 @@ test('a Bun attach maps Bun source-map paths from the package root, and a node a
 // Value: protects=a release without an entry pause (a Bun launch) continues nothing and hands the first stop to the run as a pause, so an owned hit is never swallowed as an entry; fails_when=the release sends a continue, waits for an entry pause that never comes, or drops the stop; seam=the editor harness reporting an owned hit as its first stop; no_claim=Bun's real stop order
 test('a release without an entry pause continues nothing and reports the first stop as a pause', async () => {
   // Arrange
-  const editor = await editorHarness({
-    firstStop: {
-      reason: 'breakpoint',
-      ids: [OWNED_IDS[0]!],
-      frame: { file: STOP_FILE, line: 14 },
-    },
-  })
+  // The hit follows the acknowledgement of its breakpoint, as a real hit can only do (the debugger takes the owned ids as they stand when the stop arrives).
+  const editor = await editorHarness({ noAutomaticStop: true })
   const { debug } = editor.createDebugger(TWO_STOPS)
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
@@ -102,6 +97,10 @@ test('a release without an entry pause continues nothing and reports the first s
     })),
     AbortSignal.timeout(5_000),
   )
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
   // Act
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
   const first = await nextPause()

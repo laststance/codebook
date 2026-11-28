@@ -125,6 +125,8 @@ test(
         reason: 'breakpoint',
         ids: [OWNED_IDS[0]!],
         frame: { file: join(directory, 'src/script.ts'), line: 3 },
+        // A hit by id follows the acknowledgement of its breakpoint, which the debugger reads as the stop arrives.
+        afterArming: true,
       },
     })
     const { core, preparation } = scriptCore(editor, directory, { stops: 1 })

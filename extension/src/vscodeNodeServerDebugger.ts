@@ -66,12 +66,17 @@ type NativeStop = {
   windowFromPendingResume?: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
+  /** The owned breakpoints the adapter's `stopped` named by id, with the line each is accepted on, as they stood when it arrived, so an editor change while the stack was read cannot erase a hit that already arrived. */
+  ownedHits?: OwnedHit[]
   /** A Bun run: where each of the run's own declared stops stood verified when the adapter's `stopped` arrived, so an id-less stop is matched against the bindings that could have caused it and a binding verified while the stack was read does not count. */
   ownedPlaces?: OwnedStopPlace[]
 }
 
 /** The place of one breakpoint the learner set: the resolved file path and the one-based line. */
 type LearnerBreakpointPlace = { file: string; line: number }
+
+/** One owned breakpoint the adapter named as hit when a stop arrived: the declared stop it arms, its file and the line the stop is accepted on. */
+type OwnedHit = { declaredStopIndex: number; file: string; line: number }
 
 /** The verified place of one declared stop's owned breakpoint: the stop it arms, its file, the verified one-based line and the column when the adapter verified one. */
 type OwnedStopPlace = {
@@ -357,6 +362,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
             ownedPlaces: this.ownedPlacesNow(session),
           }
         : {}),
+      ownedHits: this.ownedHitsNow(session, body.hitBreakpointIds),
     }
     // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
     // A stop that arrives while a Pause is still unanswered stays the learner's too, and settles that request: when the adapter then refuses the Pause (the thread was already stopped) or accepts it, the stop is the one held, so it keeps the window closed until it runs on and no second stop is awaited.
@@ -1113,7 +1119,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       signal,
     )
     // A declared stop hit before any entry pause (its file is the entry itself) is a hit, not the entry.
-    const isEntry = this.ownedHitIndexOf(first, session) === undefined
+    const isEntry = this.ownedHitIndexOf(first) === undefined
     this.entryToken = isEntry ? first.token : undefined
     this.entryReleased = true
     for (const stop of this.sessionStops)
@@ -1183,7 +1189,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const frame = trace.stackFrames[0]
     // Without a readable top frame the hit cannot be verified, so it is no declared stop.
     const declaredStopIndex = frame
-      ? this.ownedHitIndexOf(stop, session, frame)
+      ? this.ownedHitIndexOf(stop, frame)
       : undefined
     // A declared hit judged by a learner Continue that is still unanswered is not acted on before the answer confirms it.
     if (declaredStopIndex !== undefined) {
@@ -1221,15 +1227,13 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   /**
    * Tells whether a stop is the hit of an armed declared stop: its reason is `breakpoint`, the adapter names the owned breakpoint's id, and the top frame stands in the stop's file on its verified line (on the declared line while the registration is pending).
    * A Bun target's stop that names no id is judged by its place alone: js-debug handles a Bun module's first pause as that module's entry pause (Bun has no instrumentation breakpoint), rewrites it as a plain breakpoint and drops the hit ids (Cycle 0152 N0), so an armed stop's own hit arrives without them.
-   * @param stop - The adapter's stop.
-   * @param session - The bound session.
+   * @param stop - The adapter's stop, which carries the owned breakpoints it named when it arrived.
    * @param frame - The top frame; without one only the ids decide (the entry check).
    * @returns The declared stop index, or `undefined` for every other pause.
-   * @example this.ownedHitIndexOf(stop, session, frame) // => 1 for a hit of the second declared stop
+   * @example this.ownedHitIndexOf(stop, frame) // => 1 for a hit of the second declared stop
    */
   private ownedHitIndexOf(
     stop: NativeStop,
-    session: vscode.DebugSession,
     frame?: DebugProtocol.StackFrame,
   ): number | undefined {
     if (stop.reason !== 'breakpoint') return undefined
@@ -1238,17 +1242,41 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     if (this.runtime === 'bun' && !hitIds?.length)
       return frame ? this.armedStopAtFrame(frame, stop) : undefined
     if (!hitIds) return undefined
-    for (const { target, breakpoint } of this.armed) {
-      const id = breakpoint.acknowledgedId(session)
-      // An unbound stop is never hit; only the stop whose id the adapter names can be.
-      if (id === undefined || !hitIds.includes(id)) continue
-      const line = breakpoint.verifiedPlace(session)?.line ?? target.line
+    // The owned breakpoints the adapter named when the stop arrived, never the registrations now.
+    for (const hit of stop.ownedHits ?? []) {
       const isAtStop =
-        frame?.source?.path === target.file && frame.line === line
+        frame?.source?.path === hit.file && frame.line === hit.line
       // Without a frame only the ids decide (the entry check).
-      if (isAtStop || !frame) return target.declaredStopIndex
+      if (isAtStop || !frame) return hit.declaredStopIndex
     }
     return undefined
+  }
+
+  /**
+   * Reads which owned breakpoints a stop's hit ids name, and the line each is accepted on, at the moment the stop arrives.
+   * Why it exists: the classification finishes after the stack read, and an editor change meanwhile (a breakpoint removed or moved) must not change which breakpoint fired. An unbound breakpoint (no acknowledged id) is never hit; the line is the verified one, the declared line while the registration is pending. Called by {@link onStopped} for every stop.
+   * @param session - The session that stopped.
+   * @param hitIds - The `hitBreakpointIds` of the adapter's `stopped` event.
+   * @returns The owned breakpoints named by id; empty when the event names none.
+   * @example this.ownedHitsNow(session, [8]) // => [{ declaredStopIndex: 1, file: '/repo/src/a.ts', line: 20 }]
+   */
+  private ownedHitsNow(
+    session: vscode.DebugSession,
+    hitIds: number[] | undefined,
+  ): OwnedHit[] {
+    if (!Array.isArray(hitIds)) return []
+    return this.armed.flatMap(({ target, breakpoint }) => {
+      const id = breakpoint.acknowledgedId(session)
+      return id !== undefined && hitIds.includes(id)
+        ? [
+            {
+              declaredStopIndex: target.declaredStopIndex,
+              file: target.file,
+              line: breakpoint.verifiedPlace(session)?.line ?? target.line,
+            },
+          ]
+        : []
+    })
   }
 
   /**

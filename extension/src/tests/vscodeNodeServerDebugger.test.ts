@@ -245,14 +245,13 @@ test('the entry pause is continued once, then a hit of the second stop and a lea
 // protects=a declared stop hit before any entry pause is reported as a hit and the first stop is not continued as an entry; fails_when=the hit is swallowed as the entry pause; no_claim=js-debug's entry behavior
 test('a declared stop hit as the very first stop is reported as a pause, not continued as the entry', async () => {
   // Arrange
-  const editor = await editorHarness({
-    firstStop: {
-      reason: 'breakpoint',
-      ids: [OWNED_IDS[0]!],
-      frame: { file: STOP_FILE, line: 14 },
-    },
-  })
+  // The hit follows the acknowledgement of its breakpoint, as a real hit can only do (the debugger takes the owned ids as they stand when the stop arrives).
+  const editor = await editorHarness({ noAutomaticStop: true })
   const { debug, heard } = await armedDebugger(editor)
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
   // Act
   const entryRelease = debug.releaseEntry(AbortSignal.timeout(5_000))
   const first = await heard.nextPause()
@@ -1152,6 +1151,32 @@ test(
     assert.equal(windowAfterPartialContinue, false)
     assert.equal(debug.learnerPausePending?.(), false)
     assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    await debug.release()
+  },
+)
+
+// protects=a Node hit that names an owned breakpoint by id stays that declared stop when the editor removes the breakpoint while the stack is being read: the matching ids and the accepted lines are taken when the stop arrives; fails_when=the classification looks the breakpoint up when the stack read finishes, so the removed breakpoint no longer matches and the hit that already arrived is reported as no declared stop (Cycle 0153 ship pass 2 T12); seam=the editor harness's gated stack read, a breakpoint hit by id and the editor's removal of the owned breakpoints during the read; no_claim=how an editor removes an owned breakpoint
+test(
+  'a hit by breakpoint id stays its declared stop when the owned breakpoint is removed during the stack read',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const gate = defer<void>()
+    const editorOptions: { stackTraceGate?: Promise<void> } = {}
+    const editor = await editorHarness(editorOptions)
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editorOptions.stackTraceGate = gate.promise
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    editor.editor.debug.removeBreakpoints([...editor.editorBreakpoints])
+    gate.resolve()
+    const pause = await heard.nextPause()
+    // Assert
+    assert.equal(pause.declaredStopIndex, 0)
     await debug.release()
   },
 )

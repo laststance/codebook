@@ -33,8 +33,16 @@ type FrameAt = { file: string; line: number; column?: number }
 export async function editorHarness(
   options: {
     verifiedLine?: number
+    /** The adapter reports no stop by itself after the attach (neither the entry pause nor a first stop), so a test delivers the first stop itself once the owned breakpoints are acknowledged, as a real hit can only follow its acknowledgement. */
+    noAutomaticStop?: boolean
     /** The first stop the adapter reports after the attach, in place of the entry pause. */
-    firstStop?: { reason: string; ids?: number[]; frame?: FrameAt }
+    firstStop?: {
+      reason: string
+      ids?: number[]
+      frame?: FrameAt
+      /** The stop follows the adapter's acknowledgement of the owned breakpoints instead of the attach, as a hit by id can only do. */
+      afterArming?: boolean
+    }
     stopFailures?: number
     /** The adapter rejects the stack trace of a pause after the entry pause. */
     stackTraceFails?: boolean
@@ -130,6 +138,8 @@ export async function editorHarness(
   let armed = 0
   // The entry pause is read normally; the pauses after it fail when asked.
   let entryDone = options.noEntryPause === true
+  // Whether the first stop that waits for the owned breakpoints' acknowledgement was delivered.
+  let firstStopAfterArmingDelivered = false
   /** Passes the editor's replacement of the file's breakpoints, and the adapter's reply, through the debugger's tracker. */
   const replaceBreakpoints = (): void => {
     const sequence = ++requestSequence
@@ -156,6 +166,12 @@ export async function editorHarness(
         ),
       },
     })
+    // The first stop that follows the acknowledgement of the owned breakpoints.
+    const first = options.firstStop
+    if (first?.afterArming && !firstStopAfterArmingDelivered) {
+      firstStopAfterArmingDelivered = true
+      queueMicrotask(() => adapter.stop(first.reason, first.ids, first.frame))
+    }
   }
   // js-debug's root of an attach owns no target and never answers `requestCDPProxy`: its request stays open for good.
   const rootSession = {
@@ -353,6 +369,7 @@ export async function editorHarness(
               success: true,
               body: { supportsSingleThreadExecutionRequests: true },
             })
+          if (options.noAutomaticStop || options.firstStop?.afterArming) return
           queueMicrotask(() =>
             options.firstStop
               ? adapter.stop(
