@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -93,7 +93,7 @@ test('a stress run counts the failed runs of each file and of each failed test',
   ])
 })
 
-// protects=the stress command exits 1 and names the failing test of a real `node --test` run, also when started from inside another test run; fails_when=a failing test is reported as passed, counted without its name, or the nested runner reports to the parent instead of printing; no_claim=that load makes a timing-dependent test fail (these two files are deterministic)
+// protects=the stress command exits 1 and names the failing test of a real `node --test` run, also when started from inside another test run, and keeps each failed run's output in the folder `--failures` names; fails_when=a failing test is reported as passed, counted without its name, the nested runner reports to the parent instead of printing, or a failed run's output is lost; no_claim=that load makes a timing-dependent test fail (these two files are deterministic)
 test('the stress command exits 1 and names the test that failed', async (context) => {
   // Arrange
   const directory = await createTestFolder(context, {
@@ -106,10 +106,22 @@ test('the stress command exits 1 and names the test that failed', async (context
     '2',
     '--concurrency',
     '2',
+    '--failures',
+    'failed-runs',
     'steady.test.mjs',
     'broken.test.mjs',
   ])
+  const keptOutputs = await readdir(join(directory, 'failed-runs'))
+  const firstKeptOutput = await readFile(
+    join(directory, 'failed-runs', 'broken.test.mjs.1.log'),
+    'utf8',
+  )
   // Assert
+  assert.deepEqual(keptOutputs.sort(), [
+    'broken.test.mjs.1.log',
+    'broken.test.mjs.2.log',
+  ])
+  assert.match(firstKeptOutput, /✖ the broken behaviour/)
   assert.deepEqual(result, {
     code: 1,
     stdout:

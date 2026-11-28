@@ -1,10 +1,11 @@
 // Runs compiled test files many times at once, to find tests that fail only under load (Issue #386, task 3).
 //
-//   node extension/scripts/stress-tests.mjs [--runs 4] [--concurrency 24] [--name <pattern>] <test-file>...
+//   node extension/scripts/stress-tests.mjs [--runs 4] [--concurrency 24] [--name <pattern>] [--failures <dir>] <test-file>...
 //
 // A fixer or the driving agent runs it after `pnpm --dir extension build` on the files it suspects. Every file is run
 // --runs times, with at most --concurrency `node --test` processes alive at once, so the tests meet the processor
-// contention of the gate's measured-health run. --name passes a `--test-name-pattern` to every run.
+// contention of the gate's measured-health run. --name passes a `--test-name-pattern` to every run. --failures keeps the
+// standard output of every failed run as `<dir>/<file name>.<n>.log`, so the failure can be read afterwards.
 //
 // It prints one line per file (`<file>: <runs> runs, <failed> failed`), under it one line per test that failed
 // (`  ✖ <test name>: <n> of <runs>`), and last `STRESS: files=<n> runs=<n> failed_runs=<n>`. A run that fails without
@@ -14,6 +15,8 @@
 //
 // Exit 0: every run passed. Exit 1: at least one run failed. Exit 2: a bad option or no test file, named on stderr.
 import { spawn } from 'node:child_process'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { isRunAsScript } from './utils/isRunAsScript.mjs'
@@ -113,7 +116,7 @@ function runTestFile(file, namePattern) {
  * Why: a test that fails once in thirty runs under load is found only by many runs at once. Called by this script's `main` and by its tests (with their own `run`).
  *
  * @param files - The compiled test files.
- * @param options - `runs` per file, `concurrency` of the pool, an optional `namePattern`, and `run` (how one file is run once; the real `node --test` unless a test replaces it).
+ * @param options - `runs` per file, `concurrency` of the pool, an optional `namePattern`, `run` (how one file is run once; the real `node --test` unless a test replaces it) and `onFailure` (called with the file, the failed run's output and the file's failure number, awaited before the next job of that worker).
  * @returns Per file its failed-run count and, per failed test name, how many runs failed it; plus the totals.
  *
  * @example
@@ -124,7 +127,7 @@ function runTestFile(file, namePattern) {
  */
 export async function stressTests(
   files,
-  { runs, concurrency, namePattern, run = runTestFile },
+  { runs, concurrency, namePattern, run = runTestFile, onFailure },
 ) {
   const results = files.map((file) => ({
     file,
@@ -140,6 +143,7 @@ export async function stressTests(
         const { code, output } = await run(result.file, namePattern)
         if (code === 0) return
         result.failedRuns++
+        await onFailure?.(result.file, output, result.failedRuns)
         const names = failedTestNames(output)
         for (const name of names.length ? names : [NO_TEST_NAMED])
           result.failures[name] = (result.failures[name] ?? 0) + 1
@@ -186,6 +190,7 @@ async function main() {
         runs: { type: 'string', default: String(DEFAULT_RUNS) },
         concurrency: { type: 'string', default: String(DEFAULT_CONCURRENCY) },
         name: { type: 'string' },
+        failures: { type: 'string' },
       },
     })
   } catch (error) {
@@ -198,10 +203,20 @@ async function main() {
     )
     process.exit(2)
   }
+  const failuresDirectory = parsed.values.failures
+  if (failuresDirectory) await mkdir(failuresDirectory, { recursive: true })
   const result = await stressTests(parsed.positionals, {
     runs: positiveOption(parsed.values.runs, '--runs'),
     concurrency: positiveOption(parsed.values.concurrency, '--concurrency'),
     namePattern: parsed.values.name,
+    // A failed run's output is kept only when a folder for it was named.
+    onFailure: failuresDirectory
+      ? (file, output, failureNumber) =>
+          writeFile(
+            join(failuresDirectory, `${basename(file)}.${failureNumber}.log`),
+            output,
+          )
+      : undefined,
   })
   process.stdout.write(`${renderStress(result).join('\n')}\n`)
   process.exitCode = result.failedRuns === 0 ? 0 : 1
