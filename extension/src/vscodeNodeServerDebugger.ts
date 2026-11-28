@@ -96,6 +96,14 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     number,
     { stop: NativeStop; trace: StackBody }
   >()
+  /** The learner's pause stops (reason `pause` after the editor's `pause` request) that have not run on, by token; the run's window opens again once one runs on. */
+  private readonly learnerPauseStops = new Map<number, NativeStop>()
+  /** The sessions whose editor `pause` request was accepted and has not produced its stop yet. */
+  private readonly sessionsAwaitingLearnerPause = new Set<string>()
+  /** The editor's `pause` requests waiting for the adapter's answer, as `<session id>:<request sequence>`. */
+  private readonly pendingLearnerPauses = new Set<string>()
+  /** Whether the run meant its request window to be open ({@link setRequestWindow}), whatever a learner's pause did to the ledger since. */
+  private requestWindowIntendedOpen = false
   private armed: ArmedStop[] = []
   private bound?: Awaited<ReturnType<typeof bindOwnedNodeTestDebugSession>>
   private handlers?: NodeServerDebuggerHandlers
@@ -178,8 +186,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     for (const { breakpoint } of this.armed)
       breakpoint.onRequest(session, request)
     // A pause request makes the next stop the learner's, not the declared request's.
-    if (request.command === 'pause')
+    if (request.command === 'pause') {
       codebookStopLedger.closeWindow([session.id])
+      this.pendingLearnerPauses.add(`${session.id}:${request.seq}`)
+      this.sessionsAwaitingLearnerPause.add(session.id)
+    }
     // Whether the thread runs on is the adapter's answer: a rejected resume leaves it paused.
     this.pendingResumes.noteRequest(session.id, request)
   }
@@ -194,6 +205,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       for (const { breakpoint } of this.armed)
         breakpoint.onResponse(session, response)
       this.onResumeAnswered(session.id, response)
+      this.onLearnerPauseAnswered(session.id, response)
     }
     if (message.type !== 'event') return
     const event = message as DebugProtocol.Event
@@ -240,6 +252,12 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
           }
         : {}),
     }
+    // The stop a learner's `pause` request caused is the learner's; its run-on reopens the request window.
+    if (
+      body.reason === 'pause' &&
+      this.sessionsAwaitingLearnerPause.delete(session.id)
+    )
+      this.learnerPauseStops.set(stop.token, stop)
     this.sessionStops.push(stop)
     this.input.record('node-server.dap-stopped', {
       sessionId: session.id,
@@ -284,6 +302,37 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
+   * Handles the adapter's answer to the editor's `pause` request: a refused pause (the thread was already paused) caused no stop, so the window it closed opens again when the run meant it open.
+   * Called by {@link onAdapterMessage} for every response.
+   * @param sessionId - The session the response came from.
+   * @param response - The adapter's response.
+   * @example this.onLearnerPauseAnswered('s1', { type: 'response', seq: 9, request_seq: 7, command: 'pause', success: false }) // reopens the window of 's1' while the run's request is under way
+   */
+  private onLearnerPauseAnswered(
+    sessionId: string,
+    response: DebugProtocol.Response,
+  ): void {
+    if (
+      !this.pendingLearnerPauses.delete(`${sessionId}:${response.request_seq}`)
+    )
+      return
+    if (response.success) return
+    this.sessionsAwaitingLearnerPause.delete(sessionId)
+    this.reopenRequestWindow(sessionId)
+  }
+
+  /**
+   * Opens the request window of the bound session again after a learner's pause ended, only when the run still means it open: a window the run closed stays closed.
+   * Called by {@link onLearnerPauseAnswered} and {@link resumeThreads}.
+   * @param sessionId - The session whose window a learner's pause closed.
+   * @example this.reopenRequestWindow(this.bound.session.id) // the next declared hit of the same request is attributed again
+   */
+  private reopenRequestWindow(sessionId: string): void {
+    if (this.requestWindowIntendedOpen && sessionId === this.bound?.session.id)
+      codebookStopLedger.openWindow([sessionId])
+  }
+
+  /**
    * Records that paused threads ran on (Codebook's resume, the learner's Continue or a step, the adapter's own continue) and reports each reported pause among them to the run.
    * @param sessionId - The session whose threads ran on.
    * @param threadId - The one thread that ran on; `undefined` for every thread of the session.
@@ -306,6 +355,23 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.livePauses.delete(token)
         this.handlers?.onResume(token)
       }
+    this.endLearnerPausesThatRanOn(ranOn)
+  }
+
+  /**
+   * Ends the learner's pauses among the stops that ran on: the request under way is Codebook's again, so its window opens.
+   * Called by {@link resumeThreads} after every resume.
+   * @param ranOn - Whether a stop's thread ran on.
+   * @example this.endLearnerPausesThatRanOn((stop) => stop.sessionId === 's1') // reopens the window of 's1' when its learner pause was among them
+   */
+  private endLearnerPausesThatRanOn(
+    ranOn: (stop: NativeStop) => boolean,
+  ): void {
+    for (const [token, stop] of this.learnerPauseStops)
+      if (ranOn(stop)) {
+        this.learnerPauseStops.delete(token)
+        this.reopenRequestWindow(stop.sessionId)
+      }
   }
 
   /** Whether the adapter reported the thread stopped and it has not run on since. */
@@ -324,6 +390,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       if (stop.sessionId === session.id) this.unreportedStops.delete(token)
     codebookStopLedger.forget(session.id)
     this.pendingResumes.forgetSession(session.id)
+    this.sessionsAwaitingLearnerPause.delete(session.id)
+    for (const [token, stop] of this.learnerPauseStops)
+      if (stop.sessionId === session.id) this.learnerPauseStops.delete(token)
     if (!this.active.delete(session.id)) return
     this.input.record('node-server.session-terminated', {
       sessionId: session.id,
@@ -788,6 +857,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   setRequestWindow(open: boolean): void {
+    this.requestWindowIntendedOpen = open
     const sessionId = this.bound?.session.id
     if (!sessionId) return
     if (open) codebookStopLedger.openWindow([sessionId])

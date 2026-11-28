@@ -801,3 +801,92 @@ test('a node release still finds an entry pause the learner continued before it'
   )
   await debug.release()
 })
+
+/** Arms the two stops and opens the request window on a Bun run whose startup stop was continued, as the declared request's write does. */
+async function openWindowOnBunRun() {
+  codebookStopLedger.reset()
+  const editor = await editorHarness({
+    noEntryPause: true,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
+  })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armTwoStops(debug)
+  // The startup stop the learner continued before the release, as in the neighbouring Bun tests.
+  editor.adapter.continued(1, true)
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  debug.setRequestWindow(true)
+  return { editor, debug, nextPause }
+}
+
+// Value: protects=after the learner paused the server during the declared request and pressed Continue, the request's next declared stop is attributed to the request again, so its capture is not lost; fails_when=the learner's Pause closes the attribution window for the rest of the request, so the later declared hit arrives with inRequestWindowAtStop false and is held as unattributed (Cycle 0152 defect 2); seam=the editor harness's pause request, a pause stop, a continued event and an id-less hit on the armed line; no_claim=js-debug's real pause or the run's own classification (ownedNodeServerRunBun.test.ts)
+test(
+  'a declared stop hit after the learner paused and continued during the request is attributed to the request',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause } = await openWindowOnBunRun()
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    const learnerPause = await nextPause()
+    editor.adapter.continued(1, true)
+    // Act
+    editor.adapter.stop('breakpoint', undefined, {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const declaredHit = await nextPause()
+    // Assert
+    assert.equal(learnerPause.declaredStopIndex, undefined)
+    assert.equal(learnerPause.inRequestWindowAtStop, false)
+    assert.equal(declaredHit.declaredStopIndex, 0)
+    assert.equal(declaredHit.inRequestWindowAtStop, true)
+    await debug.release()
+  },
+)
+
+// Value: protects=a Pause the adapter refuses (the thread was already paused) causes no stop and does not keep the request window closed for the rest of the request; fails_when=the refused pause leaves the window closed, so the next declared hit of the request is held as unattributed; seam=the editor harness's rejected pause request and an id-less hit on the armed line; no_claim=which pauses js-debug refuses
+test(
+  'a declared stop hit after the adapter refused the learner Pause is attributed to the request',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause } = await openWindowOnBunRun()
+    editor.adapter.learnerPauses({ rejected: true })
+    // Act
+    editor.adapter.stop('breakpoint', undefined, {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const declaredHit = await nextPause()
+    // Assert
+    assert.equal(declaredHit.declaredStopIndex, 0)
+    assert.equal(declaredHit.inRequestWindowAtStop, true)
+    await debug.release()
+  },
+)
+
+// Value: protects=a request window the run closed while the learner's pause was held stays closed when the learner continues, so a declared stop hit between two requests is never attributed; fails_when=the learner's Continue reopens a window the run closed; seam=the editor harness's pause stop, the run's setRequestWindow(false), a continued event and an id-less hit on the armed line; no_claim=the run's own window decisions (ownedNodeServerRunBun.test.ts)
+test(
+  'a declared stop hit after the run closed its window and the learner continued is not attributed to a request',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause } = await openWindowOnBunRun()
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await nextPause()
+    debug.setRequestWindow(false)
+    editor.adapter.continued(1, true)
+    // Act
+    editor.adapter.stop('breakpoint', undefined, {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const hit = await nextPause()
+    // Assert
+    assert.equal(hit.inRequestWindowAtStop, false)
+    await debug.release()
+  },
+)

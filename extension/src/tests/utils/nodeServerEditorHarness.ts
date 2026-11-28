@@ -470,6 +470,24 @@ export async function editorHarness(
           : { body: { allThreadsContinued: true } }),
       })
     },
+    /** The learner presses Pause: the editor's `pause` request reaches the adapter, which accepts it (a `pause` stop follows when the test reports one) or rejects it (the thread was already paused). */
+    learnerPauses(answer: { rejected?: boolean } = {}): void {
+      const sequence = ++requestSequence
+      tracker?.onWillReceiveMessage?.({
+        type: 'request',
+        seq: sequence,
+        command: 'pause',
+        arguments: { threadId: 1 },
+      })
+      tracker?.onDidSendMessage?.({
+        type: 'response',
+        seq: sequence + 1_000,
+        request_seq: sequence,
+        command: 'pause',
+        success: !answer.rejected,
+        ...(answer.rejected ? { message: 'the thread is already paused' } : {}),
+      })
+    },
     /** The adapter's later news about a breakpoint it acknowledged (a DAP `breakpoint` event). */
     breakpointNews(
       breakpoint: DebugProtocol.Breakpoint,
