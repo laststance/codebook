@@ -73,8 +73,13 @@ type ReadyForRequest = {
 /** The codes a request failure of the run can carry. */
 type RequestFailureCode = NonNullable<NodeServerView['requestFailure']>['code']
 
+/** The sentence of a declared request the learner's pause refused after the sign-in: the request has ended, so the learner continues the server and the chat starts the run again. */
+const DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT =
+  'The declared request was not sent because the learner held a pause of the server after the sign-in; Codebook never resumes it. Let the learner continue the server in the debugger, then start the run again.'
+
 /**
  * Tells whether a send failure is a refusal before any byte left (a listener that is not the server, an unreadable owner, a stop admitted first, or a pause the learner holds).
+ * Every member of the code union is thrown only before the first byte is written, so a run that refused may stay ready.
  * Called by the request paths to keep a run ready after such a refusal.
  * @param error - Anything a sender rejected with.
  * @returns True for those {@link StudyError}s.
@@ -94,6 +99,19 @@ function isRefusalBeforeAnyByte(error: unknown): error is StudyError & {
       error.code === 'RUN_NOT_READY' ||
       error.code === 'LEARNER_PAUSED')
   )
+}
+
+/**
+ * Chooses the sentence of a refusal that ends the declared request after its sign-in: the learner's pause gets a sentence that says the request is over (the generic one asks to continue as if the request were still waiting).
+ * Called by {@link OwnedNodeServerRun} when the declared request after a sign-in is refused before its first byte.
+ * @param error - The refusal.
+ * @returns The sentence the request failure carries.
+ * @example refusalSentenceAfterSignIn(new StudyError('LEARNER_PAUSED', 'x')) // => 'The declared request was not sent because the learner held a pause …'
+ */
+function refusalSentenceAfterSignIn(error: StudyError): string {
+  return error.code === 'LEARNER_PAUSED'
+    ? DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT
+    : error.message
 }
 
 /**
@@ -669,7 +687,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * @param handle - The sender's promises.
    * @param onWritten - Called once the bytes are written.
    * @param phase - `sign-in` names the phase in a refusal.
-   * @throws A refusal before any byte (a listener that is not the server, or a stop admitted first): the window is taken back and nothing was sent. Any other failure is reported by the response promise, which rejects with it too.
+   * @throws A refusal before any byte (a listener that is not the server, a stop admitted first, or `LEARNER_PAUSED` while the learner holds a pause): the window is taken back and nothing was sent. Any other failure is reported by the response promise, which rejects with it too.
    */
   private async awaitWritten(
     token: number,
@@ -719,7 +737,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * @param key - The action key.
    * @param ready - The server and endpoint ({@link OwnedNodeServerRun.assertReadyForRequest}).
    * @param secret - The password the learner typed in the editor's box.
-   * @throws `REQUEST_NOT_CONFIRMED` without a secret; `LISTENER_NOT_OWNED`, `PORT_OWNER_UNKNOWN` or `RUN_NOT_READY` with `details.phase: "sign-in"` when refused before any byte (the run stays `ready`).
+   * @throws `REQUEST_NOT_CONFIRMED` without a secret; `LISTENER_NOT_OWNED`, `PORT_OWNER_UNKNOWN`, `RUN_NOT_READY` or `LEARNER_PAUSED` with `details.phase: "sign-in"` when refused before any byte (the run stays `ready`).
    */
   private async sendSignInRequest(
     key: string,
@@ -1065,7 +1083,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
           error.code === 'PORT_OWNER_UNKNOWN'
           ? error.code
           : 'REQUEST_FAILED',
-        error.message,
+        refusalSentenceAfterSignIn(error),
       )
       return
     }

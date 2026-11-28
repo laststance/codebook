@@ -559,10 +559,12 @@ test(
     // The run reads learner-paused while the pause is held; the request's failure is kept beside it.
     await until(harness, (view) => view.requestFailure !== undefined)
     // Assert
+    const { requestFailure } = harness.run.view()
     assert.equal(harness.sender.bytesWritten, 1)
-    assert.match(
-      JSON.stringify(harness.run.view()),
-      /The learner paused the server; Codebook never resumes it/,
+    assert.equal(requestFailure?.code, 'REQUEST_FAILED')
+    assert.equal(
+      requestFailure?.message,
+      'The declared request was not sent because the learner held a pause of the server after the sign-in; Codebook never resumes it. Let the learner continue the server in the debugger, then start the run again.',
     )
   },
 )
