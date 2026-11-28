@@ -19,7 +19,8 @@ import {
 
 const SECRET = 'hunter2-correct-horse'
 /** A signed session cookie as express-session writes it: percent-encoded, with a signature. */
-const SET_COOKIE = 'sid=s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP; Path=/'
+const SIGN_IN_RESPONSE_HEADER =
+  'sid=s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP; Path=/'
 const SIGN_IN = {
   path: '/login',
   fields: { email: 'learner@example.test' },
@@ -305,7 +306,7 @@ test(
     const continuesBefore = editor.requests.filter(
       (request) => request.command === 'continue',
     ).length
-    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.onSetCookie?.([SIGN_IN_RESPONSE_HEADER])
     harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
     // The declared request is refused while the stop is still being read; the stop's delivery comes after that.
     await until(harness, (current) => current.requestFailure !== undefined)
@@ -352,7 +353,7 @@ test(
       line: 30,
     })
     // Act
-    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.onSetCookie?.([SIGN_IN_RESPONSE_HEADER])
     harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
     const view = await until(
       harness,
@@ -384,7 +385,7 @@ test(
     // The declared request's peer check stays open until the stop arrived.
     runOptions.peerCheckGate = peerCheck.promise
     runOptions.onPeerCheckEntered = (): void => peerCheckEntered.resolve()
-    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.onSetCookie?.([SIGN_IN_RESPONSE_HEADER])
     harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
     await peerCheckEntered.promise
     // Act
@@ -419,7 +420,7 @@ test(
     // The declared request's peer check stays open until the learner pressed Pause.
     runOptions.peerCheckGate = peerCheck.promise
     runOptions.onPeerCheckEntered = (): void => peerCheckEntered.resolve()
-    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.onSetCookie?.([SIGN_IN_RESPONSE_HEADER])
     harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
     await peerCheckEntered.promise
     // Act
@@ -771,7 +772,7 @@ test(
       return undefined
     }
     await harness.run.sendRequest('key-1', { secret: SECRET })
-    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.onSetCookie?.([SIGN_IN_RESPONSE_HEADER])
     harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
     await waitUntil(
       () => harness.sender.exchanges.length === 2,
