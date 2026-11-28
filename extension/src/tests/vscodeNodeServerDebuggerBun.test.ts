@@ -899,6 +899,102 @@ test(
   },
 )
 
+// Value: protects=a learner Pause sent while a Continue is still pending keeps the request window closed when the Continue's reply lets the earlier pause run on, so a declared hit before the new pause takes effect is never the request's; fails_when=the Continue's reply reopens the window while the second Pause request is unanswered, so the hit arrives with inRequestWindowAtStop true and the request captures a stop the learner's pause overtook (Cycle 0153 review round R1, CodeRabbit major); seam=the editor harness's pause stop, a pending Continue, a second unanswered Pause, the Continue's reply and an id-less hit on the armed line; no_claim=js-debug's real message order or the run's own handling of the hit (ownedNodeServerRunBun.test.ts)
+test(
+  'a declared stop hit while a second learner Pause is unanswered is not attributed to the request',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause } = await openWindowOnBunRun()
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    const answerSecondPause = editor.adapter.learnerSendsPause()
+    // Act
+    answerContinue()
+    answerSecondPause()
+    editor.adapter.stop('breakpoint', undefined, {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const hit = await nextPause()
+    // Assert
+    assert.equal(hit.inRequestWindowAtStop, false)
+    await debug.release()
+  },
+)
+
+// Value: protects=a refused second learner Pause clears only its own request, so the window stays closed while the first Pause's stop is still held by the learner; fails_when=the refusal reopens the window although another learner pause stop of the session is held, so a hit on another thread is attributed to the request (Cycle 0153 review round R1, OCR A Info and CodeRabbit major); seam=the editor harness's accepted Pause with its stop, a refused second Pause and an id-less hit on the armed line from thread 2; no_claim=whether js-debug lets a second thread stop while one is held
+test(
+  'a declared stop hit on another thread while the first learner pause is held and a second Pause was refused is not attributed to the request',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause } = await openWindowOnBunRun()
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await nextPause()
+    // Act
+    editor.adapter.learnerPauses({ rejected: true })
+    editor.adapter.stop(
+      'breakpoint',
+      undefined,
+      { file: STOP_FILE, line: 14 },
+      2,
+    )
+    const hit = await nextPause()
+    // Assert
+    assert.equal(hit.inRequestWindowAtStop, false)
+    await debug.release()
+  },
+)
+
+// Value: protects=an accepted learner Pause that a stop of another reason (a breakpoint) overtook still counts as the learner's pause, so once the learner continues the request's next declared hit is attributed again; fails_when=only a stop with reason pause settles the Pause, so the window stays closed for the rest of the request and the later declared hit is held as unattributed (Cycle 0153 review round R1, OCR A Minor); seam=the editor harness's accepted Pause, a breakpoint stop on an undeclared line, a continued event and an id-less hit on the armed line; no_claim=which reason js-debug reports for a pause that lands on a breakpoint
+test(
+  'a declared stop hit after an accepted learner Pause was overtaken by a breakpoint stop and continued is attributed to the request',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause } = await openWindowOnBunRun()
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('breakpoint', undefined, {
+      file: STOP_FILE,
+      line: 30,
+    })
+    const overtaking = await nextPause()
+    editor.adapter.continued(1, true)
+    // Act
+    editor.adapter.stop('breakpoint', undefined, {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const declaredHit = await nextPause()
+    // Assert
+    assert.equal(overtaking.inRequestWindowAtStop, false)
+    assert.equal(declaredHit.declaredStopIndex, 0)
+    assert.equal(declaredHit.inRequestWindowAtStop, true)
+    await debug.release()
+  },
+)
+
+// Value: protects=the end of a debug session clears every learner pause record of it, so an unanswered Pause the ended session left behind does not hold the request window closed after a later refused Pause; fails_when=the session's unanswered Pause stays recorded after the session terminated, so the window never opens again (Cycle 0153 review round R1, OCR A Info); seam=the editor harness's unanswered Pause, the session's end and a later refused Pause; no_claim=that a real session id is ever reused
+test(
+  'the request window opens again after a refused Pause once the session that left a Pause unanswered ended',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug } = await openWindowOnBunRun()
+    editor.adapter.learnerSendsPause()
+    editor.adapter.end()
+    // Act
+    editor.adapter.learnerPauses({ rejected: true })
+    // Assert
+    assert.equal(codebookStopLedger.isWindowOpen(editor.session.id), true)
+    await debug.release()
+  },
+)
+
 /** Arms the two stops on a Bun run whose stack reads wait for the returned gate, with the startup stop already continued, and returns what a test needs to hit a declared line while a stack read is pending. */
 async function bunRunWithGatedStackReads() {
   codebookStopLedger.reset()

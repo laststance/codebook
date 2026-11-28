@@ -475,8 +475,8 @@ export async function editorHarness(
     learnerContinues(answer: { rejected?: boolean } = {}): void {
       adapter.learnerSendsContinue()(answer)
     },
-    /** The learner presses Pause: the editor's `pause` request reaches the adapter, which accepts it (a `pause` stop follows when the test reports one) or rejects it (the thread was already paused). */
-    learnerPauses(answer: { rejected?: boolean } = {}): void {
+    /** The learner presses Pause and the adapter has not answered yet: the editor's `pause` request reached the adapter; the returned function delivers the adapter's answer, accepted (a `pause` stop follows when the test reports one) or rejected (the thread was already paused). */
+    learnerSendsPause(): (answer?: { rejected?: boolean }) => void {
       const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
         type: 'request',
@@ -484,14 +484,21 @@ export async function editorHarness(
         command: 'pause',
         arguments: { threadId: 1 },
       })
-      tracker?.onDidSendMessage?.({
-        type: 'response',
-        seq: sequence + 1_000,
-        request_seq: sequence,
-        command: 'pause',
-        success: !answer.rejected,
-        ...(answer.rejected ? { message: 'the thread is already paused' } : {}),
-      })
+      return (answer = {}) =>
+        tracker?.onDidSendMessage?.({
+          type: 'response',
+          seq: sequence + 1_000,
+          request_seq: sequence,
+          command: 'pause',
+          success: !answer.rejected,
+          ...(answer.rejected
+            ? { message: 'the thread is already paused' }
+            : {}),
+        })
+    },
+    /** The learner presses Pause: the editor's `pause` request reaches the adapter, which accepts it (a `pause` stop follows when the test reports one) or rejects it (the thread was already paused). */
+    learnerPauses(answer: { rejected?: boolean } = {}): void {
+      adapter.learnerSendsPause()(answer)
     },
     /** The adapter's later news about a breakpoint it acknowledged (a DAP `breakpoint` event). */
     breakpointNews(

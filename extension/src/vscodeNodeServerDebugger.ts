@@ -61,6 +61,13 @@ type NativeStop = {
 /** The place of one breakpoint the learner set: the resolved file path and the one-based line. */
 type LearnerBreakpointPlace = { file: string; line: number }
 
+/** One `pause` request of the editor (the learner's Pause), until the first stop after its acceptance settles it. */
+type LearnerPauseRequest = {
+  sessionId: string
+  /** Whether the adapter accepted the request; an unanswered request is not accepted yet. */
+  accepted: boolean
+}
+
 /** A declared stop with the owned breakpoint that arms it. */
 type ArmedStop = {
   target: NodeServerStopTarget
@@ -101,12 +108,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     number,
     { stop: NativeStop; trace: StackBody }
   >()
-  /** The learner's pause stops (reason `pause` after the editor's `pause` request) that have not run on, by token; the run's window opens again once one runs on. */
+  /** The learner's pause stops (the first stop of a session after an accepted editor `pause` request, whatever its reason) that have not run on, by token; the run's window opens again once none is held. */
   private readonly learnerPauseStops = new Map<number, NativeStop>()
-  /** The sessions whose editor `pause` request was accepted and has not produced its stop yet. */
-  private readonly sessionsAwaitingLearnerPause = new Set<string>()
-  /** The editor's `pause` requests waiting for the adapter's answer, as `<session id>:<request sequence>`. */
-  private readonly pendingLearnerPauses = new Set<string>()
+  /** The editor's `pause` requests that are unanswered or accepted without a stop yet, as `<session id>:<request sequence>`, in the order they were sent; a refusal removes only its own request. */
+  private readonly learnerPauseRequests = new Map<string, LearnerPauseRequest>()
   /** Whether the run meant its request window to be open ({@link setRequestWindow}), whatever a learner's pause did to the ledger since. */
   private requestWindowIntendedOpen = false
   private armed: ArmedStop[] = []
@@ -193,8 +198,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     // A pause request makes the next stop the learner's, not the declared request's.
     if (request.command === 'pause') {
       codebookStopLedger.closeWindow([session.id])
-      this.pendingLearnerPauses.add(`${session.id}:${request.seq}`)
-      this.sessionsAwaitingLearnerPause.add(session.id)
+      this.learnerPauseRequests.set(`${session.id}:${request.seq}`, {
+        sessionId: session.id,
+        accepted: false,
+      })
     }
     // Whether the thread runs on is the adapter's answer: a rejected resume leaves it paused.
     // The request resumes only the stops that exist now: a stop that arrives before its answer is a later pause.
@@ -254,11 +261,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       // Bun runs during arming: its pause is judged by the window and the learner's breakpoints as they stood when it arrived.
       ...(this.runtime === 'bun' ? this.bunStopEvidence(session.id) : {}),
     }
-    // The stop a learner's `pause` request caused is the learner's; its run-on reopens the request window.
-    if (
-      body.reason === 'pause' &&
-      this.sessionsAwaitingLearnerPause.delete(session.id)
-    )
+    // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
+    if (this.settleAcceptedLearnerPause(session.id))
       this.learnerPauseStops.set(stop.token, stop)
     this.sessionStops.push(stop)
     this.input.record('node-server.dap-stopped', {
@@ -335,33 +339,70 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Handles the adapter's answer to the editor's `pause` request: a refused pause (the thread was already paused) caused no stop, so the window it closed opens again when the run meant it open.
+   * Handles the adapter's answer to the editor's `pause` request: an accepted pause waits for the stop it causes; a refused one (the thread was already paused) caused no stop, so only that request ends and the window it closed may open again.
    * Called by {@link onAdapterMessage} for every response.
    * @param sessionId - The session the response came from.
    * @param response - The adapter's response.
-   * @example this.onLearnerPauseAnswered('s1', { type: 'response', seq: 9, request_seq: 7, command: 'pause', success: false }) // reopens the window of 's1' while the run's request is under way
+   * @example this.onLearnerPauseAnswered('s1', { type: 'response', seq: 9, request_seq: 7, command: 'pause', success: false }) // ends request 7 of 's1' and reopens its window when nothing else of the learner is outstanding
    */
   private onLearnerPauseAnswered(
     sessionId: string,
     response: DebugProtocol.Response,
   ): void {
-    if (
-      !this.pendingLearnerPauses.delete(`${sessionId}:${response.request_seq}`)
-    )
+    const key = `${sessionId}:${response.request_seq}`
+    const pauseRequest = this.learnerPauseRequests.get(key)
+    if (!pauseRequest) return
+    if (response.success) {
+      pauseRequest.accepted = true
       return
-    if (response.success) return
-    this.sessionsAwaitingLearnerPause.delete(sessionId)
+    }
+    this.learnerPauseRequests.delete(key)
     this.reopenRequestWindow(sessionId)
   }
 
   /**
-   * Opens the request window of the bound session again after a learner's pause ended, only when the run still means it open: a window the run closed stays closed.
-   * Called by {@link onLearnerPauseAnswered} and {@link resumeThreads}.
+   * Ends the oldest accepted learner `pause` request of a session, because the stop that just arrived is the first one after its acceptance.
+   * Called by {@link onStopped} for every stop. A request the adapter has not answered yet is not settled: fail closed, the window stays closed until an accepted request meets its stop.
+   * @param sessionId - The session that stopped.
+   * @returns `true` when the stop is a learner's pause stop; `false` when no accepted Pause request of the session was waiting.
+   * @example this.settleAcceptedLearnerPause('s1') // => true after an accepted Pause, then false for the next stop
+   */
+  private settleAcceptedLearnerPause(sessionId: string): boolean {
+    for (const [key, pauseRequest] of this.learnerPauseRequests)
+      if (pauseRequest.sessionId === sessionId && pauseRequest.accepted) {
+        this.learnerPauseRequests.delete(key)
+        return true
+      }
+    return false
+  }
+
+  /**
+   * Tells whether the learner still holds something of the session: an unanswered or unsettled `pause` request, or a pause stop that has not run on.
+   * Called by {@link reopenRequestWindow}.
+   * @param sessionId - The session to ask about.
+   * @returns `true` while any learner-pause record of the session remains.
+   * @example this.learnerHoldsPause('s1') // => true while a Pause of 's1' awaits its answer or its stop
+   */
+  private learnerHoldsPause(sessionId: string): boolean {
+    for (const pauseRequest of this.learnerPauseRequests.values())
+      if (pauseRequest.sessionId === sessionId) return true
+    for (const stop of this.learnerPauseStops.values())
+      if (stop.sessionId === sessionId) return true
+    return false
+  }
+
+  /**
+   * Opens the request window of the bound session again after a learner's pause ended, only when the run still means it open and the learner holds no other pause of the session: a window the run closed stays closed, and so does one while another Pause is unanswered, unsettled or held.
+   * Called by {@link onLearnerPauseAnswered} and {@link endLearnerPausesThatRanOn}.
    * @param sessionId - The session whose window a learner's pause closed.
    * @example this.reopenRequestWindow(this.bound.session.id) // the next declared hit of the same request is attributed again
    */
   private reopenRequestWindow(sessionId: string): void {
-    if (this.requestWindowIntendedOpen && sessionId === this.bound?.session.id)
+    if (
+      this.requestWindowIntendedOpen &&
+      sessionId === this.bound?.session.id &&
+      !this.learnerHoldsPause(sessionId)
+    )
       codebookStopLedger.openWindow([sessionId])
   }
 
@@ -461,7 +502,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       if (stop.sessionId === session.id) this.unreportedStops.delete(token)
     codebookStopLedger.forget(session.id)
     this.pendingResumes.forgetSession(session.id)
-    this.sessionsAwaitingLearnerPause.delete(session.id)
+    // An ended session holds no learner pause: its requests and held stops are dropped.
+    for (const [key, pauseRequest] of this.learnerPauseRequests)
+      if (pauseRequest.sessionId === session.id)
+        this.learnerPauseRequests.delete(key)
     for (const [token, stop] of this.learnerPauseStops)
       if (stop.sessionId === session.id) this.learnerPauseStops.delete(token)
     if (!this.active.delete(session.id)) return
