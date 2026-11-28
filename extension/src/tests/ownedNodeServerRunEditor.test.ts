@@ -404,3 +404,76 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a declared stop whose thread stopped again as an exception before the stop's stack read finished is no capture: the exception owns the thread's frames, so its variables never appear under the declared stop and the exception stays the learner's held pause; fails_when=the older stop is classified and captured after the thread stopped again, so the exception's local values are saved as the declared stop's capture (Cycle 0153 ship pass 2 T2); seam=the editor's real debugger behind the run, a held stack read, a learner Continue still waiting for its answer and an exception on the same thread and line; no_claim=the adapter's real message order
+test(
+  'an exception that stops the thread again before a declared stop was read is held and never captured as the declared stop',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const stackRead = defer<void>()
+    const { editor, harness } = await editorRun({
+      editor: { stackTraceGate: stackRead.promise },
+      run: { stops: 2 },
+    })
+    await harness.run.sendRequest('key-1')
+    hitDeclaredStop(editor, 0)
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    // Act
+    editor.adapter.stop('exception', undefined, {
+      file: RUN_STOP_FILE,
+      line: 14,
+    })
+    stackRead.resolve()
+    const view = await until(
+      harness,
+      (current) => current.heldPause !== undefined,
+    )
+    answerContinue()
+    // Assert
+    assert.deepEqual(view.captures, [])
+    assert.deepEqual(view.stopsReached, [])
+    assert.equal(view.heldPause?.reason, 'exception')
+    assert.equal(view.runFailure, undefined)
+    await harness.run.stop()
+  },
+)
+
+// protects=a sign-in hit whose thread stopped again before its stack read finished is dropped without failing the run: the refused automatic Continue of the replaced stop is no run failure, and the server keeps running with the newer stop held; fails_when=the replaced stop is reported as the sign-in's hit and its Continue, refused because the thread stopped again, ends the run with RUNTIME_FAILED (Cycle 0153 ship pass 2 T2); seam=the editor's real debugger behind a sign-in run, a held stack read and an exception on the same thread; no_claim=a real server's handler timing
+test(
+  'an exception that stops the thread again before a sign-in hit was read is held and does not fail the run',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const stackRead = defer<void>()
+    const { editor, harness } = await editorRun({
+      editor: { stackTraceGate: stackRead.promise },
+      run: { signIn: SIGN_IN },
+    })
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    hitDeclaredStop(editor, 0)
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Act
+    editor.adapter.stop('exception', undefined, {
+      file: RUN_STOP_FILE,
+      line: 14,
+    })
+    stackRead.resolve()
+    const view = await until(
+      harness,
+      (current) => current.heldPause !== undefined,
+    )
+    // Assert
+    assert.equal(view.heldPause?.reason, 'exception')
+    assert.equal(view.runFailure, undefined)
+    assert.deepEqual(view.stopsHitDuringSignIn, [])
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesBefore,
+    )
+    await harness.run.stop()
+  },
+)

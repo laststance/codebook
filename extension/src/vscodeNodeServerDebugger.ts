@@ -276,6 +276,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const sequence = ++this.nextToken
     const threads =
       this.pausedThreads.get(session.id) ?? new Map<number, number>()
+    // A thread that stops again ran on in between: its earlier stop is no pause any more, whatever its stack read or capture was about to say.
+    this.supersedeEarlierStop(body.threadId!, threads)
     // The thread's newest stop is the only pause a resume may still name.
     threads.set(body.threadId!, sequence)
     this.pausedThreads.set(session.id, threads)
@@ -320,6 +322,36 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       return
     }
     this.enqueueClassification(stop)
+  }
+
+  /**
+   * Ends the earlier stop of a thread that has stopped again: the thread ran on in between, so the earlier stop is neither classified nor captured, and the run is told it is over.
+   * Why it exists: the earlier stop's stack read or capture would otherwise describe the newer stop's frames under the earlier stop's declared index, and a Continue that names the earlier stop would act on the newer one. A stop the learner asked for by Pause stays held until a resume is confirmed (fail closed).
+   * Called by {@link onStopped} before it records the new stop.
+   * @param threadId - The thread that stopped again.
+   * @param threads - The session's paused threads with their newest stop's token, before the new stop is entered.
+   * @example this.supersedeEarlierStop(1, new Map([[1, 4]])) // stop 4 of thread 1 is dropped from the queue and the run hears onResume(4)
+   */
+  private supersedeEarlierStop(
+    threadId: number,
+    threads: Map<number, number>,
+  ): void {
+    const earlierToken = threads.get(threadId)
+    if (earlierToken === undefined) return
+    this.unreportedStops.delete(earlierToken)
+    // A Bun run hands its earlier stops to the run at the release; one that was replaced is none of them.
+    if (this.runtime === 'bun') {
+      const index = this.sessionStops.findIndex(
+        (stop) => stop.token === earlierToken,
+      )
+      if (index >= 0) this.sessionStops.splice(index, 1)
+    }
+    // The learner's own Pause stop is never taken from the run's view here: only a confirmed resume ends it.
+    if (
+      !this.learnerPauseStops.has(earlierToken) &&
+      this.livePauses.delete(earlierToken)
+    )
+      this.handlers?.onResume(earlierToken)
   }
 
   /**
@@ -988,7 +1020,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const trace = this.releaseBegun
       ? { stackFrames: [] }
       : await this.readStack(session, stop)
-    // A stop whose thread ran on while its stack was read is no pause any more, even if the thread stopped again since.
+    // A stop whose thread ran on while its stack was read is no pause any more, even if the thread stopped again since: the stack read may describe the newer stop.
     if (!this.unreportedStops.has(stop.token)) return
     const frame = trace.stackFrames[0]
     // Without a readable top frame the hit cannot be verified, so it is no declared stop.
