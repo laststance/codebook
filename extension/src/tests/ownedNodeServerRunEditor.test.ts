@@ -689,3 +689,77 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a declared request whose connection failed closes its attribution window at once, so a declared line hit while the exit of the server is still being checked is held outside the request and never captured as the failed request's stop; fails_when=the window stays open until the error report finishes its exit check, so the hit is captured as request stop 0 after the request already failed (Cycle 0153 ship pass 2 T8, OV4); seam=the editor's real debugger behind the run, a rejected declared response and an exit check that stays open; no_claim=a real connection reset
+test(
+  'a declared line hit after the declared request connection failed is held and not captured while the server exit is still being checked',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const exitCheck = defer<void>()
+    const { editor, harness } = await editorRun()
+    harness.server.waitForExit = async () => {
+      await exitCheck.promise
+      return undefined
+    }
+    await harness.run.sendRequest('key-1')
+    // Act
+    harness.sender.exchanges[0]?.response.reject(
+      new StudyError('REQUEST_FAILED', 'connection reset'),
+    )
+    // Let the rejection reach the run before the stop arrives.
+    await new Promise((resolve) => setImmediate(resolve))
+    hitDeclaredStop(editor, 0)
+    await until(
+      harness,
+      (view) => view.heldPause !== undefined || view.captures.length > 0,
+    )
+    // Assert
+    const view = harness.run.view()
+    assert.deepEqual(view.captures, [])
+    assert.deepEqual(view.stopsReached, [])
+    assert.equal(view.heldPause?.kind, 'unattributed')
+    exitCheck.resolve()
+    await harness.run.stop()
+  },
+)
+
+// protects=the declared request that follows a sign-in closes its attribution window at once when its own connection fails, like the plain declared request; fails_when=only the sign-in's rejection closes the window, so a declared line hit while the exit check is open is captured as the failed request's stop (Cycle 0153 ship pass 2 T8, OV4); seam=the editor's real debugger behind a sign-in run, a declared exchange rejected after the sign-in answered and an exit check that stays open; no_claim=a real connection reset
+test(
+  'a declared line hit after the connection of the request that follows the sign-in failed is held and not captured',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const exitCheck = defer<void>()
+    const { editor, harness } = await editorRun({ run: { signIn: SIGN_IN } })
+    harness.server.waitForExit = async () => {
+      await exitCheck.promise
+      return undefined
+    }
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    await waitUntil(
+      () => harness.sender.exchanges.length === 2,
+      'the declared request after the sign-in',
+      5_000,
+    )
+    // Act
+    harness.sender.exchanges[1]?.response.reject(
+      new StudyError('REQUEST_FAILED', 'connection reset'),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    hitDeclaredStop(editor, 0)
+    await until(
+      harness,
+      (view) => view.heldPause !== undefined || view.captures.length > 0,
+    )
+    // Assert
+    const view = harness.run.view()
+    assert.deepEqual(view.captures, [])
+    assert.deepEqual(view.stopsReached, [])
+    assert.equal(view.heldPause?.kind, 'unattributed')
+    exitCheck.resolve()
+    await harness.run.stop()
+  },
+)

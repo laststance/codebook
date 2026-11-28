@@ -452,13 +452,13 @@ test(
       harness.order.some((step) => step.startsWith('capture:')),
       false,
     )
-    // The held pause then refuses the declared request's write, so the run settles with the request ended and the window never opens again.
+    // The held pause then refuses the declared request's write, so the run settles with the request ended and the window never opens again; the refused exchange closes the window once when its rejection arrives (Cycle 0153 ship pass 2 T8) and once more when the request ends.
     peerCheck.resolve()
     await until(harness, (current) => current.requestFailure !== undefined)
     assert.equal(harness.sender.bytesWritten, 1)
     assert.deepEqual(
       harness.order.filter((step) => step.startsWith('window:')),
-      ['window:true', 'window:false', 'window:false'],
+      ['window:true', 'window:false', 'window:false', 'window:false'],
     )
   },
 )

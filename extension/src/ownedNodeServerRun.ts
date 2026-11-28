@@ -804,20 +804,16 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     )
     handle.response.then(
       (response) => void this.onSignInResponse(response, token),
-      (error: unknown) => {
-        // A failed exchange owns no stop from here on: its window closes now, not after the exit check the error report waits for.
-        this.closeAttributionWindowOfFailedExchange(token)
-        void this.onRequestError(error, token)
-      },
+      (error: unknown) => void this.onRequestError(error, token),
     )
     await this.awaitWritten(token, handle, undefined, 'sign-in')
   }
 
   /**
    * Closes the debugger's attribution window of an exchange whose response promise rejected, before the run awaits the server's exit to word the failure.
-   * Why it exists: {@link onRequestError} waits up to the exit settle time, and a declared line hit meanwhile would still read as the failed sign-in's and be continued by Codebook; with the window closed it is held as a stop outside the request instead.
+   * Why it exists: {@link onRequestError} waits up to the exit settle time, and a declared line hit meanwhile would still read as the failed exchange's (a sign-in hit Codebook continues, or a request hit it captures); with the window closed it is held as a stop outside the request instead. Called first by {@link onRequestError}, which every sender's rejection reaches.
    * @param token - The request the rejection belongs to; a rejection of an older request changes nothing.
-   * @example this.closeAttributionWindowOfFailedExchange(this.requestToken) // the sign-in's window closes at once
+   * @example this.closeAttributionWindowOfFailedExchange(this.requestToken) // the exchange's window closes at once
    */
   private closeAttributionWindowOfFailedExchange(token: number): void {
     if (token !== this.requestToken || !this.inRequestWindow()) return
@@ -1111,6 +1107,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private async onRequestError(error: unknown, token: number): Promise<void> {
     if (token !== this.requestToken || !this.inRequestWindow()) return
     if (this.core.lifecycle !== 'live') return
+    // A failed exchange owns no stop from here on: its window closes now, not after the exit check below.
+    this.closeAttributionWindowOfFailedExchange(token)
     const exit = await this.core.settledExit()
     if (exit && this.core.launched) {
       this.core.onServerExit(exit)
