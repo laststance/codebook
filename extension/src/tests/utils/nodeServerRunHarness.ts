@@ -104,6 +104,8 @@ export type HarnessOptions = {
   request?: NodeServerConfiguration['request']
   /** Reads a stop in place of the fake's empty snapshot, so a history test gets presentable captures. */
   capture?: (pause: NodeServerDebuggerPause) => NodeServerStopCapture
+  /** Builds the run's debugger in place of the hand-moved fake, for a test that drives the editor's real debugger ({@link editorRun}). */
+  createDebugger?: (input: NodeServerDebuggerInput) => NodeServerDebugger
 }
 
 /** A hand-moved stand-in for the editor's debugger: it records its calls in the shared order and lets the test emit pauses. */
@@ -534,6 +536,7 @@ export function createHarness(options: HarnessOptions = {}) {
     },
     node: { executable: '/usr/bin/node', version: '26.0.0' },
     createDebugger: (input) => {
+      if (options.createDebugger) return options.createDebugger(input)
       const created = new FakeNodeServerDebugger(input, order, options)
       debuggers.push(created)
       return created

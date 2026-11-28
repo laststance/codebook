@@ -556,6 +556,11 @@ export async function editorHarness(
     childStartedAt: (): number | undefined => childStartedAt,
     editorBreakpoints,
     session,
+    /** Creates the debugger under test for the input a run built, so a run drives the real debugger (its own stops and workspace). */
+    createDebuggerFor(input: NodeServerDebuggerInput) {
+      sourceFile = input.stops[0]?.file ?? sourceFile
+      return module.createVscodeNodeServerDebugger(input)
+    },
     /** Creates the debugger under test. */
     createDebugger(
       stops: Array<{ line: number; column: number }>,
