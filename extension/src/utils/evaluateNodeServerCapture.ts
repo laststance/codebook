@@ -157,11 +157,20 @@ export function stopNotReachedReason(
   }
 }
 
-/** The reasons of the stops a history holds: unpresentable snapshots, executed sources that were not stored and unreadable values. */
+/**
+ * The reasons of the stops a history holds: unpresentable snapshots, executed sources that were not stored and unreadable values.
+ * @param stops - The stop entries.
+ * @param sources - The source entries.
+ * @param codes - The profile's codes; the node-server ones by default.
+ * @param scopeValuesNotSaved - Whether the run's policy saves no scope values (a Bun run), so a stop with no read scope can still be presentable.
+ * @returns The reasons, in stop order.
+ * @example capturedStopReasons([], [], CODES, true) // => []
+ */
 export function capturedStopReasons(
   stops: readonly NodeServerStopEntry[],
   sources: readonly NodeServerSourceEntry[],
   codes: NodeRunSharedReasonCodes = CODES,
+  scopeValuesNotSaved = false,
 ): NodeServerSealReason[] {
   const reasons: NodeServerSealReason[] = []
   const reportedSnapshots = new Set<number>()
@@ -169,7 +178,7 @@ export function capturedStopReasons(
   for (const stop of stops) {
     const number = stop.declaredStopIndex + 1
     if (
-      !isPresentableServerStop(stop) &&
+      !isPresentableServerStop(stop, scopeValuesNotSaved) &&
       !reportedSnapshots.has(stop.declaredStopIndex)
     ) {
       reportedSnapshots.add(stop.declaredStopIndex)
@@ -219,7 +228,7 @@ export function capturedStopReasons(
  * @example evaluateNodeServerCapture(header, entries, {}) // => []
  */
 export function evaluateNodeServerCapture(
-  header: Pick<NodeServerHistoryHeader, 'declaredStops'>,
+  header: Pick<NodeServerHistoryHeader, 'declaredStops' | 'configuration'>,
   entries: readonly NodeServerHistoryEntry[],
   facts: NodeServerCaptureFacts = {},
 ): NodeServerSealReason[] {
@@ -235,6 +244,9 @@ export function evaluateNodeServerCapture(
     ...capturedStopReasons(
       stops,
       entries.filter((entry) => entry.type === 'source'),
+      CODES,
+      // A Bun run's policy saves no scope values, so its stops have no read scope by design.
+      header.configuration.loader === 'bun',
     ),
     ...closingReasons(
       facts,
