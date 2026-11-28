@@ -994,6 +994,7 @@ export class NodeProcessRun {
       this.killDuringDetach()
     }
     if (this.currentLifecycle !== 'live') return
+    this.dropPauseReplacedBy(pause)
     this.generation += 1
     const kind = this.classify(pause)
     if (kind === 'start-hit') {
@@ -1010,6 +1011,27 @@ export class NodeProcessRun {
     if (kind === 'request-hit')
       this.trackCapture(this.captureHit(pause, this.generation))
     else this.holdPause(kind, pause)
+  }
+
+  /**
+   * Ends the current published pause when a newer stop of the same thread replaces it, even while Codebook's own Continue of that pause is reserved.
+   * Why it exists: the debugger's resume notice for the replaced pause is suppressed during the reservation, and a Continue the adapter rejects afterwards cannot make the older stop live again; without this the rejected Continue would leave the replaced pause published, with a hold that expires and kills the run while the learner's newer stop is the only real pause.
+   * Called by {@link onDebuggerPause} for every pause of a live run.
+   * @param pause - The newer stop the debugger reports.
+   * @example this.dropPauseReplacedBy({ token: 7, sessionId: 's1', threadId: 1 }) // the published pause of thread 1 with a lower token is dropped
+   */
+  private dropPauseReplacedBy(pause: NodeServerDebuggerPause): void {
+    const current = this.pause
+    if (
+      !current ||
+      current.identity.sessionId !== pause.sessionId ||
+      current.identity.threadId !== pause.threadId ||
+      current.token >= pause.token
+    )
+      return
+    this.pause = undefined
+    this.endHold(current.token)
+    this.ownedHits.delete(current.token)
   }
 
   /** A declared stop hit before readiness is recorded and continued: the AI can say the request may not reach that line. */

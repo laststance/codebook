@@ -1207,6 +1207,28 @@ test('a continue the adapter fails keeps the run paused and the same arguments u
   assert.match(retry.message, /adapter timeout/)
 })
 
+// protects=a capture that a later stop of its thread replaced while the chat's Continue of it was reserved stays gone when the adapter rejects that Continue: the learner's newer stop is the only pause, and no stale hold ends the run; fails_when=the rejection leaves the replaced capture published again, so after the learner continues the newer stop the old pause is still shown and its hold expires with PAUSE_HOLD_EXPIRED (Cycle 0153 ship pass 3 U5); seam=the run's fake debugger with a held and rejected resume, a later exception of the same thread, the learner's Continue of it and the pause-hold clock; no_claim=the real adapter's rejection message
+test('a rejected Continue does not bring back a capture that a later stop of its thread replaced', async () => {
+  // Arrange
+  const gate = defer<void>()
+  const harness = await readyHarness({ resumeFails: new Error('rejected') })
+  const pause = await pausedAtStop(harness)
+  harness.debug.resumeGate = gate.promise
+  const continuing = rejectsWith(harness.run.continue(pause), 'RUNTIME_FAILED')
+  const exceptionToken = harness.debug.learnerPause('exception')
+  await until(harness, (current) => current.heldPause !== undefined)
+  // Act
+  gate.resolve()
+  await continuing
+  harness.debug.nativeContinue(exceptionToken)
+  harness.clock.advance(300_000)
+  const view = harness.run.view()
+  // Assert
+  assert.equal(view.pause, undefined)
+  assert.equal(view.heldPause, undefined)
+  assert.equal(view.runFailure, undefined)
+})
+
 // protects=a second continue while the first one's resume is under way is STALE_PAUSE even after the editor reported the resume; fails_when=NO_PAUSE answers it or the pause is cleared early; no_claim=real latency
 test('a second continue during the first one is STALE_PAUSE when the resume event came first', async () => {
   // Arrange
