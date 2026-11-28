@@ -976,3 +976,41 @@ test(
     await debug.release()
   },
 )
+
+// protects=a stop of another thread does not consume the learner's Pause of thread 1: the request window stays closed while thread 2 stops and runs on, and the stop of thread 1 that the Pause causes is the learner's; fails_when=the first stop of the session settles the Pause whatever its thread, so thread 2's run-on reopens the window and thread 1's stop on a declared line reads as the request's (Cycle 0153 ship pass 1 S10, OV7); seam=the editor harness's accepted Pause of thread 1, a stop and a run-on of thread 2, then a declared hit on thread 1; no_claim=whether js-debug reports several threads under one session
+test(
+  'a stop of another thread does not settle the learner Pause of thread 1',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    // Act
+    editor.adapter.stop(
+      'exception',
+      undefined,
+      { file: STOP_FILE, line: 30 },
+      2,
+    )
+    await heard.nextPause()
+    editor.adapter.continued(2, false)
+    const windowAfterOtherThread = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const pausedThread = await heard.nextPause()
+    // Assert
+    assert.equal(windowAfterOtherThread, false)
+    assert.equal(pausedThread.declaredStopIndex, 0)
+    assert.equal(pausedThread.inRequestWindowAtStop, false)
+    assert.equal(pausedThread.learnerRequested, true)
+    await debug.release()
+  },
+)

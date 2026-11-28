@@ -70,6 +70,8 @@ type LearnerBreakpointPlace = { file: string; line: number }
 /** One `pause` request of the editor (the learner's Pause), until the first stop after its acceptance settles it. */
 type LearnerPauseRequest = {
   sessionId: string
+  /** The thread the Pause names; absent when the request names none, which any stop of the session may settle (fail closed). */
+  threadId?: number
   /** Whether the adapter accepted the request; an unanswered request is not accepted yet. */
   accepted: boolean
 }
@@ -206,8 +208,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     // A pause request makes the next stop the learner's, not the declared request's.
     if (request.command === 'pause') {
       codebookStopLedger.closeWindow([session.id])
+      const threadId: unknown = request.arguments?.threadId
       this.learnerPauseRequests.set(`${session.id}:${request.seq}`, {
         sessionId: session.id,
+        threadId: typeof threadId === 'number' ? threadId : undefined,
         accepted: false,
       })
     }
@@ -282,7 +286,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         : {}),
     }
     // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
-    if (this.settleAcceptedLearnerPause(session.id)) {
+    if (
+      this.settleAcceptedLearnerPause(stop, body.allThreadsStopped === true)
+    ) {
       stop.learnerRequested = true
       this.learnerPauseStops.set(stop.token, stop)
     }
@@ -449,15 +455,25 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Ends the oldest accepted learner `pause` request of a session, because the stop that just arrived is the first one after its acceptance.
-   * Called by {@link onStopped} for every stop. A request the adapter has not answered yet is not settled: fail closed, the window stays closed until an accepted request meets its stop.
-   * @param sessionId - The session that stopped.
-   * @returns `true` when the stop is a learner's pause stop; `false` when no accepted Pause request of the session was waiting.
-   * @example this.settleAcceptedLearnerPause('s1') // => true after an accepted Pause, then false for the next stop
+   * Ends the oldest accepted learner `pause` request that the stop that just arrived answers: the first stop of the request's own thread after its acceptance, or any stop the adapter reports as stopping every thread.
+   * Called by {@link onStopped} for every stop. A request the adapter has not answered yet is not settled: fail closed, the window stays closed until an accepted request meets its stop. A stop of another thread settles nothing: that thread can stop and run on by itself while the Pause still waits for its own.
+   * @param stop - The stop that arrived.
+   * @param allThreadsStopped - Whether the adapter reported every thread stopped (`allThreadsStopped` of the `stopped` event).
+   * @returns `true` when the stop is a learner's pause stop; `false` when no accepted Pause request it answers was waiting.
+   * @example this.settleAcceptedLearnerPause({ sessionId: 's1', threadId: 1 }, false) // => true after an accepted Pause of thread 1, false for a stop of thread 2
    */
-  private settleAcceptedLearnerPause(sessionId: string): boolean {
+  private settleAcceptedLearnerPause(
+    stop: Pick<NativeStop, 'sessionId' | 'threadId'>,
+    allThreadsStopped: boolean,
+  ): boolean {
     for (const [key, pauseRequest] of this.learnerPauseRequests)
-      if (pauseRequest.sessionId === sessionId && pauseRequest.accepted) {
+      if (
+        pauseRequest.sessionId === stop.sessionId &&
+        pauseRequest.accepted &&
+        (allThreadsStopped ||
+          pauseRequest.threadId === undefined ||
+          pauseRequest.threadId === stop.threadId)
+      ) {
         this.learnerPauseRequests.delete(key)
         return true
       }
