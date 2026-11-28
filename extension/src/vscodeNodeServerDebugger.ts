@@ -286,8 +286,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         : {}),
     }
     // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
+    // A stop that arrives while a Pause is still unanswered stays the learner's too: when the adapter then refuses that Pause (the thread was already stopped) the stop is still held, so it keeps the window closed until it runs on.
     if (
-      this.settleAcceptedLearnerPause(stop, body.allThreadsStopped === true)
+      this.settleAcceptedLearnerPause(stop, body.allThreadsStopped === true) ||
+      this.learnerPauseUnanswered(stop)
     ) {
       stop.learnerRequested = true
       this.learnerPauseStops.set(stop.token, stop)
@@ -477,6 +479,27 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.learnerPauseRequests.delete(key)
         return true
       }
+    return false
+  }
+
+  /**
+   * Tells whether a Pause request of the learner that the adapter has not answered yet could be the cause of a stop: it names the stop's thread (or no thread).
+   * Why it exists: the adapter may refuse the Pause because the thread already stopped, and the stop that arrived meanwhile is still the learner's to continue; an unanswered request cannot say which. Called by {@link onStopped} for every stop.
+   * @param stop - The stop that arrived.
+   * @returns `true` while such a request of the stop's session is unanswered.
+   * @example this.learnerPauseUnanswered({ sessionId: 's1', threadId: 1 }) // => true between the editor's Pause request for thread 1 and the adapter's answer
+   */
+  private learnerPauseUnanswered(
+    stop: Pick<NativeStop, 'sessionId' | 'threadId'>,
+  ): boolean {
+    for (const pauseRequest of this.learnerPauseRequests.values())
+      if (
+        pauseRequest.sessionId === stop.sessionId &&
+        !pauseRequest.accepted &&
+        (pauseRequest.threadId === undefined ||
+          pauseRequest.threadId === stop.threadId)
+      )
+        return true
     return false
   }
 

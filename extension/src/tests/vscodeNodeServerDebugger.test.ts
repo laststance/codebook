@@ -1014,3 +1014,32 @@ test(
     await debug.release()
   },
 )
+
+// protects=a stop that arrives while the learner's Pause is unanswered stays a held learner stop through the adapter's refusal of that Pause: the request window does not reopen while the stop is still held, and opens when the stop runs on; fails_when=the refusal reopens the window because the stop was not recorded as the learner's, so a declared hit before the learner's Continue reads as the request's (Cycle 0153 ship pass 1 S11); seam=the editor harness's unanswered Pause, an exception stop, the refused Pause answer and the learner's Continue; no_claim=which reason js-debug reports for a thread that was already stopped
+test(
+  'a stop that arrived while the learner Pause was unanswered keeps the request window closed after the Pause is refused',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    const answerPause = editor.adapter.learnerSendsPause()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Act
+    answerPause({ rejected: true })
+    const windowAfterRefusal = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    const pendingAfterRefusal = debug.learnerPausePending?.()
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(windowAfterRefusal, false)
+    assert.equal(pendingAfterRefusal, true)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    await debug.release()
+  },
+)
