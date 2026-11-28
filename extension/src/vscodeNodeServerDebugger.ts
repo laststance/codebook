@@ -1154,8 +1154,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const isEntry = this.ownedHitIndexOf(first) === undefined
     this.entryToken = isEntry ? first.token : undefined
     this.entryReleased = true
+    // A node run keeps every stop it saw during the arming, so only a stop that is still its thread's newest pause is handed to the run: one the learner already continued is no pause any more.
     for (const stop of this.sessionStops)
-      if (stop.token !== this.entryToken) this.enqueueClassification(stop)
+      if (stop.token !== this.entryToken && this.isNewestPausedStop(stop))
+        this.enqueueClassification(stop)
     // The entry pause is continued exactly once, and only while it is still its thread's newest pause: a learner who continued it first, with the thread stopped again since, leaves nothing Codebook may resume.
     if (isEntry && this.isNewestPausedStop(first))
       await awaitResponse(

@@ -1312,3 +1312,24 @@ test(
     await debug.release()
   },
 )
+
+// protects=the entry release hands the run only the stops that are still paused: an exception the learner already continued during the arming is no pause, so the run never publishes it as a fresh learner pause; fails_when=the release re-enqueues every stop it saw during the arming, so the resumed exception is reported and held until a hold bound ends the run (Cycle 0153 ship pass 3 U6); seam=the editor harness's learner Continue of the entry stop, an exception of the same thread and the learner's Continue of it, all before the entry release; no_claim=the run's handling of a live exception
+test(
+  'releasing the entry reports no stop that the learner already continued during the arming',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.learnerContinues()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    editor.adapter.learnerContinues()
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    await debug.arrivedStopsReported?.()
+    // Assert
+    assert.deepEqual(plain(heard.pauses), [])
+    assert.equal(debug.hasUnreportedPause(), false)
+    await debug.release()
+  },
+)
