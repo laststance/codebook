@@ -1724,6 +1724,8 @@ for (const boundary of ['layout read', 'layout application'] as const)
     // Arrange
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    // The reader's own timer could enter the live run in the background, and the click's refresh would then answer before that entry prepared the Application; the Restore below would meet that preparation's tab change and be refused for it. With the timer stopped, the click's own refresh makes the entry and is awaited.
+    readerSeams(harness).stopOwnTimer()
     let release = (): void => {}
     try {
       await harness.reader.open()
