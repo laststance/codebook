@@ -1261,14 +1261,20 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * Why it exists: the classification finishes after the stack read, and an editor change meanwhile (a breakpoint removed or moved) must not change which breakpoint fired. An unbound breakpoint (no acknowledged id) is never hit; the line is the verified one, the declared line while the registration is pending. Called by {@link onStopped} for every stop.
    * @param session - The session that stopped.
    * @param hitIds - The `hitBreakpointIds` of the adapter's `stopped` event.
-   * @returns The owned breakpoints named by id; empty when the event names none.
+   * @returns The owned breakpoints named by id; empty when the event names none, and empty when it also names an id that is not an acknowledged owned breakpoint (a learner breakpoint fired on the same stop).
    * @example this.ownedHitsNow(session, [8]) // => [{ declaredStopIndex: 1, file: '/repo/src/a.ts', line: 20 }]
+   * @example this.ownedHitsNow(session, [8, 12]) // => [] while 12 is the learner's breakpoint
    */
   private ownedHitsNow(
     session: vscode.DebugSession,
     hitIds: number[] | undefined,
   ): OwnedHit[] {
     if (!Array.isArray(hitIds)) return []
+    // A hit id that is none of the run's acknowledged breakpoints (the learner's own, or one not resolved) also holds the debugger paused, so the stop is not exclusively Codebook's: it names no owned hit and stays the learner's (fail closed).
+    const ownedIds = this.armed.map(({ breakpoint }) =>
+      breakpoint.acknowledgedId(session),
+    )
+    if (hitIds.some((id) => !ownedIds.includes(id))) return []
     return this.armed.flatMap(({ target, breakpoint }) => {
       const id = breakpoint.acknowledgedId(session)
       return id !== undefined && hitIds.includes(id)

@@ -1224,3 +1224,25 @@ test(
     await debug.release()
   },
 )
+
+// protects=a stop that names an owned breakpoint together with the learner's own breakpoint stays the learner's: no declared stop is reported, so Codebook never continues or captures a stop the learner's breakpoint also holds; fails_when=the owned id alone decides, so the stop is taken as Codebook's, captured and continued while the learner's breakpoint requires the debugger to stay paused (Cycle 0153 ship pass 3 U3); seam=the editor harness's stop with hitBreakpointIds [7, 12] where 7 is the first owned breakpoint; no_claim=which line a real adapter reports for the learner's breakpoint
+test(
+  'a stop that names an owned breakpoint and the learner breakpoint is reported as no declared stop',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    // Act
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!, LEARNER_BREAKPOINT_ID], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const pause = await heard.nextPause()
+    // Assert
+    assert.equal(pause.declaredStopIndex, undefined)
+    assert.equal(pause.reason, 'breakpoint')
+    await debug.release()
+  },
+)
