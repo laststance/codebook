@@ -565,7 +565,7 @@ test('reading a recording while a live run is paused renews that run’s pause h
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
       configuration: harness.configuration,
-      key: 'paused-live-run',
+      key: 'paused',
     })
     const pausedRun = [...harness.service.records.values()].at(-1)!
     await pausedRun.preparation

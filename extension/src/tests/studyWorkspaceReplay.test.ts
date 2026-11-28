@@ -1406,7 +1406,7 @@ test('at a recorded stop the Study pane receives that stop’s explanation with 
     harness.clock(1_500)
     await service.explain({
       ...explanation,
-      key: 'explanation',
+      key: 'explain',
       interpretation: 'This stop holds the dark theme before it is applied.',
     })
     harness.clock(1_600)
@@ -1482,7 +1482,7 @@ test('Play across the time the stop on screen was explained leaves the recorded 
         snapshotUri: service.state(record).observations[0]!.snapshotUri,
         sourceHash: stopped.runtimes[0]!.snapshots[0]!.source.hash,
         valuePaths: ['value:nextTheme'],
-        key: 'explanation',
+        key: 'explain',
         interpretation: 'The theme is read before the click applies it.',
       })
     },
@@ -1594,7 +1594,7 @@ test('Play across an explanation’s saved time inside the stop’s recorded pau
         snapshotUri: service.state(record).observations[0]!.snapshotUri,
         sourceHash: stopped.runtimes[0]!.snapshots[0]!.source.hash,
         valuePaths: ['value:nextTheme'],
-        key: 'explanation',
+        key: 'explain',
         interpretation: 'This stop holds the dark theme before it is applied.',
       })
     },

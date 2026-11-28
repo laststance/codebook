@@ -2328,7 +2328,7 @@ test('a run started while the reader shows a saved study is refused before any i
       instanceId: service.instanceId,
       profile: PROFILE_ID,
       configuration: harness.configuration,
-      key: 'while-the-reader-shows-a-saved-study',
+      key: 'saved',
     })
     const refusedRecord = service.record(refused)
     await refusedRecord.preparation
@@ -2358,7 +2358,7 @@ test('a run started while the reader shows a saved study is refused before any i
       instanceId: service.instanceId,
       profile: PROFILE_ID,
       configuration: harness.configuration,
-      key: 'after-the-return-to-the-current-run',
+      key: 'returned',
     })
     await service.record(repeated).preparation
     assert.equal(returned.reader.followingCurrentRun, true)
