@@ -144,7 +144,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   /** The pauses the run knows, by token, with the stack read when they were classified. */
   private readonly livePauses = new Map<
     number,
-    { stop: NativeStop; trace: StackBody }
+    { stop: NativeStop; trace: StackBody; isCodebooksHit?: boolean }
   >()
   /** The learner's pause stops (the first stop of a session after an accepted editor `pause` request, whatever its reason) that have not run on, by token; the run's window opens again once none is held. */
   private readonly learnerPauseStops = new Map<number, NativeStop>()
@@ -1235,13 +1235,12 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       if (!this.unreportedStops.has(stop.token)) return
     }
     // Inside the request's window an owned hit is Codebook's stop; every other stop stays the learner's.
-    codebookStopLedger.recordStop(
-      session.id,
+    const isCodebooksHit =
       declaredStopIndex !== undefined &&
-        (stop.inRequestWindowAtStop ??
-          codebookStopLedger.isWindowOpen(session.id)),
-    )
-    this.livePauses.set(stop.token, { stop, trace })
+      (stop.inRequestWindowAtStop ??
+        codebookStopLedger.isWindowOpen(session.id))
+    codebookStopLedger.recordStop(session.id, isCodebooksHit)
+    this.livePauses.set(stop.token, { stop, trace, isCodebooksHit })
     this.unreportedStops.delete(stop.token)
     this.handlers?.onPause({
       token: stop.token,
@@ -1605,10 +1604,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Tells whether a thread of the pause's session other than the pause's own is paused: a continue that names only the pause's thread could still release it.
+   * Tells whether a thread of the pause's session other than the pause's own is paused by something other than a Codebook hit: a continue that names only the pause's thread could still release it. Another thread stopped on Codebook's own declared hit is no learner pause, so two owned hits on two threads never read as one.
    * Called by {@link resume}.
    * @param pause - The pause about to be continued.
-   * @returns `true` while the session reports another thread stopped that has not run on since.
+   * @returns `true` while the session reports another thread stopped, and not on one of Codebook's own hits, that has not run on since.
    * @example this.isAnotherThreadPaused({ sessionId: 's1', threadId: 2 }) // => true while thread 1 of 's1' is paused
    */
   private isAnotherThreadPaused(
@@ -1627,7 +1626,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     return (
       holdsWholeSession ||
       (threads !== undefined &&
-        [...threads.keys()].some((thread) => thread !== pause.threadId))
+        [...threads].some(
+          ([thread, token]) =>
+            thread !== pause.threadId &&
+            !this.livePauses.get(token)?.isCodebooksHit,
+        ))
     )
   }
 

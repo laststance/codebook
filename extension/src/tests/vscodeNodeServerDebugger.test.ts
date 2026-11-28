@@ -1333,3 +1333,43 @@ test(
     await debug.release()
   },
 )
+
+// protects=two declared hits of the request on two threads are both Codebook's: continuing one is never refused as a learner pause elsewhere, even when the adapter cannot continue one thread alone; fails_when=every other paused thread counts as the learner's, so Codebook's own hit on thread 1 makes the continue of its hit on thread 2 fail with learner-pause-elsewhere and the chat is told to ask the learner (Cycle 0153 ship pass 3 U11); seam=the editor harness's open request window, declared hits on threads 1 and 2 and a Codebook resume of the second; no_claim=that js-debug ever has two threads in one session
+test(
+  'continuing one of two declared hits on two threads is not refused as a learner pause elsewhere',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.stop(
+      'breakpoint',
+      [OWNED_IDS[0]!],
+      { file: STOP_FILE, line: 14 },
+      1,
+    )
+    await heard.nextPause()
+    editor.adapter.stop(
+      'breakpoint',
+      [OWNED_IDS[1]!],
+      { file: STOP_FILE, line: 20 },
+      2,
+    )
+    const secondHit = await heard.nextPause()
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Act
+    await debug.resume(secondHit, AbortSignal.timeout(5_000))
+    // Assert
+    const continues = editor.requests.filter(
+      (request) => request.command === 'continue',
+    )
+    assert.equal(continues.length, continuesBefore + 1)
+    assert.deepEqual(plain(continues.at(-1)?.arguments), { threadId: 2 })
+    await debug.release()
+  },
+)
