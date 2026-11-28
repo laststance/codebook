@@ -588,6 +588,8 @@ export async function editorHarness(
           inspections: [],
         })),
         record: (type, detail) => events.push({ type, detail }),
+        // These tests stand for a node-server run, which judges its stops by the window as it stood when they arrived.
+        stopsJudgedByArrivalWindow: true,
         ...(maskKnownText ? { maskKnownText } : {}),
       })
       return { debug, events }

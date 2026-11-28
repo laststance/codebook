@@ -130,6 +130,8 @@ export type NodeProcessRunOptions = {
   confirmEverySignalAfterNaturalExit?: boolean
   /** A stop during or after a failed preparation, or of a run that was never released, kills the group first and never lets the debugger resume the paused process. */
   killFirstUnlessReleased?: boolean
+  /** The debugger reports each declared stop with the request window as it stood when the stop arrived, and the run judges the stop by it ({@link NodeServerDebuggerInput.stopsJudgedByArrivalWindow}): the server's HTTP exchange. A script run leaves it off, so its stops are judged by its own lifecycle. */
+  stopsJudgedByArrivalWindow?: boolean
 }
 
 /** What a run's owner fixes when it creates the core. */
@@ -690,6 +692,9 @@ export class NodeProcessRun {
       citedSources: this.input.citedSources,
       stops,
       record: (type, detail) => this.record(type, detail),
+      ...(this.input.options?.stopsJudgedByArrivalWindow
+        ? { stopsJudgedByArrivalWindow: true }
+        : {}),
       ...(this.input.maskKnownText
         ? { maskKnownText: this.input.maskKnownText }
         : {}),

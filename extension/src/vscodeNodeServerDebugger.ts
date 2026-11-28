@@ -52,10 +52,10 @@ type NativeStop = {
   threadId: number
   reason: string
   hitBreakpointIds?: number[]
-  /** Whether the request window was open when the adapter's `stopped` arrived, so a classification that finishes later still tells a pause before the request from one it caused. */
-  inRequestWindowAtStop: boolean
-  /** Whether the open window belonged to the sign-in request when the adapter's `stopped` arrived. */
-  inSignInAtStop: boolean
+  /** Whether the request window was open when the adapter's `stopped` arrived, so a classification that finishes later still tells a pause before the request from one it caused. Absent for a run that does not judge its stops by the arrival window ({@link NodeServerDebuggerInput.stopsJudgedByArrivalWindow}). */
+  inRequestWindowAtStop?: boolean
+  /** Whether the open window belonged to the sign-in request when the adapter's `stopped` arrived; present with `inRequestWindowAtStop`. */
+  inSignInAtStop?: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
 }
@@ -264,8 +264,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       hitBreakpointIds: Array.isArray(body.hitBreakpointIds)
         ? body.hitBreakpointIds.filter((id) => Number.isInteger(id))
         : undefined,
-      // Every pause is judged by the window as it stood when it arrived; a Bun pause also by the learner's breakpoints then (Bun runs during arming).
-      ...this.windowAtArrival(session.id),
+      // A server run judges every pause by the window as it stood when it arrived; a Bun pause also by the learner's breakpoints then (Bun runs during arming). A script run's stops are judged by its own lifecycle, so no arrival evidence is kept for it.
+      ...(this.input.stopsJudgedByArrivalWindow
+        ? this.windowAtArrival(session.id)
+        : {}),
       ...(this.runtime === 'bun'
         ? { learnerBreakpoints: this.learnerBreakpointsNow() }
         : {}),
@@ -290,7 +292,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   /**
    * Reads the request window and its sign-in phase at the moment a stop arrives.
-   * Why it exists: the classification finishes after the stack read, when the sign-in may be over and the window closed; the run judges the stop by what stood at arrival. Called by {@link onStopped} for every stop.
+   * Why it exists: the classification finishes after the stack read, when the sign-in may be over and the window closed; the run judges the stop by what stood at arrival. Called by {@link onStopped} for every stop of a run that judges by the arrival window.
    * @param sessionId - The session that stopped.
    * @returns Whether the window was open, and whether it belonged to the sign-in request (only a window that is open can).
    * @example this.windowAtArrival('session-1') // => { inRequestWindowAtStop: true, inSignInAtStop: true } while the sign-in request is out
@@ -868,7 +870,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     // Inside the request's window an owned hit is Codebook's stop; every other stop stays the learner's.
     codebookStopLedger.recordStop(
       session.id,
-      declaredStopIndex !== undefined && stop.inRequestWindowAtStop,
+      declaredStopIndex !== undefined &&
+        (stop.inRequestWindowAtStop ??
+          codebookStopLedger.isWindowOpen(session.id)),
     )
     this.livePauses.set(stop.token, { stop, trace })
     this.unreportedStops.delete(stop.token)
@@ -879,9 +883,13 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       reason: stop.reason,
       declaredStopIndex,
       location: this.locationOf(frame),
-      // The window and its sign-in phase as they stood when the stop arrived, the same state the ledger verdict above used.
-      inRequestWindowAtStop: stop.inRequestWindowAtStop,
-      inSignInAtStop: stop.inSignInAtStop,
+      // The window and its sign-in phase as they stood when the stop arrived, the same state the ledger verdict above used; none for a run that does not judge by the arrival window.
+      ...(stop.inRequestWindowAtStop === undefined
+        ? {}
+        : {
+            inRequestWindowAtStop: stop.inRequestWindowAtStop,
+            inSignInAtStop: stop.inSignInAtStop,
+          }),
     })
   }
 

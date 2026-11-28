@@ -263,6 +263,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       privateRoots: input.privateRoots,
       dependencies: input.dependencies,
       notify: () => this.notify(),
+      // The request's window is the HTTP exchange: a stop is judged by the window as it stood when it arrived.
+      options: { stopsJudgedByArrivalWindow: true },
       // Only a run with sign-in holds secret values to mask in its output and stop captures.
       ...(input.configuration.signIn
         ? {

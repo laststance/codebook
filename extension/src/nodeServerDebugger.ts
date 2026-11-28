@@ -37,7 +37,7 @@ export type NodeServerDebuggerPause = {
   /** The top frame, repository-relative when inside the repository, else the file name alone. */
   location?: { path: string; line: number }
   /**
-   * Whether the request-attribution window was open when the adapter's `stopped` arrived. The run takes it as the pause's attribution and never re-derives it from the request state at classification time, so a pause that arrived before the request's bytes (the learner's Pause) is never read as a hit the request caused, on every runtime. Absent when the debugger reports no arrival evidence.
+   * Whether the request-attribution window was open when the adapter's `stopped` arrived. The run takes it as the pause's attribution and never re-derives it from the request state at classification time, so a pause that arrived before the request's bytes (the learner's Pause) is never read as a hit the request caused, on every runtime. Absent when the debugger reports no arrival evidence (a run that does not set {@link NodeServerDebuggerInput.stopsJudgedByArrivalWindow}).
    */
   inRequestWindowAtStop?: boolean
   /**
@@ -148,6 +148,10 @@ export type NodeServerDebuggerInput = {
   citedSources: ConfiguredDescriptor['sources']
   stops: NodeServerStopTarget[]
   record: (type: string, detail?: unknown) => unknown
+  /**
+   * Whether the run judges a declared stop by the request window as it stood when the adapter's `stopped` arrived ({@link NodeServerDebuggerPause.inRequestWindowAtStop}). A node-server run does: its request window is the HTTP exchange, which opens at the first byte. A script run does not: its capture eligibility is its own lifecycle (a stop on the entry's first statement and every later declared stop are captured), so the debugger reports no arrival evidence for it and the stop ledger judges at classification time.
+   */
+  stopsJudgedByArrivalWindow?: boolean
   /** Masks the run's known secret values (the sign-in secret and session cookies) in every string a stop saves, before it is cut; read at call time, so values learned after the debugger was made still apply. Absent: nothing is masked. */
   maskKnownText?: (text: string) => string
 }
