@@ -10,6 +10,7 @@ import type {
 } from '../nodeServerDebugger'
 import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { maskLearnerSecretText } from '../utils/maskLearnerSecretText'
 
 import { defer } from './utils/defer'
@@ -231,6 +232,9 @@ test('the entry pause is continued once, then a hit of the second stop and a lea
     reason: 'breakpoint',
     declaredStopIndex: 1,
     location: { path: 'src/routes/users.ts', line: 20 },
+    // No request window was opened, and every pause carries the window and sign-in phase it arrived in.
+    inRequestWindowAtStop: false,
+    inSignInAtStop: false,
   })
   assert.equal(learner.declaredStopIndex, undefined)
   assert.equal(learner.location?.line, 30)
@@ -241,14 +245,13 @@ test('the entry pause is continued once, then a hit of the second stop and a lea
 // protects=a declared stop hit before any entry pause is reported as a hit and the first stop is not continued as an entry; fails_when=the hit is swallowed as the entry pause; no_claim=js-debug's entry behavior
 test('a declared stop hit as the very first stop is reported as a pause, not continued as the entry', async () => {
   // Arrange
-  const editor = await editorHarness({
-    firstStop: {
-      reason: 'breakpoint',
-      ids: [OWNED_IDS[0]!],
-      frame: { file: STOP_FILE, line: 14 },
-    },
-  })
+  // The hit follows the acknowledgement of its breakpoint, as a real hit can only do (the debugger takes the owned ids as they stand when the stop arrives).
+  const editor = await editorHarness({ noAutomaticStop: true })
   const { debug, heard } = await armedDebugger(editor)
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
   // Act
   const entryRelease = debug.releaseEntry(AbortSignal.timeout(5_000))
   const first = await heard.nextPause()
@@ -261,6 +264,65 @@ test('a declared stop hit as the very first stop is reported as a pause, not con
   )
   await debug.release()
 })
+
+// protects=a first Node stop that names hit ids is never the entry pause, even when one of them is the learner's: it is reported as a pause that stays the learner's and Codebook never continues it; fails_when=the entry is judged by the absence of an exclusive owned hit, so a stop naming an owned and a learner breakpoint is taken for the entry and continued, resuming the learner's breakpoint (Cycle 0153 final-range CLI V1); seam=the editor harness's first stop with hitBreakpointIds [7, 12], delivered after the owned breakpoints are acknowledged; no_claim=how often js-debug reports a mixed hit as a session's first stop
+test(
+  'a first stop naming an owned and a learner breakpoint is reported as the learner pause, not continued as the entry',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness({ noAutomaticStop: true })
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!, LEARNER_BREAKPOINT_ID], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const continuesAfterRelease = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Assert
+    assert.equal(continuesAfterRelease, 0)
+    const first = await waitUntil(
+      () => heard.pauses[0],
+      'the first stop reported to the run',
+      2_000,
+    )
+    assert.equal(first.declaredStopIndex, undefined)
+    assert.equal(first.location?.line, 14)
+    await debug.release()
+  },
+)
+
+// protects=a learner Pause pressed while the server is still starting keeps the first stop paused for the learner; fails_when=the first stop, which settles the learner's unanswered Pause and names no hit ids, is taken for the `--inspect-brk` entry and continued, so the learner's Pause is resumed by Codebook (Cycle 0153 hosted review); seam=the editor harness's unanswered learner `pause` request, then a first stop with no hit ids; no_claim=how often a learner presses Pause before the entry release
+test(
+  'a learner Pause pressed before the entry release keeps the first stop paused as the learner pause',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness({ noAutomaticStop: true })
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.learnerSendsPause()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const continuesAfterRelease = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Assert
+    assert.equal(continuesAfterRelease, 0)
+    const first = await waitUntil(
+      () => heard.pauses[0],
+      'the first stop reported to the run',
+      2_000,
+    )
+    assert.equal(first.declaredStopIndex, undefined)
+    assert.equal(first.location?.line, 30)
+    assert.equal(first.learnerRequested, true)
+    await debug.release()
+  },
+)
 
 // protects=the learner's Continue in the editor reaches the run as a resume of that pause; fails_when=the run keeps a pause the learner continued; no_claim=the editor's button
 test('the learner continuing a reported pause reaches the run as a resume of its token', async () => {
@@ -322,6 +384,98 @@ test('only an owned hit inside the request window counts as a stop Codebook caus
   assert.equal(outsideWindow, false)
   await debug.release()
 })
+
+// protects=on a node run too, a declared stop hit while the request window is closed (between the sign-in response and the declared request's first byte) reaches the run as arrived outside the window, so the run holds it as unattributed instead of capturing it while the stop ledger calls it the learner's; fails_when=only a Bun run records the window at arrival, so a node run judges the hit by the request state when its stack has been read and the Study and the chat disagree about who caused the stop (Cycle 0153 review round R2, OCR A Minor); seam=the editor harness's node entry pause, a closed window and an owned hit; no_claim=the run's own classification (ownedNodeServerRun.test.ts)
+test('a node declared stop hit while the request window is closed reaches the run as arrived outside the window', async () => {
+  // Arrange
+  codebookStopLedger.reset()
+  const editor = await editorHarness()
+  const { debug, heard } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  debug.setRequestWindow(false)
+  // Act
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  const hit = await heard.nextPause()
+  // Assert
+  assert.equal(hit.declaredStopIndex, 0)
+  assert.equal(hit.inRequestWindowAtStop, false)
+  assert.equal(
+    codebookStopLedger.isCodebookCausedStop('node-server-session'),
+    false,
+  )
+  await debug.release()
+})
+
+// protects=a declared stop that arrives while the sign-in request's window is open is reported as arrived during the sign-in even when the window has closed and the sign-in is over by the time its stack has been read, and a stop in the declared request's window is not; fails_when=the sign-in phase is read when the classification finishes (or not recorded), so a stop the sign-in caused can be saved as the declared request's hit (Cycle 0153 review round R3, OCR A Minor); seam=the editor harness's gated stack read and the debugger's setRequestWindow with the sign-in marker; no_claim=the run's own classification (nodeServerSignInRun.test.ts)
+test(
+  'a declared stop that arrived in the sign-in window is reported as arrived during the sign-in after the window closed',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const gate = defer<void>()
+    const editor = await editorHarness({ stackTraceGate: gate.promise })
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true, { signIn: true })
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    debug.setRequestWindow(false)
+    gate.resolve()
+    const signInHit = await heard.nextPause()
+    editor.adapter.learnerContinues()
+    debug.setRequestWindow(true, { signIn: false })
+    editor.adapter.stop('breakpoint', [OWNED_IDS[1]!], {
+      file: STOP_FILE,
+      line: 20,
+    })
+    const declaredHit = await heard.nextPause()
+    // Assert
+    assert.equal(signInHit.inRequestWindowAtStop, true)
+    assert.equal(signInHit.inSignInAtStop, true)
+    assert.equal(declaredHit.inRequestWindowAtStop, true)
+    assert.equal(declaredHit.inSignInAtStop, false)
+    await debug.release()
+  },
+)
+
+// protects=the run's intent to send never opens the request window over a Pause the learner sent: the window stays closed through the Pause's answer and its stop, and opens when that stop runs on; fails_when=setRequestWindow(true) opens the ledger at once, so a stop the Pause causes on a declared line reads as arrived inside the window (Cycle 0153 ship pass 1 S2); seam=the editor harness's unanswered Pause, the debugger's setRequestWindow and the stop ledger; no_claim=the run's own refusal of the write (ownedNodeServerRunEditor.test.ts)
+test(
+  'a request window the run opens over an outstanding learner Pause stays closed until the Pause stop runs on',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const answerPause = editor.adapter.learnerSendsPause()
+    // Act
+    debug.setRequestWindow(true)
+    const whileUnanswered = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    const pendingWhileUnanswered = debug.learnerPausePending?.()
+    answerPause()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const whileHeld = codebookStopLedger.isWindowOpen('node-server-session')
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(whileUnanswered, false)
+    assert.equal(pendingWhileUnanswered, true)
+    assert.equal(whileHeld, false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    assert.equal(debug.learnerPausePending?.(), false)
+    await debug.release()
+  },
+)
 
 // protects=retiring removes every owned breakpoint, one after another, each confirmed by the adapter; fails_when=one stays armed; no_claim=VS Code's own removal
 test('retiring the stops removes both owned breakpoints of the file', async () => {
@@ -754,3 +908,570 @@ test('a stop resumed while its stack was read is not reported when the thread st
   assert.equal(reported.declaredStopIndex, 1)
   await debug.release()
 })
+
+// protects=a stop that arrives between a Continue request and its reply is still reported to the run and still counts as a paused thread, so the run holds or captures it; fails_when=the late reply of the earlier Continue removes the newer stop of the same thread, so it is never reported and its thread reads as running (Cycle 0152 defect 4, Node path); seam=the editor harness's learner Continue request, a second declared hit, then the adapter's reply; no_claim=the adapter's real message order (the native check covers it)
+test(
+  'a stop of the same thread that arrives before the reply to an earlier Continue is still reported as a pause',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[1]!], {
+      file: STOP_FILE,
+      line: 20,
+    })
+    // Act
+    answerContinue()
+    await waitUntil(
+      () => heard.pauses.length === 2,
+      'the second stop reported to the run',
+      2_000,
+    )
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    await debug.resume(heard.pauses[1]!, AbortSignal.timeout(5_000))
+    // Assert
+    assert.equal(heard.pauses[1]?.declaredStopIndex, 1)
+    // The reply ended the first pause only; Codebook's own resume then ended the second.
+    assert.deepEqual(plain(heard.resumes), [
+      heard.pauses[0]!.token,
+      heard.pauses[1].token,
+    ])
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesBefore + 1,
+    )
+    await debug.release()
+  },
+)
+
+// protects=a Codebook resume names the newest stop of its thread only: after the learner's Continue of pause A and an exception B of the same thread that arrived before the answer, resuming A sends no continue and B stays reported and paused; fails_when=the thread id alone authorizes the resume, so the continue request acts on exception B and erases it before the run reports it (Cycle 0153 ship pass 1 S3, OV2); seam=the editor harness's learner Continue request, a second stop and the adapter's reply; no_claim=the run's own handling of the refusal
+test(
+  'resuming an older pause sends no continue once its thread stopped again before the learner Continue was answered',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const olderPause = await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    await waitUntil(
+      () => heard.pauses.length === 2,
+      'the exception stop reported to the run',
+      2_000,
+    )
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Act
+    const refusal = debug.resume(olderPause, AbortSignal.timeout(5_000))
+    await assert.rejects(refusal, /The owned pause is no longer current/)
+    answerContinue()
+    // Assert
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesBefore,
+    )
+    assert.equal(heard.pauses[1]?.reason, 'exception')
+    // The reply ended the older pause only; the exception is still a paused thread the run can resume.
+    assert.deepEqual(plain(heard.resumes), [olderPause.token])
+    await debug.resume(heard.pauses[1], AbortSignal.timeout(5_000))
+    assert.deepEqual(plain(heard.resumes), [
+      olderPause.token,
+      heard.pauses[1].token,
+    ])
+    await debug.release()
+  },
+)
+
+// protects=a stop that arrived before the reply to the learner's Continue is judged as outside the request's window again when the adapter refuses that Continue: the learner's pause is still held; fails_when=the stop keeps the window the pending Continue promised, so a refused Continue lets a stop count as the request's while the learner still holds a pause (Cycle 0153 ship pass 1 OV4); seam=the editor harness's learner Pause and its stop, a Continue request, a gated stack read of the next stop and a refused reply; no_claim=a stop of another thread
+test(
+  'a stop that arrived before a refused learner Continue is judged outside the request window',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const gate = defer<void>()
+    const editorOptions: { stackTraceGate?: Promise<void> } = {}
+    const editor = await editorHarness(editorOptions)
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editorOptions.stackTraceGate = gate.promise
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    answerContinue({ rejected: true })
+    gate.resolve()
+    const hit = await heard.nextPause()
+    // Assert
+    assert.equal(hit.declaredStopIndex, 0)
+    assert.equal(hit.inRequestWindowAtStop, false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), false)
+    await debug.release()
+  },
+)
+
+// protects=a declared hit whose window verdict rests on an unanswered learner Continue is judged outside the window once its one deadline passes, even while answers to unrelated resume requests keep arriving, and its waiter is gone afterwards; fails_when=every unrelated answer restarts a full timeout for the same missing reply, so the hit (and every pause queued behind it) waits for as long as unrelated answers keep coming, or the expired waiter stays registered (Cycle 0153 final-range CLI V2); seam=the editor harness with a 400 ms read deadline, the learner's held pause of thread 1, its Continue left unanswered, a declared hit, then refused Continues of thread 2 every 100 ms; no_claim=js-debug's real answer timing
+test(
+  'answers to unrelated Continues do not extend the wait of a hit judged by an unanswered learner Continue',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness({ readDeadlineMs: 400 })
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // The learner's Continue of thread 1 is never answered, so the hit's verdict stays provisional until its deadline.
+    editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    const answersUntil = Date.now() + 3_000
+    let unrelatedAnswers = 0
+    // Refused Continues of thread 2 keep answering resume requests until the hit is reported or 3 s pass.
+    while (heard.pauses.length < 2 && Date.now() < answersUntil) {
+      editor.adapter.learnerSendsContinue(2)({ rejected: true })
+      unrelatedAnswers += 1
+      // gstack-timing-ok: the 100 ms only spaces the unrelated answers; the loop ends when the hit is reported (bounded by 3 s), and the assertions read what was reported, not how long it took
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    const hit = heard.pauses[1]
+    // Assert
+    assert.equal(hit?.declaredStopIndex, 0)
+    assert.equal(hit?.inRequestWindowAtStop, false)
+    assert.ok(
+      unrelatedAnswers < 20,
+      `the hit was reported only after ${unrelatedAnswers} unrelated answers`,
+    )
+    assert.equal(Reflect.get(debug, 'resumeAnswerWaiters').size, 0)
+    await debug.release()
+  },
+)
+
+// protects=a stop of another thread does not consume the learner's Pause of thread 1: the request window stays closed while thread 2 stops and runs on, and the stop of thread 1 that the Pause causes is the learner's; fails_when=the first stop of the session settles the Pause whatever its thread, so thread 2's run-on reopens the window and thread 1's stop on a declared line reads as the request's (Cycle 0153 ship pass 1 S10, OV7); seam=the editor harness's accepted Pause of thread 1, a stop and a run-on of thread 2, then a declared hit on thread 1; no_claim=whether js-debug reports several threads under one session
+test(
+  'a stop of another thread does not settle the learner Pause of thread 1',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    // Act
+    editor.adapter.stop(
+      'exception',
+      undefined,
+      { file: STOP_FILE, line: 30 },
+      2,
+    )
+    await heard.nextPause()
+    editor.adapter.continued(2, false)
+    const windowAfterOtherThread = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const pausedThread = await heard.nextPause()
+    // Assert
+    assert.equal(windowAfterOtherThread, false)
+    assert.equal(pausedThread.declaredStopIndex, 0)
+    assert.equal(pausedThread.inRequestWindowAtStop, false)
+    assert.equal(pausedThread.learnerRequested, true)
+    await debug.release()
+  },
+)
+
+// protects=a stop that arrives while the learner's Pause is unanswered stays a held learner stop through the adapter's refusal of that Pause: the request window does not reopen while the stop is still held, and opens when the stop runs on; fails_when=the refusal reopens the window because the stop was not recorded as the learner's, so a declared hit before the learner's Continue reads as the request's (Cycle 0153 ship pass 1 S11); seam=the editor harness's unanswered Pause, an exception stop, the refused Pause answer and the learner's Continue; no_claim=which reason js-debug reports for a thread that was already stopped
+test(
+  'a stop that arrived while the learner Pause was unanswered keeps the request window closed after the Pause is refused',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    const answerPause = editor.adapter.learnerSendsPause()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Act
+    answerPause({ rejected: true })
+    const windowAfterRefusal = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    const pendingAfterRefusal = debug.learnerPausePending?.()
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(windowAfterRefusal, false)
+    assert.equal(pendingAfterRefusal, true)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    await debug.release()
+  },
+)
+
+// protects=the entry release continues the entry pause only while it is still its thread's newest stop: a learner who continued the entry during the arming, with the thread stopped again as an exception, loses nothing to a Codebook continue; fails_when=the release sends a raw continue for the entry's thread id, so the exception is resumed before it is classified and the run reports no pause (Cycle 0153 ship pass 2 T3); seam=the editor harness's learner Continue of the entry stop and a later exception of the same thread; no_claim=the run's own handling of the exception
+test(
+  'releasing the entry sends no continue when the learner continued the entry and the thread stopped again',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.learnerContinues()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    // Assert
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      0,
+    )
+    await waitUntil(
+      () => heard.pauses.length === 1,
+      'the exception reported to the run',
+      2_000,
+    )
+    assert.equal(heard.pauses[0]?.reason, 'exception')
+    await debug.release()
+  },
+)
+
+// protects=a stop that arrives before the adapter's accepted answer to the learner's Pause settles that Pause: continuing the stop releases the write guard and the request window opens again, with no second stop awaited; fails_when=the accepted answer leaves the Pause waiting for a stop that already came, so a ready server refuses every request after the learner continued (Cycle 0153 ship pass 2 T4, L2); seam=the editor harness's unanswered Pause, a pause stop, the accepted answer and the learner's Continue; no_claim=which order js-debug really answers in
+test(
+  'continuing a stop that arrived before the accepted answer to the learner Pause releases the write guard',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    const answerPause = editor.adapter.learnerSendsPause()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Act
+    answerPause()
+    const pendingWhileHeld = debug.learnerPausePending?.()
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(pendingWhileHeld, true)
+    assert.equal(debug.learnerPausePending?.(), false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    await debug.release()
+  },
+)
+
+// protects=the debugger tells a Pause that no stop met yet from a stop the learner holds: the run words its refusal for the first, since there is nothing to continue; fails_when=both read the same, so the refusal asks the learner to continue a stop that does not exist (Cycle 0153 ship pass 2 L1); seam=the editor harness's accepted Pause with no stop, then the stop it causes; no_claim=the wording
+test(
+  'a Pause with no stop yet awaits its stop and a held stop does not',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    // Act
+    editor.adapter.learnerPauses()
+    const awaitingBeforeStop = debug.learnerPauseAwaitsStop?.()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Assert
+    assert.equal(awaitingBeforeStop, true)
+    assert.equal(debug.learnerPauseAwaitsStop?.(), false)
+    assert.equal(debug.learnerPausePending?.(), true)
+    await debug.release()
+  },
+)
+
+// protects=a Pause of thread 1 that an all-threads stop reported on thread 2 settles keeps the learner's hold until every thread runs: a Continue of thread 2 alone leaves thread 1 stopped, so the write guard stays closed; fails_when=the partial continued event ends the hold of the stop it was reported on, and the guard opens while thread 1 is still stopped (Cycle 0153 ship pass 2 T7, OV1); seam=the editor harness's accepted Pause of thread 1, an all-threads stop on thread 2, a partial continued event and the learner's Continue of every thread; no_claim=js-debug's per-thread semantics
+test(
+  'a Continue of thread 2 alone does not release a Pause of thread 1 that an all-threads stop on thread 2 settled',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses({}, 1)
+    editor.adapter.stop(
+      'pause',
+      undefined,
+      { file: STOP_FILE, line: 30 },
+      2,
+      true,
+    )
+    await heard.nextPause()
+    // Act
+    editor.adapter.continued(2, false)
+    const pendingAfterPartialContinue = debug.learnerPausePending?.()
+    const windowAfterPartialContinue = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(pendingAfterPartialContinue, true)
+    assert.equal(windowAfterPartialContinue, false)
+    assert.equal(debug.learnerPausePending?.(), false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    await debug.release()
+  },
+)
+
+// protects=a Node hit that names an owned breakpoint by id stays that declared stop when the editor removes the breakpoint while the stack is being read: the matching ids and the accepted lines are taken when the stop arrives; fails_when=the classification looks the breakpoint up when the stack read finishes, so the removed breakpoint no longer matches and the hit that already arrived is reported as no declared stop (Cycle 0153 ship pass 2 T12); seam=the editor harness's gated stack read, a breakpoint hit by id and the editor's removal of the owned breakpoints during the read; no_claim=how an editor removes an owned breakpoint
+test(
+  'a hit by breakpoint id stays its declared stop when the owned breakpoint is removed during the stack read',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const gate = defer<void>()
+    const editorOptions: { stackTraceGate?: Promise<void> } = {}
+    const editor = await editorHarness(editorOptions)
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editorOptions.stackTraceGate = gate.promise
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    editor.editor.debug.removeBreakpoints([...editor.editorBreakpoints])
+    gate.resolve()
+    const pause = await heard.nextPause()
+    // Assert
+    assert.equal(pause.declaredStopIndex, 0)
+    await debug.release()
+  },
+)
+
+// protects=the answer to a learner Continue confirms only the stops that existed when the Continue was sent: a stop that names no thread and arrived before the answer stays held, so the write guard stays closed; fails_when=the all-threads answer to the old Continue ends the newer threadless stop's hold and the run writes a request while the server is stopped (Cycle 0153 ship pass 3 U1); seam=the editor harness's learner Continue request, a stop without a thread and the adapter's all-threads answer; no_claim=that js-debug ever sends a stop without a thread (its probe traces name thread 0 in every event)
+test(
+  'the answer to an older Continue does not release a stop that named no thread and arrived after the Continue',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stoppedWithoutThread('pause')
+    // Act
+    answerContinue({ allThreadsContinued: true })
+    // Assert
+    assert.equal(debug.learnerPausePending?.(), true)
+    await debug.release()
+  },
+)
+
+// protects=a continued event that names another thread and omits allThreadsContinued releases nothing of the learner's Pause of thread 1, while one that says every thread ran on does; fails_when=an omitted flag reads as all threads, so thread 2's own run-on opens the write guard while thread 1 is still stopped (Cycle 0153 ship pass 3 U2); seam=the editor harness's learner Pause and stop of thread 1, then continued events of thread 2 with the flag omitted and true; no_claim=that js-debug ever omits the flag (it sends its own thread id with false)
+test(
+  'a continued event of thread 2 without allThreadsContinued keeps the learner Pause of thread 1 held',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.learnerPauses({}, 1)
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Act
+    editor.adapter.continued(2)
+    const pendingAfterOmittedFlag = debug.learnerPausePending?.()
+    editor.adapter.continued(2, true)
+    // Assert
+    assert.equal(pendingAfterOmittedFlag, true)
+    assert.equal(debug.learnerPausePending?.(), false)
+    await debug.release()
+  },
+)
+
+// protects=a stop that names an owned breakpoint together with the learner's own breakpoint stays the learner's: no declared stop is reported, so Codebook never continues or captures a stop the learner's breakpoint also holds; fails_when=the owned id alone decides, so the stop is taken as Codebook's, captured and continued while the learner's breakpoint requires the debugger to stay paused (Cycle 0153 ship pass 3 U3); seam=the editor harness's stop with hitBreakpointIds [7, 12] where 7 is the first owned breakpoint; no_claim=which line a real adapter reports for the learner's breakpoint
+test(
+  'a stop that names an owned breakpoint and the learner breakpoint is reported as no declared stop',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    // Act
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!, LEARNER_BREAKPOINT_ID], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const pause = await heard.nextPause()
+    // Assert
+    assert.equal(pause.declaredStopIndex, undefined)
+    assert.equal(pause.reason, 'breakpoint')
+    await debug.release()
+  },
+)
+
+// protects=a declared hit that arrived while the learner's Continue of the only held pause was in flight stays judged inside the request when the request ends (the HTTP response closes the run's window) before the Continue is answered and the Continue then succeeds; fails_when=the verdict is resolved from the ledger when the answer comes, so the closed window reads as arrival outside the request and the hit is dropped as unattributed (Cycle 0153 ship pass 3 U4); seam=the editor harness's learner Pause and stop, a Continue request, a declared hit, the run closing its window and the Continue's accepted answer; no_claim=the run's own capture of the hit
+test(
+  'a hit that arrived during the learner Continue stays the request’s when the request ends before the Continue is answered',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    debug.setRequestWindow(false)
+    answerContinue()
+    const hit = await heard.nextPause()
+    // Assert
+    assert.equal(hit.declaredStopIndex, 0)
+    assert.equal(hit.inRequestWindowAtStop, true)
+    await debug.release()
+  },
+)
+
+// protects=a declared hit that arrived while the learner's first Continue was in flight is judged by that Continue's answer alone: a second Continue sent after the hit cannot make a refused first Continue count; fails_when=the second Continue in flight keeps the verdict provisional, so the hit waits for it and its acceptance would validate a hit that arrived while the learner still held a pause (Cycle 0153 ship pass 3 U4); seam=the editor harness's learner Pause and stop, two Continue requests (the second after the hit), the first refused while the second still waits; no_claim=the run's own handling of the hit
+test(
+  'a refused learner Continue is not made good by a second Continue sent after the hit arrived',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerFirstContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const answerSecondContinue = editor.adapter.learnerSendsContinue()
+    // Act
+    answerFirstContinue({ rejected: true })
+    // The first answer alone settles the verdict: the hit is reported while the second Continue still waits.
+    await waitUntil(
+      () => heard.pauses.length === 2,
+      'the hit reported to the run after the first Continue was refused',
+      2_000,
+    )
+    answerSecondContinue()
+    // Assert
+    assert.equal(heard.pauses[1]?.declaredStopIndex, 0)
+    assert.equal(heard.pauses[1]?.inRequestWindowAtStop, false)
+    await debug.release()
+  },
+)
+
+// protects=the entry release hands the run only the stops that are still paused: an exception the learner already continued during the arming is no pause, so the run never publishes it as a fresh learner pause; fails_when=the release re-enqueues every stop it saw during the arming, so the resumed exception is reported and held until a hold bound ends the run (Cycle 0153 ship pass 3 U6); seam=the editor harness's learner Continue of the entry stop, an exception of the same thread and the learner's Continue of it, all before the entry release; no_claim=the run's handling of a live exception
+test(
+  'releasing the entry reports no stop that the learner already continued during the arming',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.learnerContinues()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    editor.adapter.learnerContinues()
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    await debug.arrivedStopsReported?.()
+    // Assert
+    assert.deepEqual(plain(heard.pauses), [])
+    assert.equal(debug.hasUnreportedPause(), false)
+    await debug.release()
+  },
+)
+
+// protects=two declared hits of the request on two threads are both Codebook's: continuing one is never refused as a learner pause elsewhere, even when the adapter cannot continue one thread alone; fails_when=every other paused thread counts as the learner's, so Codebook's own hit on thread 1 makes the continue of its hit on thread 2 fail with learner-pause-elsewhere and the chat is told to ask the learner (Cycle 0153 ship pass 3 U11); seam=the editor harness's open request window, declared hits on threads 1 and 2 and a Codebook resume of the second; no_claim=that js-debug ever has two threads in one session
+test(
+  'continuing one of two declared hits on two threads is not refused as a learner pause elsewhere',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.stop(
+      'breakpoint',
+      [OWNED_IDS[0]!],
+      { file: STOP_FILE, line: 14 },
+      1,
+    )
+    await heard.nextPause()
+    editor.adapter.stop(
+      'breakpoint',
+      [OWNED_IDS[1]!],
+      { file: STOP_FILE, line: 20 },
+      2,
+    )
+    const secondHit = await heard.nextPause()
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Act
+    await debug.resume(secondHit, AbortSignal.timeout(5_000))
+    // Assert
+    const continues = editor.requests.filter(
+      (request) => request.command === 'continue',
+    )
+    assert.equal(continues.length, continuesBefore + 1)
+    assert.deepEqual(plain(continues.at(-1)?.arguments), { threadId: 2 })
+    await debug.release()
+  },
+)

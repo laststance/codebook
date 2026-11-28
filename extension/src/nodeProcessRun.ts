@@ -1,6 +1,7 @@
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   NODE_SERVER_EXIT_SETTLE_MS,
+  NODE_SERVER_PAUSE_BEING_READ_TEXT,
   NODE_SERVER_RUN_WORDS,
   NODE_SERVER_REQUEST_CAPTURE_LIMIT,
   NODE_SERVER_STOP_DEADLINE_MS,
@@ -42,6 +43,7 @@ import { isGroupCertainlyGone } from './utils/isGroupCertainlyGone'
 import type { isProcessGone } from './utils/isProcessGone'
 import type { isProcessGroupGone } from './utils/isProcessGroupGone'
 import type { launchNodeServer, NodeServerExit } from './utils/launchNodeServer'
+import { NodeServerResumeRefusedError } from './utils/nodeServerResumeRefusedError'
 import type { ResolvedNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { RunClock } from './utils/runningTimeLimit'
 import type { CauseRoots } from './utils/sanitizeCause'
@@ -130,6 +132,8 @@ export type NodeProcessRunOptions = {
   confirmEverySignalAfterNaturalExit?: boolean
   /** A stop during or after a failed preparation, or of a run that was never released, kills the group first and never lets the debugger resume the paused process. */
   killFirstUnlessReleased?: boolean
+  /** The debugger reports each declared stop with the request window as it stood when the stop arrived, and the run judges the stop by it ({@link NodeServerDebuggerInput.stopsJudgedByArrivalWindow}): the server's HTTP exchange. A script run leaves it off, so its stops are judged by its own lifecycle. */
+  stopsJudgedByArrivalWindow?: boolean
 }
 
 /** What a run's owner fixes when it creates the core. */
@@ -310,6 +314,8 @@ export class NodeProcessRun {
   private readonly nativeHolds = new Map<number, () => void>()
   private readonly ownResumes = new Set<number>()
   private readonly ownedHits = new Map<number, number>()
+  /** The captures of declared hits that are being read, so the history can wait for the ones that arrived before the request's end ({@link whenArrivedStopsAreRecorded}). */
+  private readonly captureWork = new Set<Promise<void>>()
   private readonly stopsHitAtStart: number[] = []
   private readonly stopsHitDuringSignIn: number[] = []
   private readonly stopsReached: number[] = []
@@ -606,28 +612,33 @@ export class NodeProcessRun {
   }
 
   /**
-   * Tells whether a Bun run may not write its request right now: a declared stop the debugger withdrew since the run was prepared, or a pause still being read.
+   * Tells whether the run may not write its request right now: the bound debug session ended, a pause the run has not heard of yet (any runtime), or, for a Bun run, a declared stop the debugger withdrew since the run was prepared.
    *
-   * Why it exists: the arming's last binding check runs while the run prepares, but the request is sent later (after a confirmation, or after the sign-in), and a request that runs with an unbound stop changes data without the promised observation; a pause that arrived before the request must be classified before the request opens its window. A node launch arms before its server runs, so the call answers nothing for it.
+   * Why it exists: a pause that arrived before the request must be classified before the request opens its window, on a node server as on Bun: the adapter already knows execution stopped while the run still reads the stack, so the learner's pause would otherwise be followed by a state-changing write. A Bun run also re-reads its late-armed bindings, because it arms after the server runs and the request is sent later (after a confirmation, or after the sign-in); a request that runs with an unbound stop changes data without the promised observation.
    * When it runs: called by the node-server run right before it writes the declared request's bytes, the one after the sign-in included.
-   * @returns The sentence to refuse the request with ({@link unboundBunStopText} for the first unbound stop), or `undefined` when the request may go.
+   * @returns The sentence to refuse the request with ({@link unboundBunStopText} for the first unbound Bun stop), or `undefined` when the request may go.
    * @example this.requestRefusalNow() // => 'Declared stop 1 at src/routes/users.ts:14 did not bind on Bun: …'
    */
   requestRefusalNow(): string | undefined {
+    const debug = this.requireDebugger()
+    // The editor ends the debug session before the run learns whether the server exited: nothing observes a request written now.
+    if (debug.boundSessionEnded?.())
+      return 'The debug session of the server ended, so the request was not sent.'
+    // The unbound-stop check belongs to a Bun launch, which arms after the server runs; a node launch armed before its release.
     const stops = this.lateArmedStops
-    if (!stops) return undefined
-    const current = this.requireDebugger().currentlyBoundStops?.() ?? []
-    const unbound = stops.find((stop) =>
-      current.some(
-        (arm) =>
-          arm.declaredStopIndex === stop.declaredStopIndex &&
-          arm.boundLine === undefined,
-      ),
-    )
-    if (unbound) return unboundBunStopText(unbound)
+    if (stops) {
+      const current = debug.currentlyBoundStops?.() ?? []
+      const unbound = stops.find((stop) =>
+        current.some(
+          (arm) =>
+            arm.declaredStopIndex === stop.declaredStopIndex &&
+            arm.boundLine === undefined,
+        ),
+      )
+      if (unbound) return unboundBunStopText(unbound)
+    }
     // A pause the run has not heard of yet may be older than the request: the request waits for its classification.
-    if (this.requireDebugger().hasUnreportedPause())
-      return 'A pause of the server is still being read, so the request was not sent. Read the run and send again once the pause is reported.'
+    if (debug.hasUnreportedPause()) return NODE_SERVER_PAUSE_BEING_READ_TEXT
     return undefined
   }
 
@@ -684,6 +695,9 @@ export class NodeProcessRun {
       citedSources: this.input.citedSources,
       stops,
       record: (type, detail) => this.record(type, detail),
+      ...(this.input.options?.stopsJudgedByArrivalWindow
+        ? { stopsJudgedByArrivalWindow: true }
+        : {}),
       ...(this.input.maskKnownText
         ? { maskKnownText: this.input.maskKnownText }
         : {}),
@@ -949,20 +963,25 @@ export class NodeProcessRun {
    * Tells which kind of pause a native pause is.
    * @param pause - The debugger's report.
    * @returns
-   * - `learner` for a pause that is no hit of a declared stop
+   * - `learner` for a pause that is no hit of a declared stop, or one the learner asked for (the Pause button) whatever line it landed on
    * - `start-hit` for a declared stop hit before the run was prepared
    * - `sign-in-hit` for one hit while the owner's sign-in request is out
-   * - `request-hit` for one hit inside the owner's window
-   * - `unattributed` for one hit outside it, or one that arrived before the request's first byte was written (a Bun pause: the attribution of the arrival moment, never re-derived from the later request state)
+   * - `request-hit` for one hit inside the owner's window, or one that arrived inside it whatever the window says by the time its stack was read
+   * - `unattributed` for one hit outside it, or one that arrived before the request's first byte was written (the attribution of the arrival moment, never re-derived from the later request state)
    */
   private classify(
     pause: NodeServerDebuggerPause,
   ): 'learner' | 'start-hit' | 'sign-in-hit' | 'request-hit' | 'unattributed' {
     if (pause.declaredStopIndex === undefined) return 'learner'
+    // A stop the learner asked for (the Pause button) is the learner's on any line, before the start, sign-in or request rules: Codebook never resumes it.
+    if (pause.learnerRequested) return 'learner'
     if (!this.prepared) return 'start-hit'
     // The debugger judged the window when the stop arrived: a stop outside it is not the request's, however long the classification took.
     if (pause.inRequestWindowAtStop === false) return 'unattributed'
-    if (this.hooks.inSignIn?.()) return 'sign-in-hit'
+    // The sign-in phase of the arrival moment decides, as the window does; a debugger that reports none leaves it to the run's state now.
+    if (pause.inSignInAtStop ?? this.hooks.inSignIn?.()) return 'sign-in-hit'
+    // A hit that arrived inside the request's window is the request's, even when the response settled before the stack read finished: the arrival evidence is positive, and the request's later end says nothing against it.
+    if (pause.inRequestWindowAtStop === true) return 'request-hit'
     return this.hooks.inWindow() ? 'request-hit' : 'unattributed'
   }
 
@@ -975,6 +994,7 @@ export class NodeProcessRun {
       this.killDuringDetach()
     }
     if (this.currentLifecycle !== 'live') return
+    this.dropPauseReplacedBy(pause)
     this.generation += 1
     const kind = this.classify(pause)
     if (kind === 'start-hit') {
@@ -988,8 +1008,30 @@ export class NodeProcessRun {
     this.beginHold(pause.token)
     if (pause.declaredStopIndex !== undefined)
       this.ownedHits.set(pause.token, pause.declaredStopIndex)
-    if (kind === 'request-hit') void this.captureHit(pause, this.generation)
+    if (kind === 'request-hit')
+      this.trackCapture(this.captureHit(pause, this.generation))
     else this.holdPause(kind, pause)
+  }
+
+  /**
+   * Ends the current published pause when a newer stop of the same thread replaces it, even while Codebook's own Continue of that pause is reserved.
+   * Why it exists: the debugger's resume notice for the replaced pause is suppressed during the reservation, and a Continue the adapter rejects afterwards cannot make the older stop live again; without this the rejected Continue would leave the replaced pause published, with a hold that expires and kills the run while the learner's newer stop is the only real pause.
+   * Called by {@link onDebuggerPause} for every pause of a live run.
+   * @param pause - The newer stop the debugger reports.
+   * @example this.dropPauseReplacedBy({ token: 7, sessionId: 's1', threadId: 1 }) // the published pause of thread 1 with a lower token is dropped
+   */
+  private dropPauseReplacedBy(pause: NodeServerDebuggerPause): void {
+    const current = this.pause
+    if (
+      !current ||
+      current.identity.sessionId !== pause.sessionId ||
+      current.identity.threadId !== pause.threadId ||
+      current.token >= pause.token
+    )
+      return
+    this.pause = undefined
+    this.endHold(current.token)
+    this.ownedHits.delete(current.token)
   }
 
   /** A declared stop hit before readiness is recorded and continued: the AI can say the request may not reach that line. */
@@ -1023,8 +1065,47 @@ export class NodeProcessRun {
     this.ownResumes.add(pause.token)
     this.requireDebugger()
       .resume(pause, this.abort.signal)
-      .catch((error: unknown) => this.failRun(this.stepFailed(step, error)))
+      .catch((error: unknown) => this.onOwnResumeRefused(pause, error, step))
     this.notify()
+  }
+
+  /**
+   * Handles a Codebook resume that the debugger did not send or that failed: a pause that a later stop replaced ended by itself; a stop that cannot be continued without releasing the learner's pause on another thread stays held for the learner (Codebook never resumes it) and the journal says why; any other failure fails the run.
+   * @param pause - The pause Codebook tried to resume.
+   * @param error - What the resume threw.
+   * @param step - The step named when the resume fails the run.
+   */
+  private onOwnResumeRefused(
+    pause: NodeServerDebuggerPause,
+    error: unknown,
+    step: string,
+  ): void {
+    this.ownResumes.delete(pause.token)
+    if (!(error instanceof NodeServerResumeRefusedError)) {
+      this.failRun(this.stepFailed(step, error))
+      return
+    }
+    if (error.reason === 'superseded' || this.currentLifecycle !== 'live')
+      return
+    this.holdPauseCodebookCannotResume(pause, error.message)
+  }
+
+  /**
+   * Holds a stop that Codebook meant to continue but could not without releasing the learner's pause: it is the learner's to continue, so the run reads `learner-paused` and no request is written.
+   * @param pause - The stop that stays paused.
+   * @param why - The debugger's sentence for the refusal, journaled.
+   */
+  private holdPauseCodebookCannotResume(
+    pause: NodeServerDebuggerPause,
+    why: string,
+  ): void {
+    this.record('node-server.resume-refused', {
+      declaredStopIndex: pause.declaredStopIndex,
+      cause: why,
+    })
+    // A start or sign-in hit begins no hold of its own, so the hold bound starts here.
+    if (!this.nativeHolds.has(pause.token)) this.beginHold(pause.token)
+    this.holdPause('learner', pause)
   }
 
   /** A pause that is the learner's, or an owned hit outside the request: held, never resumed. */
@@ -1048,6 +1129,34 @@ export class NodeProcessRun {
       declaredStopIndex: pause.declaredStopIndex,
     })
     this.notify()
+  }
+
+  /**
+   * Remembers a capture that is being read until it settles.
+   * @param work - The capture ({@link captureHit} never rejects).
+   */
+  private trackCapture(work: Promise<void>): void {
+    const tracked = work.finally(() => this.captureWork.delete(tracked))
+    this.captureWork.add(tracked)
+  }
+
+  /**
+   * Tells the history what to wait for before it writes the end of the request: every stop that already arrived is classified and every capture it started has settled, so a hit that arrived inside the request is recorded before the request's response or failure.
+   * Why it exists: a stop that arrived before the response but whose stack read finishes after it is still captured live; the history's terminal entry would otherwise be written first and the capture dropped from the saved replay.
+   * Called by the node-server run when the response or a failure ends the request.
+   * @returns `undefined` when nothing is being read or captured (the entry may be written at once); else a promise that settles when it is safe to write it.
+   * @example const after = this.whenArrivedStopsAreRecorded() // history.response(elapsedMs, response, after)
+   */
+  whenArrivedStopsAreRecorded(): Promise<void> | undefined {
+    const debug = this.debug
+    if (!debug?.hasUnreportedPause() && this.captureWork.size === 0)
+      return undefined
+    return (async (): Promise<void> => {
+      await debug?.arrivedStopsReported?.()
+      // The stops just reported started their captures in this turn.
+      while (this.captureWork.size > 0)
+        await Promise.allSettled([...this.captureWork])
+    })()
   }
 
   /**
@@ -1077,6 +1186,13 @@ export class NodeProcessRun {
         !this.nativeHolds.has(pause.token)
       )
         return
+      // A stop that cannot be continued without releasing the learner's pause stays held; one that a later stop replaced ended by itself.
+      if (error instanceof NodeServerResumeRefusedError) {
+        this.ownResumes.delete(pause.token)
+        if (error.reason === 'learner-pause-elsewhere')
+          this.holdPauseCodebookCannotResume(pause, error.message)
+        return
+      }
       this.failRun(
         error instanceof StudyError
           ? error
@@ -1194,8 +1310,41 @@ export class NodeProcessRun {
       'LEARNER_PAUSED',
       held?.kind === 'unattributed'
         ? `The ${this.words.noun} stopped at a declared line outside the request; Codebook never resumes it. Ask the learner to continue it in the debugger.`
-        : `The learner paused the ${this.words.noun}; Codebook never resumes it. Ask the learner to continue it in the debugger.`,
+        : this.learnerPausedSentence(),
     )
+  }
+
+  /**
+   * Refuses a request while the learner holds a pause, whether the run heard of it yet or not: a pause the run holds, or a Pause request of the editor that is unanswered or has not met its stop (the debugger knows it before the run does).
+   * Why it exists: a pause request the adapter accepted stops the server at its next line, so a request written meanwhile would run while the learner asked for the stop. Called by the node-server run before it admits a request and right before it writes one.
+   * @throws `LEARNER_PAUSED` naming who paused, with the sentence the held-pause refusal uses.
+   * @example this.assertNoLearnerPause() // throws StudyError('LEARNER_PAUSED', 'The learner paused the server; …') between the editor's Pause and its stop
+   */
+  assertNoLearnerPause(): void {
+    this.assertNoHeldPause()
+    if (!this.debug?.learnerPausePending?.()) return
+    throw new StudyError(
+      'LEARNER_PAUSED',
+      // A Pause that has produced no stop yet has nothing to continue: the sentence says to wait for the stop.
+      this.debug.learnerPauseAwaitsStop?.()
+        ? this.pauseAwaitingStopSentence()
+        : this.learnerPausedSentence(),
+    )
+  }
+
+  /**
+   * The sentence of a refusal while the learner's Pause has produced no stop yet.
+   * Why it is public: the node-server run recognises it by its text when the declared request after a sign-in is refused, so its own sentence keeps the pending-versus-held reason.
+   * @returns The sentence {@link assertNoLearnerPause} throws for a Pause that no stop has met.
+   * @example this.pauseAwaitingStopSentence() // => 'The learner pressed Pause and the server has not stopped yet, so the request was not sent. …'
+   */
+  pauseAwaitingStopSentence(): string {
+    return `The learner pressed Pause and the ${this.words.noun} has not stopped yet, so the request was not sent. Codebook never writes a request while a pause of the learner is pending; ask the learner to continue the ${this.words.noun} in the debugger once it stops.`
+  }
+
+  /** The sentence of a refusal for the learner's own pause. */
+  private learnerPausedSentence(): string {
+    return `The learner paused the ${this.words.noun}; Codebook never resumes it. Ask the learner to continue it in the debugger.`
   }
 
   /**

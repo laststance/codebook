@@ -2,6 +2,7 @@ import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   MS_PER_MINUTE,
   NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
+  NODE_SERVER_PAUSE_BEING_READ_TEXT,
   NODE_SERVER_READY_TIMEOUT_MS,
   NODE_SERVER_REQUEST_TIMEOUT_MS,
   NODE_SERVER_REQUEST_WALL_LIMIT_MS,
@@ -73,22 +74,66 @@ type ReadyForRequest = {
 /** The codes a request failure of the run can carry. */
 type RequestFailureCode = NonNullable<NodeServerView['requestFailure']>['code']
 
+/** The sentence of a declared request refused after its sign-in because the learner holds a pause: the sign-in ran and the declared request was not sent, so the run has nothing left to send; the learner continues the server, the chat stops this run, and a new run starts. */
+const DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT =
+  'The declared request was not sent because the learner held a pause of the server after the sign-in, which already ran; Codebook never resumes it. Let the learner continue the server in the debugger, then stop this run (codebook_stop) and start a new run.'
+
+/** The sentence of a declared request refused after its sign-in while the learner's Pause has produced no stop yet: there is nothing to continue until the server stops, so it asks the learner to continue once it does; the sign-in ran and the request was not sent, so the chat stops this run and starts a new one. */
+const DECLARED_REQUEST_REFUSED_BY_PENDING_PAUSE_TEXT =
+  'The declared request was not sent because the learner pressed Pause after the sign-in, which already ran, and the server has not stopped yet; Codebook never writes a request while a pause is pending. Let the learner continue the server in the debugger once it stops, then stop this run (codebook_stop) and start a new run.'
+
+/** The sentence of a declared request refused after its sign-in while a pause of the server was still being read: nobody knows yet whose pause it is (a stop Codebook itself would resume, or the learner's), so it asks for no Continue; the sign-in ran and the request was not sent, so the chat stops this run and starts a new one. */
+const DECLARED_REQUEST_REFUSED_WHILE_PAUSE_IS_READ_TEXT =
+  'The sign-in ran, but the declared request was not sent: a pause of the server was still being read. Stop this run (codebook_stop) and start a new run.'
+
 /**
- * Tells whether a send failure is a refusal before any byte left (a listener that is not the server, an unreadable owner, or a stop admitted first).
+ * Tells whether a send failure is a refusal before any byte left (a listener that is not the server, an unreadable owner, a stop admitted first, or a pause the learner holds).
+ * Every member of the code union is thrown only before the first byte is written, so a run that refused may stay ready.
  * Called by the request paths to keep a run ready after such a refusal.
  * @param error - Anything a sender rejected with.
  * @returns True for those {@link StudyError}s.
  * @example isRefusalBeforeAnyByte(new StudyError('LISTENER_NOT_OWNED', 'x')) // => true
  */
 function isRefusalBeforeAnyByte(error: unknown): error is StudyError & {
-  code: 'LISTENER_NOT_OWNED' | 'PORT_OWNER_UNKNOWN' | 'RUN_NOT_READY'
+  code:
+    | 'LISTENER_NOT_OWNED'
+    | 'PORT_OWNER_UNKNOWN'
+    | 'RUN_NOT_READY'
+    | 'LEARNER_PAUSED'
 } {
   return (
     error instanceof StudyError &&
     (error.code === 'LISTENER_NOT_OWNED' ||
       error.code === 'PORT_OWNER_UNKNOWN' ||
-      error.code === 'RUN_NOT_READY')
+      error.code === 'RUN_NOT_READY' ||
+      error.code === 'LEARNER_PAUSED')
   )
+}
+
+/**
+ * Chooses the sentence of a refusal that ends the declared request after its sign-in: a pause the learner holds gets the sentence that asks for a Continue, a pause that is still being read gets one that says only what happened and that the run must be stopped (the generic sentence asks to continue or send again as if the request were still waiting).
+ * Called by {@link OwnedNodeServerRun} when the declared request after a sign-in is refused before its first byte.
+ * @param code - The refusal's code.
+ * @param message - The refusal's sentence.
+ * @param pendingPauseMessage - The sentence of the refusal for a Pause that produced no stop yet; a `LEARNER_PAUSED` refusal that carries it keeps that reason (nothing to continue yet).
+ * @returns The sentence the request failure carries; the refusal's own for any other refusal.
+ * @example refusalSentenceAfterSignIn('LEARNER_PAUSED', 'x') // => 'The declared request was not sent because the learner held a pause …'
+ * @example refusalSentenceAfterSignIn('LEARNER_PAUSED', pending, pending) // => 'The declared request was not sent because the learner pressed Pause … the server has not stopped yet; …'
+ * @example refusalSentenceAfterSignIn('RUN_NOT_READY', NODE_SERVER_PAUSE_BEING_READ_TEXT) // => 'The sign-in ran, but the declared request was not sent: a pause of the server was still being read. …'
+ */
+function refusalSentenceAfterSignIn(
+  code: string,
+  message: string,
+  pendingPauseMessage?: string,
+): string {
+  if (code === 'LEARNER_PAUSED')
+    return message === pendingPauseMessage
+      ? DECLARED_REQUEST_REFUSED_BY_PENDING_PAUSE_TEXT
+      : DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT
+  return code === 'RUN_NOT_READY' &&
+    message === NODE_SERVER_PAUSE_BEING_READ_TEXT
+    ? DECLARED_REQUEST_REFUSED_WHILE_PAUSE_IS_READ_TEXT
+    : message
 }
 
 /**
@@ -240,6 +285,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       privateRoots: input.privateRoots,
       dependencies: input.dependencies,
       notify: () => this.notify(),
+      // The request's window is the HTTP exchange: a stop is judged by the window as it stood when it arrived.
+      options: { stopsJudgedByArrivalWindow: true },
       // Only a run with sign-in holds secret values to mask in its output and stop captures.
       ...(input.configuration.signIn
         ? {
@@ -441,8 +488,11 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     })
   }
 
-  /** A stop was admitted: the request still checking its connection writes nothing, and every running-time limit and the wall limit stop. */
+  /** A stop was admitted (the learner's Stop, a failure or the server's exit): the request still checking its connection writes nothing, the debugger's attribution window closes, and every running-time limit and the wall limit stop. */
   private cancelRequestAndTimers(): void {
+    // A request under way ends with the run, so its window closes here and not only when the debug session terminates.
+    if (this.inRequestWindow())
+      this.core.debuggerSession?.setRequestWindow(false)
     // A request still checking its connection writes nothing once the stop is admitted.
     this.requestAbort.abort(
       new StudyError(
@@ -664,7 +714,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * @param handle - The sender's promises.
    * @param onWritten - Called once the bytes are written.
    * @param phase - `sign-in` names the phase in a refusal.
-   * @throws A refusal before any byte (a listener that is not the server, or a stop admitted first): the window is taken back and nothing was sent. Any other failure is reported by the response promise, which rejects with it too.
+   * @throws A refusal before any byte (a listener that is not the server, a stop admitted first, or `LEARNER_PAUSED` while the learner holds a pause): the window is taken back and nothing was sent. Any other failure is reported by the response promise, which rejects with it too.
    */
   private async awaitWritten(
     token: number,
@@ -689,7 +739,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * @throws A held pause's refusal, `REQUEST_ALREADY_SENT` and `RUN_NOT_READY`.
    */
   private assertReadyForRequest(): ReadyForRequest {
-    this.core.assertNoHeldPause()
+    this.core.assertNoLearnerPause()
     if (this.request)
       throw new StudyError(
         'REQUEST_ALREADY_SENT',
@@ -714,7 +764,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * @param key - The action key.
    * @param ready - The server and endpoint ({@link OwnedNodeServerRun.assertReadyForRequest}).
    * @param secret - The password the learner typed in the editor's box.
-   * @throws `REQUEST_NOT_CONFIRMED` without a secret; `LISTENER_NOT_OWNED`, `PORT_OWNER_UNKNOWN` or `RUN_NOT_READY` with `details.phase: "sign-in"` when refused before any byte (the run stays `ready`).
+   * @throws `REQUEST_NOT_CONFIRMED` without a secret; `LISTENER_NOT_OWNED`, `PORT_OWNER_UNKNOWN`, `RUN_NOT_READY` or `LEARNER_PAUSED` with `details.phase: "sign-in"` when refused before any byte (the run stays `ready`).
    */
   private async sendSignInRequest(
     key: string,
@@ -765,6 +815,17 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     await this.awaitWritten(token, handle, undefined, 'sign-in')
   }
 
+  /**
+   * Closes the debugger's attribution window of an exchange whose response promise rejected, before the run awaits the server's exit to word the failure.
+   * Why it exists: {@link onRequestError} waits up to the exit settle time, and a declared line hit meanwhile would still read as the failed exchange's (a sign-in hit Codebook continues, or a request hit it captures); with the window closed it is held as a stop outside the request instead. Called first by {@link onRequestError}, which every sender's rejection reaches.
+   * @param token - The request the rejection belongs to; a rejection of an older request changes nothing.
+   * @example this.closeAttributionWindowOfFailedExchange(this.requestToken) // the exchange's window closes at once
+   */
+  private closeAttributionWindowOfFailedExchange(token: number): void {
+    if (token !== this.requestToken || !this.inRequestWindow()) return
+    this.core.debuggerSession?.setRequestWindow(false)
+  }
+
   /** The sign-in response headers arrived: the session's cookies and every form of their values join the mask set. The output stays held, because the declared response may rotate the session. */
   private onSignInHeaders(values: readonly string[], token: number): void {
     if (token !== this.requestToken || this.requestPhase !== 'sign-in') return
@@ -777,7 +838,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.addSecrets(cookieMaskValues(this.cookies.seenValues))
   }
 
-  /** The sign-in response arrived: a session sends the declared request with its cookie, anything else ends the request. */
+  /** The sign-in response arrived: the debugger's attribution window closes, then a session sends the declared request with its cookie, anything else ends the request. */
   private async onSignInResponse(
     response: NodeServerResponse,
     token: number,
@@ -786,6 +847,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (this.core.lifecycle !== 'live') return
     const { signIn } = this.input.configuration
     if (!signIn) return
+    // The sign-in exchange is over: its attribution window closes now, so a declared stop hit while the declared request connects and verifies its peer is no hit of that request. The declared request opens the window again in {@link beforeRequestWrite}.
+    this.core.debuggerSession?.setRequestWindow(false)
     const cookies = this.cookies ?? applySetCookies([], Date.now())
     const outcome = signInOutcomeOf(response.status, cookies)
     if (outcome.kind === 'failed') {
@@ -862,7 +925,10 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     // The sign-in already ran: a stop withdrawn meanwhile ends the declared request before its bytes.
     const refusal = this.core.requestRefusalNow()
     if (refusal) {
-      this.failRequest('REQUEST_FAILED', refusal)
+      this.failRequest(
+        'REQUEST_FAILED',
+        refusalSentenceAfterSignIn('RUN_NOT_READY', refusal),
+      )
       return
     }
     const cookie = cookieHeaderOf(cookies, declared.path)
@@ -977,13 +1043,19 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    *
    * Why it exists: the sender awaits a process lookup between connecting and writing, and a stop withdrawn during it would otherwise let a mutating request go out unobserved; a pause that arrives before the bytes are written is no effect of the request, so the attribution window must not open earlier.
    * When it runs: passed to every sender as `beforeWrite` ({@link senderInput}); the sign-in request and the declared request after it included.
-   * @throws `RUN_NOT_READY` with the refusal sentence ({@link NodeProcessRun.requestRefusalNow}); the sender then writes nothing.
-   * @example this.beforeRequestWrite() // throws StudyError('RUN_NOT_READY', 'Declared stop 1 … did not bind on Bun: …')
+   * A pause classified while the peer was being verified (the learner's, or a declared stop outside the request) refuses the write too: Codebook never writes a request while a pause is held.
+   * @throws `LEARNER_PAUSED` ({@link NodeProcessRun.assertNoHeldPause}) while a pause is held, or `RUN_NOT_READY` with the refusal sentence ({@link NodeProcessRun.requestRefusalNow}); the sender then writes nothing, and the request paths take the window back as for any refusal before a byte.
+   * @example this.beforeRequestWrite() // throws StudyError('LEARNER_PAUSED', 'The learner paused the server; Codebook never resumes it. …')
    */
   private beforeRequestWrite(): void {
+    // A pause the learner holds, or asked for and has not reached yet, stops the write before any byte.
+    this.core.assertNoLearnerPause()
     const refusal = this.core.requestRefusalNow()
     if (refusal) throw new StudyError('RUN_NOT_READY', refusal)
-    this.core.requireDebugger().setRequestWindow(true)
+    // A window that opens for the sign-in request is marked as such, so a stop the sign-in causes is told apart from the declared request's.
+    this.core.requireDebugger().setRequestWindow(true, {
+      signIn: this.signInView.state === 'signing-in',
+    })
   }
 
   /** Reads which process the connected socket reaches and refuses unless it is the launched server. */
@@ -1017,7 +1089,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     // A response whose headers reported no cookies callback still ends the hold (a no-op once released).
     this.endOutputHold('release')
     this.response = response
-    this.input.history?.response(this.elapsedSinceLaunchMs(), response)
+    // A stop that arrived inside the request is recorded before the response, however late its stack read ends.
+    this.input.history?.response(
+      this.elapsedSinceLaunchMs(),
+      response,
+      this.core.whenArrivedStopsAreRecorded(),
+    )
     this.record('node-server.response', {
       status: response.status,
       contentType: response.contentType,
@@ -1034,6 +1111,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private async onRequestError(error: unknown, token: number): Promise<void> {
     if (token !== this.requestToken || !this.inRequestWindow()) return
     if (this.core.lifecycle !== 'live') return
+    // A failed exchange owns no stop from here on: its window closes now, not after the exit check below.
+    this.closeAttributionWindowOfFailedExchange(token)
     const exit = await this.core.settledExit()
     if (exit && this.core.launched) {
       this.core.onServerExit(exit)
@@ -1046,10 +1125,17 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       this.requestPhase === 'request' &&
       isRefusalBeforeAnyByte(error)
     ) {
-      // A stop withdrawn during the peer check refuses with `RUN_NOT_READY`: the request ends as the earlier refusal after the sign-in does.
+      // A stop withdrawn during the peer check refuses with `RUN_NOT_READY`, a pause the learner holds with `LEARNER_PAUSED`: the request ends as `REQUEST_FAILED` carrying the sentence, as the earlier refusal after the sign-in does.
       this.failRequest(
-        error.code === 'RUN_NOT_READY' ? 'REQUEST_FAILED' : error.code,
-        error.message,
+        error.code === 'LISTENER_NOT_OWNED' ||
+          error.code === 'PORT_OWNER_UNKNOWN'
+          ? error.code
+          : 'REQUEST_FAILED',
+        refusalSentenceAfterSignIn(
+          error.code,
+          error.message,
+          this.core.pauseAwaitingStopSentence(),
+        ),
       )
       return
     }
@@ -1082,7 +1168,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     const text = this.maskText(message)
     const { signIn } = this.input.configuration
     if (!signIn) {
-      this.input.history?.failRequest(this.elapsedSinceLaunchMs(), code, text)
+      this.input.history?.failRequest(
+        this.elapsedSinceLaunchMs(),
+        code,
+        text,
+        this.core.whenArrivedStopsAreRecorded(),
+      )
       this.finishFailure(code, text)
       return
     }
@@ -1102,7 +1193,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         ),
       })
     } else {
-      this.input.history?.failRequest(this.elapsedSinceLaunchMs(), code, text)
+      this.input.history?.failRequest(
+        this.elapsedSinceLaunchMs(),
+        code,
+        text,
+        this.core.whenArrivedStopsAreRecorded(),
+      )
     }
     this.finishFailure(code, text, { phase })
   }

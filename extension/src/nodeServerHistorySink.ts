@@ -1,6 +1,7 @@
 import {
   NODE_SERVER_HISTORY_CODE_LIMIT_CHARS,
   NODE_SERVER_HISTORY_CONTENT_TYPE_LIMIT_CHARS,
+  NODE_SERVER_HISTORY_HELD_OUTPUT_LIMIT_CHARS,
   NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
   NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS,
 } from './constants'
@@ -50,10 +51,23 @@ export interface NodeServerHistorySink {
     generation: number,
     read: NodeServerDebuggerCapture,
   ): void
-  /** The response arrived. */
-  response(elapsedMs: number, response: NodeServerResponse): void
-  /** The request failed; the run, the server and the debugger go on. */
-  failRequest(elapsedMs: number, code: string, message: string): void
+  /**
+   * The response arrived. `after` holds the entry back until the stops that arrived before the response are recorded (a capture that finishes after the response still belongs before it); a flush writes it at once.
+   */
+  response(
+    elapsedMs: number,
+    response: NodeServerResponse,
+    after?: Promise<void>,
+  ): void
+  /**
+   * The request failed; the run, the server and the debugger go on. `after` holds the entry back like {@link NodeServerHistorySink.response}'s.
+   */
+  failRequest(
+    elapsedMs: number,
+    code: string,
+    message: string,
+    after?: Promise<void>,
+  ): void
   /** The run refused a hit beyond its capture budget. */
   markCaptureBudgetExhausted(): void
 }
@@ -78,6 +92,16 @@ export class NodeServerHistorySinkImpl
   private openAttempt?: number
   private sentMarked = false
   private terminal = false
+  /** The terminal entry (response or failure) that waits for the stops that arrived before it; written by {@link runPendingTerminal}. */
+  private pendingTerminal?: () => Promise<void> | void
+  /** The output that arrived while {@link pendingTerminal} waited; written behind the terminal entry. */
+  private readonly outputBehindTerminal: Array<{
+    elapsedMs: number
+    channel: 'stdout' | 'stderr'
+    text: string
+  }> = []
+  /** The characters held in {@link outputBehindTerminal}. */
+  private outputBehindTerminalChars = 0
 
   /** The server writer, typed concretely so its request methods are traced to this sink. */
   private get serverWriter(): NodeServerHistoryWriter {
@@ -192,8 +216,25 @@ export class NodeServerHistorySinkImpl
     })
   }
 
-  response(elapsedMs: number, response: NodeServerResponse): void {
-    this.guard(() => {
+  response(
+    elapsedMs: number,
+    response: NodeServerResponse,
+    after?: Promise<void>,
+  ): void {
+    this.holdTerminal(after, () => this.appendResponse(elapsedMs, response))
+  }
+
+  /**
+   * Writes the response entry: the mark of the send first, then the answer, which ends the request.
+   * @param elapsedMs - Milliseconds since the launch when the response arrived.
+   * @param response - The response as the run shows it.
+   * @returns Settles when the entry is durable; `undefined` for a late report that is dropped.
+   */
+  private appendResponse(
+    elapsedMs: number,
+    response: NodeServerResponse,
+  ): Promise<void> | undefined {
+    {
       // A second answer, or one after a failure, is a late report: dropped, never a fault.
       if (this.terminal) return
       const at = this.structural(elapsedMs)
@@ -223,11 +264,33 @@ export class NodeServerHistorySinkImpl
         requestDurationMs: response.elapsedMs,
       })
       return mark ? Promise.all([mark, answer]).then(() => undefined) : answer
-    })
+    }
   }
 
-  failRequest(elapsedMs: number, code: string, message: string): void {
-    this.guard(() => {
+  failRequest(
+    elapsedMs: number,
+    code: string,
+    message: string,
+    after?: Promise<void>,
+  ): void {
+    this.holdTerminal(after, () =>
+      this.appendRequestFailure(elapsedMs, code, message),
+    )
+  }
+
+  /**
+   * Writes the failure entry that closes the open attempt.
+   * @param elapsedMs - Milliseconds since the launch when the request failed.
+   * @param code - The failure's code.
+   * @param message - The failure's sentence.
+   * @returns Settles when the entry is durable; `undefined` for a late report that is dropped.
+   */
+  private appendRequestFailure(
+    elapsedMs: number,
+    code: string,
+    message: string,
+  ): Promise<void> | undefined {
+    {
       // A second failure, or one after the answer, is a late report: dropped, never a fault.
       if (this.terminal) return
       // A failure with no request ever opened (the run ended before the declared request opened) has nothing to close: dropped, so the seal keeps the real cause instead of an append failure.
@@ -249,7 +312,75 @@ export class NodeServerHistorySinkImpl
           NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS,
         ),
       })
-    })
+    }
+  }
+
+  /**
+   * Writes a terminal entry now, or once `after` settles when stops that arrived before it are still being recorded.
+   * Why it exists: a stop that arrived inside the request but was captured after its response is still a stop of that request, and the journal accepts no stop after the terminal entry; holding the entry keeps the capture in the saved replay.
+   * Called by {@link response} and {@link failRequest}; {@link flush} writes a held entry at once, so a seal never loses it.
+   * @param after - What the entry waits for; absent writes it now.
+   * @param write - Writes the entry.
+   */
+  private holdTerminal(
+    after: Promise<void> | undefined,
+    write: () => Promise<void> | void,
+  ): void {
+    // A second terminal report while one waits is a late report, dropped like one after the terminal entry.
+    if (this.pendingTerminal) return
+    if (!after) {
+      this.guard(write)
+      return
+    }
+    this.pendingTerminal = write
+    // Whatever happens to the wait, the entry is written once.
+    const release = (): void => this.runPendingTerminal()
+    after.then(release, release)
+  }
+
+  /**
+   * Takes server output; while a terminal entry waits for earlier captures the output is kept behind it, so it is written after the response or failure it followed and keeps its own time.
+   * Why it exists: without it the output would be queued ahead of the held entry, moving the response behind output that the server printed after it and (the clock never moving back) stamping the response with that later time.
+   * Called by the run for every chunk the server prints.
+   * @param elapsedMs - Milliseconds since the launch.
+   * @param channel - The stream the chunk came from.
+   * @param text - The chunk.
+   * @example sink.output(30, 'stdout', 'late line\n') // written after a response that arrived at 20 ms and still waits for a capture
+   */
+  override output(
+    elapsedMs: number,
+    channel: 'stdout' | 'stderr',
+    text: string,
+  ): void {
+    if (!this.pendingTerminal) {
+      super.output(elapsedMs, channel, text)
+      return
+    }
+    this.outputBehindTerminal.push({ elapsedMs, channel, text })
+    this.outputBehindTerminalChars += text.length
+    // The held output is bounded: past the limit the entry is written now, as a seal would write it.
+    if (
+      this.outputBehindTerminalChars >
+      NODE_SERVER_HISTORY_HELD_OUTPUT_LIMIT_CHARS
+    )
+      this.runPendingTerminal()
+  }
+
+  /** Writes the held terminal entry, if one waits, then the output that arrived behind it. */
+  private runPendingTerminal(): void {
+    const write = this.pendingTerminal
+    this.pendingTerminal = undefined
+    if (write) this.guard(write)
+    const behind = this.outputBehindTerminal.splice(0)
+    this.outputBehindTerminalChars = 0
+    for (const chunk of behind)
+      super.output(chunk.elapsedMs, chunk.channel, chunk.text)
+  }
+
+  override flush(): void {
+    // A seal never goes ahead of a terminal entry the sink holds.
+    this.runPendingTerminal()
+    super.flush()
   }
 
   /** Queues the mark that the open attempt's bytes left, once; `undefined` when there is none to write. */

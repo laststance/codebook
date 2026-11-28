@@ -37,9 +37,17 @@ export type NodeServerDebuggerPause = {
   /** The top frame, repository-relative when inside the repository, else the file name alone. */
   location?: { path: string; line: number }
   /**
-   * A Bun run: whether the request-attribution window was open when the adapter's `stopped` arrived. The run takes it as the pause's attribution and never re-derives it from the request state at classification time, so a pause that arrived before the request's bytes (the learner's Pause) is never read as a hit the request caused. Absent for a node run, whose declared stops cannot be hit before the request.
+   * Whether the request-attribution window was open when the adapter's `stopped` arrived. The run takes it as the pause's attribution and never re-derives it from the request state at classification time, so a pause that arrived before the request's bytes (the learner's Pause) is never read as a hit the request caused, on every runtime. Absent when the debugger reports no arrival evidence (a run that does not set {@link NodeServerDebuggerInput.stopsJudgedByArrivalWindow}).
    */
   inRequestWindowAtStop?: boolean
+  /**
+   * Whether the open request window belonged to the sign-in request when the adapter's `stopped` arrived. The run takes it with {@link inRequestWindowAtStop} and never re-derives the sign-in phase at classification time, so a stop the sign-in caused (code that runs after its response was written) is no hit of the declared request that follows. Absent when the debugger reports no arrival evidence.
+   */
+  inSignInAtStop?: boolean
+  /**
+   * Whether the learner asked for this pause: it is the first stop after an accepted Pause request of the editor, or a stop that arrived while such a request was unanswered. The run holds it as the learner's before any other rule (start-hit, sign-in, request), whatever its reason or line, and never resumes it. Absent for every other pause.
+   */
+  learnerRequested?: boolean
 }
 
 /** What a captured owned pause reads, already redacted. */
@@ -108,8 +116,11 @@ export interface NodeServerDebugger {
     signal: AbortSignal,
     options?: { entryPause: boolean },
   ): Promise<void>
-  /** Opens or closes the causal window of the declared request, so the editor tells a stop of the request from the learner's. */
-  setRequestWindow(open: boolean): void
+  /**
+   * Opens or closes the causal window of the declared request, so the editor tells a stop of the request from the learner's.
+   * `signIn` marks a window that opens for the sign-in request: a stop that arrives in it is reported as arrived during the sign-in ({@link NodeServerDebuggerPause.inSignInAtStop}).
+   */
+  setRequestWindow(open: boolean, options?: { signIn: boolean }): void
   /** Reads an owned pause's declared inspections, its source hash and the redacted snapshot; refuses a pause that was resumed meanwhile. */
   capture(
     pause: NodeServerDebuggerPause,
@@ -117,12 +128,28 @@ export interface NodeServerDebugger {
   ): Promise<NodeServerStopCapture>
   /** Resumes the paused thread (the run reserved the pause before). */
   resume(pause: NodeServerDebuggerPause, signal: AbortSignal): Promise<void>
-  /** Retires every owned breakpoint, one after the other, confirmed by the adapter. */
+  /** Retires every owned breakpoint, one after the other, confirmed by the adapter; the stops that already arrived are classified first, so a stop that hit while the request was out is still known as an owned hit. */
   retireStops(signal: AbortSignal): Promise<void>
   /** Removes the owned breakpoints, ends the session (detach, which resumes the target) and stops listening; safe to call again after a failure. */
   release(): Promise<void>
+  /**
+   * Whether the learner holds a pause of the bound session: a Pause request still waiting for its answer or its stop, or a pause stop of the learner that has not run on. The run refuses to write a request while it is true (Codebook never writes while the learner holds a pause), and the debugger keeps the request window closed meanwhile. A debugger without the editor's Pause (a direct inspector connection) omits it.
+   */
+  learnerPausePending?(): boolean
+  /**
+   * Whether the learner's pending pause is only a Pause request that has produced no stop yet (the learner holds no stop to continue). The run words its refusal differently then: there is nothing to continue until the server stops.
+   */
+  learnerPauseAwaitsStop?(): boolean
+  /**
+   * Whether the bound debug session is over for the run (the editor terminated it, or the release began), true from the turn the editor reports it. The run refuses to write a request then, and the debugger never opens the request window of that session again. A debugger without an editor session omits it.
+   */
+  boundSessionEnded?(): boolean
   /** Whether the target is paused at a stop the run has not been told about yet (its stack is still being read): the stop kills such a server first, since the pause may be inside the request (D14). */
   hasUnreportedPause(): boolean
+  /**
+   * Settles once every stop that has arrived so far had its stack read and was reported to the run (or ran on); it never rejects. The run asks it when the response ends the request, so the history keeps the stops that arrived inside the request before it writes the response. A debugger that reads no stacks in a queue omits it.
+   */
+  arrivedStopsReported?(): Promise<void>
 }
 
 /** The pieces a debugger factory is given. */
@@ -133,6 +160,10 @@ export type NodeServerDebuggerInput = {
   citedSources: ConfiguredDescriptor['sources']
   stops: NodeServerStopTarget[]
   record: (type: string, detail?: unknown) => unknown
+  /**
+   * Whether the run judges a declared stop by the request window as it stood when the adapter's `stopped` arrived ({@link NodeServerDebuggerPause.inRequestWindowAtStop}). A node-server run does: its request window is the HTTP exchange, which opens at the first byte. A script run does not: its capture eligibility is its own lifecycle (a stop on the entry's first statement and every later declared stop are captured), so the debugger reports no arrival evidence for it and the stop ledger judges at classification time.
+   */
+  stopsJudgedByArrivalWindow?: boolean
   /** Masks the run's known secret values (the sign-in secret and session cookies) in every string a stop saves, before it is cut; read at call time, so values learned after the debugger was made still apply. Absent: nothing is masked. */
   maskKnownText?: (text: string) => string
 }

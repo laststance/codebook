@@ -428,7 +428,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.148'
+export const EXTENSION_VERSION = '0.2.149'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2131,6 +2131,8 @@ export const NODE_SERVER_WRITER_QUEUE_LIMIT_BYTES = 4_194_304
 export const NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES = 524_288
 /** The longest text of one `output` entry of a node-server history. */
 export const NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS = 4_096
+/** The most output characters a node-server history sink holds behind a response or failure entry that still waits for earlier captures; past it the entry is written at once (a later capture is then dropped as a late hit), so the held output stays bounded. */
+export const NODE_SERVER_HISTORY_HELD_OUTPUT_LIMIT_CHARS = 262_144
 /** The longest code (a withdrawal's, a failure's) a node-server history entry stores. */
 export const NODE_SERVER_HISTORY_CODE_LIMIT_CHARS = 128
 /** The longest frame name a `stop` entry stores. */
@@ -3980,6 +3982,10 @@ export const LIBRARY_SECTION_DEPTH_LIMIT = 8
 
 /** The words the shared process core uses in its sentences for a server run; a script run passes its own ({@link NODE_SCRIPT_RUN_WORDS}). */
 export const NODE_SERVER_RUN_WORDS = { noun: 'server', profile: 'node-server' }
+
+/** The refusal of a request that waits for a pause of the server the run has not heard of yet (its stack is still being read); before a request was sent, sending again once the pause is reported is the way on. The run recognises it by this text to word the refusal of a declared request after its sign-in, where nothing can be sent again. */
+export const NODE_SERVER_PAUSE_BEING_READ_TEXT =
+  'A pause of the server is still being read, so the request was not sent. Read the run and send again once the pause is reported.'
 
 /** The words the shared process core uses in its sentences for a script run. */
 export const NODE_SCRIPT_RUN_WORDS = { noun: 'script', profile: 'node-script' }

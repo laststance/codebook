@@ -104,6 +104,8 @@ export type HarnessOptions = {
   request?: NodeServerConfiguration['request']
   /** Reads a stop in place of the fake's empty snapshot, so a history test gets presentable captures. */
   capture?: (pause: NodeServerDebuggerPause) => NodeServerStopCapture
+  /** Builds the run's debugger in place of the hand-moved fake, for a test that drives the editor's real debugger ({@link editorRun}). */
+  createDebugger?: (input: NodeServerDebuggerInput) => NodeServerDebugger
 }
 
 /** A hand-moved stand-in for the editor's debugger: it records its calls in the shared order and lets the test emit pauses. */
@@ -184,7 +186,13 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
     this.releaseOptions.push(options)
     this.options.duringRelease?.(this)
   }
-  setRequestWindow(open: boolean): void {
+  /** Whether the run's last `setRequestWindow` left the attribution window open, as the real debugger's stop ledger would judge a stop that arrives now. */
+  requestWindowOpen = false
+  /** Whether the last window the run opened was marked as the sign-in request's. */
+  requestWindowIsSignIn = false
+  setRequestWindow(open: boolean, options?: { signIn: boolean }): void {
+    this.requestWindowOpen = open
+    this.requestWindowIsSignIn = open && options?.signIn === true
     this.order.push(`window:${open}`)
   }
   async capture(
@@ -528,6 +536,7 @@ export function createHarness(options: HarnessOptions = {}) {
     },
     node: { executable: '/usr/bin/node', version: '26.0.0' },
     createDebugger: (input) => {
+      if (options.createDebugger) return options.createDebugger(input)
       const created = new FakeNodeServerDebugger(input, order, options)
       debuggers.push(created)
       return created

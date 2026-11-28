@@ -267,6 +267,34 @@ test('a declared stop hit during the sign-in is resumed and listed, and the same
   assert.equal(paused.captures.length, 1)
 })
 
+// protects=a declared stop the sign-in caused (code that runs after its response was written) stays the sign-in's when its stack read finishes after the sign-in answered: it is resumed without a capture and never saved as the declared request's hit; fails_when=the run asks whether the sign-in is out when the classification finishes, so the late report reads as the declared request's hit and is captured while the request goes on; seam=the harness's fake debugger reporting a hit that arrived in the sign-in's window after the sign-in answered; no_claim=real DAP pauses or the adapter's stack-read timing (vscodeNodeServerDebugger.test.ts covers the arrival evidence)
+test(
+  'a declared stop the sign-in caused is resumed and not captured when it is reported after the sign-in answered',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const harness = await signingIn()
+    answerSignIn(harness)
+    await declaredRequestSent(harness)
+    // Act
+    const lateToken = harness.debug.pause({
+      declaredStopIndex: 0,
+      location: { path: 'src/routes/users.ts', line: 14 },
+      inRequestWindowAtStop: true,
+      inSignInAtStop: true,
+    })
+    const view = await until(
+      harness,
+      (current) => current.stopsHitDuringSignIn?.length === 1,
+    )
+    // Assert
+    assert.deepEqual(harness.debug.resumed, [lateToken])
+    assert.deepEqual(view.stopsHitDuringSignIn, [0])
+    assert.deepEqual(view.captures, [])
+    assert.deepEqual(view.stopsReached, [])
+  },
+)
+
 // protects=a sign-in that ends without headers drops the output held for a possible session value and the run reports the withheld bytes; the hold lasts the whole exchange and ends at the headers; fails_when=held output is released after a reset, holdback is finite during the exchange, or the withheld event is missing; no_claim=the launcher's mask stage (captureProcessOutput tests)
 test('a reset before the sign-in headers drops the held output and journals output-withheld', async () => {
   // Arrange

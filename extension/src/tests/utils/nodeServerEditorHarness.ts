@@ -4,6 +4,7 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import type * as vscode from 'vscode'
 
 import type { NodeServerDebuggerInput } from '../../nodeServerDebugger'
+import { awaitResponse } from '../../runtimeSupport/utils/awaitResponse'
 import type * as DebuggerModule from '../../vscodeNodeServerDebugger'
 
 import { loadModule } from './loadModule'
@@ -32,8 +33,16 @@ type FrameAt = { file: string; line: number; column?: number }
 export async function editorHarness(
   options: {
     verifiedLine?: number
+    /** The adapter reports no stop by itself after the attach (neither the entry pause nor a first stop), so a test delivers the first stop itself once the owned breakpoints are acknowledged, as a real hit can only follow its acknowledgement. */
+    noAutomaticStop?: boolean
     /** The first stop the adapter reports after the attach, in place of the entry pause. */
-    firstStop?: { reason: string; ids?: number[]; frame?: FrameAt }
+    firstStop?: {
+      reason: string
+      ids?: number[]
+      frame?: FrameAt
+      /** The stop follows the adapter's acknowledgement of the owned breakpoints instead of the attach, as a hit by id can only do. */
+      afterArming?: boolean
+    }
     stopFailures?: number
     /** The adapter rejects the stack trace of a pause after the entry pause. */
     stackTraceFails?: boolean
@@ -41,6 +50,10 @@ export async function editorHarness(
     noEntryPause?: boolean
     /** Holds the adapter's stack trace of a pause after the entry pause until the test settles it. */
     stackTraceGate?: Promise<void>
+    /** Delays the adapter's stack trace answer of every pause after the entry pause by this long, so a queue of reads takes a measurable time. */
+    stackTraceDelayMs?: number
+    /** Replaces the debugger's 20 s default deadline of one adapter read (its `awaitResponse`), so a test of cumulative latency runs in milliseconds. */
+    readDeadlineMs?: number
     /** Holds every `stopDebugging` call until the test settles it, so a release stays under way. */
     stopGate?: Promise<void>
     documents?: Array<{
@@ -56,6 +69,8 @@ export async function editorHarness(
     ) => DebugProtocol.Breakpoint
     /** Called for each owned breakpoint's binding lookup (`getDebugProtocolBreakpoint`); the editor's answer waits for the promise it returns, as a slow editor does. */
     bindingLookupGate?: () => Promise<void>
+    /** The adapter announces `supportsSingleThreadExecutionRequests` when the target session starts, and answers a continue that names `singleThread` for that thread only. */
+    supportsSingleThreadExecution?: boolean
     /** Runs the real {@link captureReplayDebugSnapshot} over the Local scope offering these variables, instead of the empty snapshot stand-in. */
     localVariables?: DebugProtocol.Variable[]
     /** Scripts the stopped frame's scopes and each scope's variables (by `variablesReference`) and runs the real capture and the real declared inspections over them, as a Bun stop's closures need. */
@@ -123,6 +138,8 @@ export async function editorHarness(
   let armed = 0
   // The entry pause is read normally; the pauses after it fail when asked.
   let entryDone = options.noEntryPause === true
+  // Whether the first stop that waits for the owned breakpoints' acknowledgement was delivered.
+  let firstStopAfterArmingDelivered = false
   /** Passes the editor's replacement of the file's breakpoints, and the adapter's reply, through the debugger's tracker. */
   const replaceBreakpoints = (): void => {
     const sequence = ++requestSequence
@@ -149,6 +166,12 @@ export async function editorHarness(
         ),
       },
     })
+    // The first stop that follows the acknowledgement of the owned breakpoints.
+    const first = options.firstStop
+    if (first?.afterArming && !firstStopAfterArmingDelivered) {
+      firstStopAfterArmingDelivered = true
+      queueMicrotask(() => adapter.stop(first.reason, first.ids, first.frame))
+    }
   }
   // js-debug's root of an attach owns no target and never answers `requestCDPProxy`: its request stays open for good.
   const rootSession = {
@@ -202,10 +225,18 @@ export async function editorHarness(
           request_seq: sequence,
           command,
           success: true,
-          body: { allThreadsContinued: true },
+          body: {
+            allThreadsContinued:
+              (arguments_ as { singleThread?: boolean } | undefined)
+                ?.singleThread !== true,
+          },
         })
       if (command === 'stackTrace' && options.stackTraceFails && entryDone)
         throw new Error('stackTrace timed out')
+      if (command === 'stackTrace' && entryDone)
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.stackTraceDelayMs ?? 0),
+        )
       if (command === 'stackTrace' && entryDone) await options.stackTraceGate
       if (command === 'stackTrace')
         return {
@@ -329,6 +360,16 @@ export async function editorHarness(
           tracker =
             (await trackerFactory?.createDebugAdapterTracker(session)) ??
             undefined
+          if (options.supportsSingleThreadExecution)
+            tracker?.onDidSendMessage?.({
+              type: 'response',
+              seq: 1,
+              request_seq: 1,
+              command: 'initialize',
+              success: true,
+              body: { supportsSingleThreadExecutionRequests: true },
+            })
+          if (options.noAutomaticStop || options.firstStop?.afterArming) return
           queueMicrotask(() =>
             options.firstStop
               ? adapter.stop(
@@ -371,6 +412,19 @@ export async function editorHarness(
     {
       vscode: editor,
       './ownedRepositoryBreakpoint': breakpointModule,
+      // A test of cumulative latency shortens the one-read deadline, which the module takes from this stand-in.
+      ...(options.readDeadlineMs === undefined
+        ? {}
+        : {
+            './runtimeSupport/utils/awaitResponse': {
+              awaitResponse: <Value>(
+                response: PromiseLike<Value>,
+                description: string,
+                signal?: AbortSignal,
+                timeoutMs = options.readDeadlineMs,
+              ) => awaitResponse(response, description, signal, timeoutMs),
+            },
+          }),
       './utils/bindOwnedNodeTestDebugSession': {
         bindOwnedNodeTestDebugSession: async (
           bound: vscode.DebugSession,
@@ -432,12 +486,13 @@ export async function editorHarness(
   )
   /** The adapter's side: stops and the learner's resume. */
   const adapter = {
-    /** The adapter reports a stop of the thread (thread 1 unless named); with a frame, the stack answers it. */
+    /** The adapter reports a stop of the thread (thread 1 unless named); with a frame, the stack answers it; `allThreadsStopped` is passed through when given. */
     stop(
       reason: string,
       hitBreakpointIds?: number[],
       frame?: FrameAt,
       threadId = 1,
+      allThreadsStopped?: boolean,
     ): void {
       currentFrame = frame
       tracker?.onDidSendMessage?.({
@@ -447,28 +502,76 @@ export async function editorHarness(
           threadId,
           reason,
           ...(hitBreakpointIds ? { hitBreakpointIds } : {}),
+          ...(allThreadsStopped === undefined ? {} : { allThreadsStopped }),
         },
       })
     },
-    /** The learner presses Continue: the editor's request reaches the adapter, which accepts it (every thread runs on) or rejects it (the thread stays paused). */
-    learnerContinues(answer: { rejected?: boolean } = {}): void {
+    /** The adapter reports that every thread stopped without naming one (a `stopped` event with no `threadId`). */
+    stoppedWithoutThread(reason = 'pause'): void {
+      tracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'stopped',
+        body: { reason, allThreadsStopped: true },
+      })
+    },
+    /** The learner presses Continue (for thread 1 unless named) and the adapter has not answered yet: the editor's request reached the adapter; the returned function delivers the adapter's answer, accepted (every thread runs on, or only the named one when `allThreadsContinued` is false) or rejected (the thread stays paused). */
+    learnerSendsContinue(
+      threadId = 1,
+    ): (answer?: {
+      rejected?: boolean
+      allThreadsContinued?: boolean
+    }) => void {
       const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
         type: 'request',
         seq: sequence,
         command: 'continue',
-        arguments: { threadId: 1 },
+        arguments: { threadId },
       })
-      tracker?.onDidSendMessage?.({
-        type: 'response',
-        seq: sequence + 1_000,
-        request_seq: sequence,
-        command: 'continue',
-        success: !answer.rejected,
-        ...(answer.rejected
-          ? { message: 'the thread is not paused' }
-          : { body: { allThreadsContinued: true } }),
+      return (answer = {}) =>
+        tracker?.onDidSendMessage?.({
+          type: 'response',
+          seq: sequence + 1_000,
+          request_seq: sequence,
+          command: 'continue',
+          success: !answer.rejected,
+          ...(answer.rejected
+            ? { message: 'the thread is not paused' }
+            : {
+                body: {
+                  allThreadsContinued: answer.allThreadsContinued ?? true,
+                },
+              }),
+        })
+    },
+    /** The learner presses Continue: the editor's request reaches the adapter, which accepts it (every thread runs on) or rejects it (the thread stays paused). */
+    learnerContinues(answer: { rejected?: boolean } = {}): void {
+      adapter.learnerSendsContinue()(answer)
+    },
+    /** The learner presses Pause (for thread 1 unless named) and the adapter has not answered yet: the editor's `pause` request reached the adapter; the returned function delivers the adapter's answer, accepted (a `pause` stop follows when the test reports one) or rejected (the thread was already paused). */
+    learnerSendsPause(threadId = 1): (answer?: { rejected?: boolean }) => void {
+      const sequence = ++requestSequence
+      tracker?.onWillReceiveMessage?.({
+        type: 'request',
+        seq: sequence,
+        command: 'pause',
+        arguments: { threadId },
       })
+      return (answer = {}) =>
+        tracker?.onDidSendMessage?.({
+          type: 'response',
+          seq: sequence + 1_000,
+          request_seq: sequence,
+          command: 'pause',
+          success: !answer.rejected,
+          ...(answer.rejected
+            ? { message: 'the thread is already paused' }
+            : {}),
+        })
+    },
+    /** The learner presses Pause (for thread 1 unless named): the editor's `pause` request reaches the adapter, which accepts it (a `pause` stop follows when the test reports one) or rejects it (the thread was already paused). */
+    learnerPauses(answer: { rejected?: boolean } = {}, threadId = 1): void {
+      adapter.learnerSendsPause(threadId)(answer)
     },
     /** The adapter's later news about a breakpoint it acknowledged (a DAP `breakpoint` event). */
     breakpointNews(
@@ -481,12 +584,15 @@ export async function editorHarness(
         body: { reason, breakpoint },
       })
     },
-    /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread. */
-    continued(threadId: number, allThreadsContinued: boolean): void {
+    /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread, `true` says every thread did, and an omitted flag leaves the event naming its thread alone. */
+    continued(threadId: number, allThreadsContinued?: boolean): void {
       tracker?.onDidSendMessage?.({
         type: 'event',
         event: 'continued',
-        body: { threadId, allThreadsContinued },
+        body: {
+          threadId,
+          ...(allThreadsContinued === undefined ? {} : { allThreadsContinued }),
+        },
       })
     },
     /** A child session of the run's attach (a debuggee it spawned) reports a stop; the run's debugger must not report it. */
@@ -504,6 +610,10 @@ export async function editorHarness(
         event: 'stopped',
         body: { threadId: 2, reason },
       })
+    },
+    /** The adapter reports the debuggee gone (a DAP `terminated` event), before the editor ends the session. */
+    terminated(): void {
+      tracker?.onDidSendMessage?.({ type: 'event', event: 'terminated' })
     },
     /** The editor ends the session. */
     end(): void {
@@ -526,6 +636,11 @@ export async function editorHarness(
     childStartedAt: (): number | undefined => childStartedAt,
     editorBreakpoints,
     session,
+    /** Creates the debugger under test for the input a run built, so a run drives the real debugger (its own stops and workspace). */
+    createDebuggerFor(input: NodeServerDebuggerInput) {
+      sourceFile = input.stops[0]?.file ?? sourceFile
+      return module.createVscodeNodeServerDebugger(input)
+    },
     /** Creates the debugger under test. */
     createDebugger(
       stops: Array<{ line: number; column: number }>,
@@ -553,6 +668,8 @@ export async function editorHarness(
           inspections: [],
         })),
         record: (type, detail) => events.push({ type, detail }),
+        // These tests stand for a node-server run, which judges its stops by the window as it stood when they arrived.
+        stopsJudgedByArrivalWindow: true,
         ...(maskKnownText ? { maskKnownText } : {}),
       })
       return { debug, events }

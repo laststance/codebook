@@ -18,6 +18,7 @@ import {
   type CauseRoots,
 } from '../utils/sanitizeCause'
 
+import { defer } from './utils/defer'
 import {
   nodeServerHistoryHeader,
   openServerRepository,
@@ -961,4 +962,28 @@ test('a cookie record and a Cookie header string in a stop’s snapshot reach no
   assert.equal(files.includes(cookieValue), false)
   assert.match(files, /"name":"cookieHeader","value":"\[masked\]"/)
   assert.match(files, /"name":"value","value":"\[masked\]"/)
+})
+
+// protects=a response that waits for an earlier capture keeps its place and its time in the saved replay: output the server printed after the response is written behind it and keeps its own time; fails_when=the output is queued ahead of the held response, so the replay shows the server printing before it answered and the response is stamped with the output's later time (Cycle 0153 ship pass 3 U7); seam=a response held on a pending promise, output reported at a later time and the held entry's release; no_claim=the run's own capture timing
+test('output printed after a held response is saved behind it and the response keeps its time', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await startSink(context)
+  const capturesDone = defer<void>()
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+
+  // Act
+  sink.response(20, RESPONSE, capturesDone.promise)
+  sink.output(30, 'stdout', 'printed after the response\n')
+  capturesDone.resolve()
+  await capturesDone.promise
+  sink.flush()
+  await writer.seal({ elapsedMs: 40, reason: 'stopped' })
+  const history = await store.read(studyId)
+
+  // Assert
+  assert.deepEqual(
+    history.entries.map((entry) => `${entry.type}@${entry.elapsedMs}`),
+    ['request@10', 'request-sent@11', 'response@20', 'output@30', 'end@40'],
+  )
 })

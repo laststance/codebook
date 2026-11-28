@@ -734,6 +734,8 @@ test('a server that exits before it answers fails the run with SERVER_EXITED and
   assert.equal(view.runFailure?.code, 'SERVER_EXITED')
   assert.equal(view.requestFailure, undefined)
   assert.equal(harness.server.closeCalls, 1)
+  // The request ended with the run, so the debugger's attribution window is closed explicitly.
+  assert.equal(harness.debug.requestWindowOpen, false)
 })
 
 // protects=a leader that exits while a group member lives still closes the whole group; fails_when=the group is not closed after the leader's exit; no_claim=a real child
@@ -1083,6 +1085,8 @@ test('a Stop after the first byte ends the request without a failure and keeps i
   assert.equal(harness.run.view().state, 'stopped')
   assert.equal(harness.run.view().request?.method, 'GET')
   assert.equal(harness.sender.calls[0]?.signal?.aborted, true)
+  // The Stop ended the request, so the debugger's attribution window is closed explicitly, not left to the session's end.
+  assert.equal(harness.debug.requestWindowOpen, false)
   assert.equal(
     harness.events.some((event) => event.type === 'node-server.failure'),
     false,
@@ -1201,6 +1205,28 @@ test('a continue the adapter fails keeps the run paused and the same arguments u
   assert.equal(afterFailure.state, 'paused')
   assert.deepEqual(afterFailure.pause?.generation, pause.generation)
   assert.match(retry.message, /adapter timeout/)
+})
+
+// protects=a capture that a later stop of its thread replaced while the chat's Continue of it was reserved stays gone when the adapter rejects that Continue: the learner's newer stop is the only pause, and no stale hold ends the run; fails_when=the rejection leaves the replaced capture published again, so after the learner continues the newer stop the old pause is still shown and its hold expires with PAUSE_HOLD_EXPIRED (Cycle 0153 ship pass 3 U5); seam=the run's fake debugger with a held and rejected resume, a later exception of the same thread, the learner's Continue of it and the pause-hold clock; no_claim=the real adapter's rejection message
+test('a rejected Continue does not bring back a capture that a later stop of its thread replaced', async () => {
+  // Arrange
+  const gate = defer<void>()
+  const harness = await readyHarness({ resumeFails: new Error('rejected') })
+  const pause = await pausedAtStop(harness)
+  harness.debug.resumeGate = gate.promise
+  const continuing = rejectsWith(harness.run.continue(pause), 'RUNTIME_FAILED')
+  const exceptionToken = harness.debug.learnerPause('exception')
+  await until(harness, (current) => current.heldPause !== undefined)
+  // Act
+  gate.resolve()
+  await continuing
+  harness.debug.nativeContinue(exceptionToken)
+  harness.clock.advance(300_000)
+  const view = harness.run.view()
+  // Assert
+  assert.equal(view.pause, undefined)
+  assert.equal(view.heldPause, undefined)
+  assert.equal(view.runFailure, undefined)
 })
 
 // protects=a second continue while the first one's resume is under way is STALE_PAUSE even after the editor reported the resume; fails_when=NO_PAUSE answers it or the pause is cleared early; no_claim=real latency
@@ -1648,3 +1674,49 @@ test('a continue while the run is stopping with the learner pause held is STALE_
   // Assert
   assert.match(error.message, /stopping or stopped/)
 })
+
+// protects=on a node run too, a declared stop hit while the declared request after a sign-in is still being verified (the window closed when the sign-in answered) is held as unattributed and never captured, the same verdict the stop ledger gives; fails_when=a node run captures the hit as the request's because it reads the request state instead of the arrival-time window; seam=the harness's fake debugger recording setRequestWindow, with the declared request's peer check held open; no_claim=the real adapter's event order (vscodeNodeServerDebugger.test.ts covers the arrival evidence)
+test(
+  'a node declared stop hit while the declared request after a sign-in is still being verified is held as unattributed, not captured',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const options: HarnessOptions = {
+      signIn: {
+        path: '/login',
+        fields: { email: 'learner@example.test' },
+        secretField: 'password',
+        secret: 'ask-learner',
+      },
+    }
+    const harness = createHarness(options)
+    await harness.run.prepare()
+    await harness.run.sendRequest('key-1', { secret: 'hunter2-correct-horse' })
+    // The declared request's peer check stays open while the stop is hit.
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    options.peerCheckGate = peerCheck.promise
+    options.onPeerCheckEntered = peerCheckEntered.resolve
+    const [signInExchange] = harness.sender.exchanges
+    signInExchange?.onSetCookie?.(['sid=s%3Aabc123def456; Path=/; HttpOnly'])
+    signInExchange?.response.resolve(RESPONSE_200)
+    await peerCheckEntered.promise
+    // Act
+    const windowOpenAtHit = harness.debug.requestWindowOpen
+    harness.debug.pause({
+      declaredStopIndex: 0,
+      location: { path: 'src/routes/users.ts', line: 14 },
+      inRequestWindowAtStop: windowOpenAtHit,
+    })
+    // Assert
+    assert.equal(windowOpenAtHit, false)
+    const view = harness.run.view()
+    assert.equal(view.heldPause?.kind, 'unattributed')
+    assert.equal(view.captures.length, 0)
+    assert.equal(
+      harness.order.some((step) => step.startsWith('capture:')),
+      false,
+    )
+    peerCheck.resolve()
+  },
+)

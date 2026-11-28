@@ -143,3 +143,134 @@ test('forgetting a session drops its waiting resumes and keeps another sessionâ€
   assert.equal(answer('session-1'), undefined)
   assert.deepEqual(answer('session-2'), { threadId: undefined })
 })
+
+// protects=the answer to a resume names the newest stop that existed when the request was sent, so a debugger resumes no later stop; fails_when=the token noted with the request is dropped or replaced by a later one; no_claim=how a debugger numbers its stops
+test('an answered resume carries the newest stop token noted with its request', () => {
+  // Arrange
+  const resumes = new PendingResumeRequests()
+  resumes.noteRequest(
+    'session-1',
+    {
+      type: 'request',
+      seq: 40,
+      command: 'continue',
+      arguments: { threadId: 3 },
+    },
+    5,
+  )
+
+  // Act
+  const ranOn = resumes.takeAnswered('session-1', {
+    type: 'response',
+    seq: 41,
+    request_seq: 40,
+    command: 'continue',
+    success: true,
+    body: { allThreadsContinued: false },
+  })
+
+  // Assert
+  assert.deepEqual(ranOn, { threadId: 3, newestStopToken: 5 })
+})
+
+// Value: protects=a resume sent before any stop existed (token 0) still carries that token, so its late answer resumes no stop that arrived meanwhile; fails_when=the token is dropped as falsy and the answer then reads as resuming every stop; why_new=the existing token test only uses 5; seam=none; no_claim=how a debugger numbers its stops
+test('an answered resume sent before any stop existed carries the zero stop token', () => {
+  // Arrange
+  const resumes = new PendingResumeRequests()
+  resumes.noteRequest(
+    'session-1',
+    {
+      type: 'request',
+      seq: 50,
+      command: 'next',
+      arguments: { threadId: 4 },
+    },
+    0,
+  )
+
+  // Act
+  const ranOn = resumes.takeAnswered('session-1', {
+    type: 'response',
+    seq: 51,
+    request_seq: 50,
+    command: 'next',
+    success: true,
+  })
+
+  // Assert
+  assert.deepEqual(ranOn, { threadId: undefined, newestStopToken: 0 })
+})
+
+// protects=a waiting continue covers the stops that existed when it was sent and leaves a later stop alone, and a request for one thread leaves another thread's stop alone; fails_when=a stop newer than the request, or a stop of another thread under a single-thread request, counts as covered, so the debugger judges an arrival by a Continue that cannot end its pause (Cycle 0153 ship pass 1 OV4); no_claim=the debugger's window handling
+test('a waiting continue covers the older stops of its threads only', () => {
+  // Arrange
+  const resumes = new PendingResumeRequests()
+  resumes.noteRequest(
+    'session-1',
+    {
+      type: 'request',
+      seq: 7,
+      command: 'continue',
+      arguments: { threadId: 2, singleThread: true },
+    },
+    5,
+  )
+
+  // Act
+  const olderOnItsThread = resumes.coveringRequestSeqs('session-1', {
+    threadId: 2,
+    token: 5,
+  })
+  const newerOnItsThread = resumes.coveringRequestSeqs('session-1', {
+    threadId: 2,
+    token: 6,
+  })
+  const olderOnAnotherThread = resumes.coveringRequestSeqs('session-1', {
+    threadId: 3,
+    token: 4,
+  })
+  const olderInAnotherSession = resumes.coveringRequestSeqs('session-2', {
+    threadId: 2,
+    token: 4,
+  })
+
+  // Assert
+  assert.deepEqual(olderOnItsThread, [7])
+  assert.deepEqual(newerOnItsThread, [])
+  assert.deepEqual(olderOnAnotherThread, [])
+  assert.deepEqual(olderInAnotherSession, [])
+})
+
+// protects=a response is recognised as the answer to a waiting resume until the answer was taken, so a refused Continue can be told from the reply to another request; fails_when=isPending stays true after takeAnswered or answers true for a request that is no resume; no_claim=the debugger's window handling
+test('a response is pending as a resume answer until it was taken', () => {
+  // Arrange
+  const resumes = new PendingResumeRequests()
+  resumes.noteRequest('session-1', {
+    type: 'request',
+    seq: 7,
+    command: 'continue',
+    arguments: { threadId: 2 },
+  })
+  resumes.noteRequest('session-1', {
+    type: 'request',
+    seq: 8,
+    command: 'stackTrace',
+    arguments: { threadId: 2 },
+  })
+
+  // Act
+  const beforeAnswer = resumes.isPending('session-1', 7)
+  const notAResume = resumes.isPending('session-1', 8)
+  resumes.takeAnswered('session-1', {
+    type: 'response',
+    seq: 9,
+    request_seq: 7,
+    command: 'continue',
+    success: false,
+  })
+
+  // Assert
+  assert.equal(beforeAnswer, true)
+  assert.equal(notAResume, false)
+  assert.equal(resumes.isPending('session-1', 7), false)
+})

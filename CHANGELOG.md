@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.149.0] - 2026-11-28 (development candidate)
+
+Cycle 0153 ([Issue #383](https://github.com/laststance/codebook/issues/383)), a bug-fix cycle. **A server run tells the request's stops from your own pauses more reliably, and never sends its request while you hold a pause.**
+
+### Fixed
+
+- **While you hold a pause of yours, or a Pause you pressed has not stopped the server yet, Codebook writes no request.** A request about to be sent is refused with `LEARNER_PAUSED`. After a sign-in, the declared request ends with `REQUEST_FAILED` and says it was not sent, so you continue in the debugger, stop the run with `codebook_stop` and start a new run. Nothing is written once the run's debug session has ended.
+- **A declared line reached before the request's first byte is written, or while the sign-in request is out, is reported as outside the request** instead of being explained as part of it.
+- **A stop that arrived inside the request stays its capture even when the response comes first.**
+- **After you press Pause, a declared stop counts as the request's again once every pause of yours has ended,** so the request's later stops are still captured after you continue. A stop that arrives while your Continue is still unanswered is captured or continued only after the answer confirms your pause ended.
+- **A pause that arrives just before the debugger answers a continue is still reported,** never dropped.
+- **A stop that your own breakpoint and a declared stop hit together is your pause**, and so is a first stop of the run on one of your own breakpoints or one that a Pause you pressed while the server was starting produced: Codebook never continues or captures it. On Bun, a pause on a line where you had an enabled breakpoint when it stopped stays yours, even if you remove that breakpoint meanwhile.
+- **While you hold a pause on another thread, Codebook continues its own stop on that thread alone when the debugger supports it,** and otherwise leaves the stop paused for you and says so. A stop that names no thread, or stops every thread, keeps the request refused until every thread has been continued.
+
 ## [0.2.148.0] - 2026-11-28 (development candidate)
 
 Cycle 0152 ([Issue #379](https://github.com/laststance/codebook/issues/379)), a feature cycle. **A server that runs on Bun, such as an app made with `bun create elysia app`, now pauses in the editor's native debugger.** Ask `/codebook` about one of its requests: the chat runs the server on Bun, stops on your TypeScript lines with their values, continues to the response and saves a Server replay.
