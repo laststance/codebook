@@ -280,18 +280,19 @@ test('a Bun breakpoint stop without hit ids at the second column of a shared lin
 // Value: protects=an ID-less Bun hit on a shared line at a column that matches neither declared stop stays the learner's pause; fails_when=the hit is guessed as the first stop of the line; seam=the editor harness reporting an ID-less stop at column 10; no_claim=which columns learners break on
 test('a Bun breakpoint stop without hit ids at a column matching neither stop of a shared line stays the learner pause', async () => {
   // Arrange
-  const editor = await editorHarness({
-    firstStop: {
-      reason: 'breakpoint',
-      frame: { file: STOP_FILE, line: 14, column: 10 },
-    },
-  })
+  // The hit follows the verification of both bindings, so only the column check can tell it from a stop of either (Cycle 0153 ship pass 2 T14).
+  const editor = await editorHarness({ noAutomaticStop: true })
   const { debug } = editor.createDebugger(SAME_LINE_STOPS)
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
   await armStopsAt(debug, SAME_LINE_STOPS)
-  // Act
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  editor.adapter.stop('breakpoint', undefined, {
+    file: STOP_FILE,
+    line: 14,
+    column: 10,
+  })
   const first = await nextPause()
   // Assert
   assert.equal(first.declaredStopIndex, undefined)
@@ -708,10 +709,8 @@ test('a Bun pause matching both stops of a shared line stays the learner pause',
             line: requested.line,
             column: requested.column,
           },
-    firstStop: {
-      reason: 'breakpoint',
-      frame: { file: STOP_FILE, line: 14, column: 24 },
-    },
+    // The hit follows the verification of both bindings, so only the column check can tell the line-only binding from the one with a column (Cycle 0153 ship pass 2 T14).
+    noAutomaticStop: true,
   })
   const { debug } = editor.createDebugger(SAME_LINE_STOPS)
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
@@ -719,6 +718,11 @@ test('a Bun pause matching both stops of a shared line stays the learner pause',
   await armStopsAt(debug, SAME_LINE_STOPS)
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
   // Act
+  editor.adapter.stop('breakpoint', undefined, {
+    file: STOP_FILE,
+    line: 14,
+    column: 24,
+  })
   const pause = await nextPause()
   // Assert
   assert.equal(pause.declaredStopIndex, undefined)
