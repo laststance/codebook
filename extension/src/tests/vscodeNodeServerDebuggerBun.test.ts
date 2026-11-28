@@ -935,14 +935,17 @@ test(
     const answerSecondPause = editor.adapter.learnerSendsPause()
     // Act
     answerContinue()
-    answerSecondPause()
+    // The hit arrives, and is judged, while the second Pause is still unanswered.
     editor.adapter.stop('breakpoint', undefined, {
       file: STOP_FILE,
       line: 14,
     })
     const hit = await nextPause()
+    // The answer comes only afterwards: it cannot change what the hit was judged by.
+    answerSecondPause()
     // Assert
     assert.equal(hit.inRequestWindowAtStop, false)
+    assert.equal(debug.learnerPausePending?.(), true)
     await debug.release()
   },
 )
