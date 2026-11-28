@@ -1198,8 +1198,25 @@ export class NodeProcessRun {
       'LEARNER_PAUSED',
       held?.kind === 'unattributed'
         ? `The ${this.words.noun} stopped at a declared line outside the request; Codebook never resumes it. Ask the learner to continue it in the debugger.`
-        : `The learner paused the ${this.words.noun}; Codebook never resumes it. Ask the learner to continue it in the debugger.`,
+        : this.learnerPausedSentence(),
     )
+  }
+
+  /**
+   * Refuses a request while the learner holds a pause, whether the run heard of it yet or not: a pause the run holds, or a Pause request of the editor that is unanswered or has not met its stop (the debugger knows it before the run does).
+   * Why it exists: a pause request the adapter accepted stops the server at its next line, so a request written meanwhile would run while the learner asked for the stop. Called by the node-server run before it admits a request and right before it writes one.
+   * @throws `LEARNER_PAUSED` naming who paused, with the sentence the held-pause refusal uses.
+   * @example this.assertNoLearnerPause() // throws StudyError('LEARNER_PAUSED', 'The learner paused the server; …') between the editor's Pause and its stop
+   */
+  assertNoLearnerPause(): void {
+    this.assertNoHeldPause()
+    if (this.debug?.learnerPausePending?.())
+      throw new StudyError('LEARNER_PAUSED', this.learnerPausedSentence())
+  }
+
+  /** The sentence of a refusal for the learner's own pause. */
+  private learnerPausedSentence(): string {
+    return `The learner paused the ${this.words.noun}; Codebook never resumes it. Ask the learner to continue it in the debugger.`
   }
 
   /**

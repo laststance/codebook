@@ -387,6 +387,38 @@ test(
   },
 )
 
+// protects=the run's intent to send never opens the request window over a Pause the learner sent: the window stays closed through the Pause's answer and its stop, and opens when that stop runs on; fails_when=setRequestWindow(true) opens the ledger at once, so a stop the Pause causes on a declared line reads as arrived inside the window (Cycle 0153 ship pass 1 S2); seam=the editor harness's unanswered Pause, the debugger's setRequestWindow and the stop ledger; no_claim=the run's own refusal of the write (ownedNodeServerRunEditor.test.ts)
+test(
+  'a request window the run opens over an outstanding learner Pause stays closed until the Pause stop runs on',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const answerPause = editor.adapter.learnerSendsPause()
+    // Act
+    debug.setRequestWindow(true)
+    const whileUnanswered = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    const pendingWhileUnanswered = debug.learnerPausePending?.()
+    answerPause()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const whileHeld = codebookStopLedger.isWindowOpen('node-server-session')
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(whileUnanswered, false)
+    assert.equal(pendingWhileUnanswered, true)
+    assert.equal(whileHeld, false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    assert.equal(debug.learnerPausePending?.(), false)
+    await debug.release()
+  },
+)
+
 // protects=retiring removes every owned breakpoint, one after another, each confirmed by the adapter; fails_when=one stays armed; no_claim=VS Code's own removal
 test('retiring the stops removes both owned breakpoints of the file', async () => {
   // Arrange

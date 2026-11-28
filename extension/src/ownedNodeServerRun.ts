@@ -715,7 +715,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * @throws A held pause's refusal, `REQUEST_ALREADY_SENT` and `RUN_NOT_READY`.
    */
   private assertReadyForRequest(): ReadyForRequest {
-    this.core.assertNoHeldPause()
+    this.core.assertNoLearnerPause()
     if (this.request)
       throw new StudyError(
         'REQUEST_ALREADY_SENT',
@@ -1010,8 +1010,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * @example this.beforeRequestWrite() // throws StudyError('LEARNER_PAUSED', 'The learner paused the server; Codebook never resumes it. …')
    */
   private beforeRequestWrite(): void {
-    // A pause the learner holds (classified after the request began) stops the write before any byte.
-    this.core.assertNoHeldPause()
+    // A pause the learner holds, or asked for and has not reached yet, stops the write before any byte.
+    this.core.assertNoLearnerPause()
     const refusal = this.core.requestRefusalNow()
     if (refusal) throw new StudyError('RUN_NOT_READY', refusal)
     // A window that opens for the sign-in request is marked as such, so a stop the sign-in causes is told apart from the declared request's.

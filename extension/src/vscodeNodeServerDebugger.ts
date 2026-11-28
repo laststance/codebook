@@ -990,8 +990,21 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     this.requestWindowIsSignIn = open && options?.signIn === true
     const sessionId = this.bound?.session.id
     if (!sessionId) return
-    if (open) codebookStopLedger.openWindow([sessionId])
+    // The run's intent to send never establishes ownership of a stop the learner asked for: while the learner holds a Pause of the session the window stays closed, and it opens when the last learner pause ends ({@link reopenRequestWindow}).
+    if (open && !this.learnerHoldsPause(sessionId))
+      codebookStopLedger.openWindow([sessionId])
     else codebookStopLedger.closeWindow([sessionId])
+  }
+
+  /**
+   * Tells whether the learner holds a pause of the bound session: a `pause` request that is unanswered or accepted without its stop, or a learner pause stop that has not run on.
+   * Why it exists: the run reads it right before it writes a request, because a request written now would run while the learner asked for the server to stop. Called by the run through {@link NodeServerDebugger.learnerPausePending}.
+   * @returns `true` while any learner-pause record of the bound session remains; `false` before the attach.
+   * @example debug.learnerPausePending() // => true between the editor's Pause request and the Continue of its stop
+   */
+  learnerPausePending(): boolean {
+    const sessionId = this.bound?.session.id
+    return sessionId !== undefined && this.learnerHoldsPause(sessionId)
   }
 
   // ---------------------------------------------------------------- capture and resume

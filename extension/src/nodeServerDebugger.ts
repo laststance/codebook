@@ -128,6 +128,10 @@ export interface NodeServerDebugger {
   retireStops(signal: AbortSignal): Promise<void>
   /** Removes the owned breakpoints, ends the session (detach, which resumes the target) and stops listening; safe to call again after a failure. */
   release(): Promise<void>
+  /**
+   * Whether the learner holds a pause of the bound session: a Pause request still waiting for its answer or its stop, or a pause stop of the learner that has not run on. The run refuses to write a request while it is true (Codebook never writes while the learner holds a pause), and the debugger keeps the request window closed meanwhile. A debugger without the editor's Pause (a direct inspector connection) omits it.
+   */
+  learnerPausePending?(): boolean
   /** Whether the target is paused at a stop the run has not been told about yet (its stack is still being read): the stop kills such a server first, since the pause may be inside the request (D14). */
   hasUnreportedPause(): boolean
 }
