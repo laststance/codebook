@@ -833,3 +833,33 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a response that ends the request while two stack reads are queued, each within its own deadline, keeps both hits as captures and leaves the run alive: the queue is drained under the reads' own deadlines, not one deadline for all of them; fails_when=the retirement waits for the whole queue under the deadline of a single read, so cumulative latency of healthy reads fails the run with RUNTIME_FAILED (Cycle 0153 ship pass 2 T11, OV6); seam=the editor's real debugger behind the run, a 600 ms read deadline in place of 20 s, two hits of the same declared stop on two threads whose stack reads take 350 ms each, and the response delivered at once; no_claim=the real adapter's latency
+test(
+  'two slow stack reads queued around the response each get their own deadline and the run stays alive',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun({
+      editor: { stackTraceDelayMs: 350, readDeadlineMs: 600 },
+    })
+    await harness.run.sendRequest('key-1')
+    hitDeclaredStop(editor, 0, 1)
+    hitDeclaredStop(editor, 0, 2)
+    // Act
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    await until(harness, (view) => view.state === 'responded')
+    await waitUntil(
+      () =>
+        harness.run.view().runFailure !== undefined ||
+        harness.run.view().captures.length === 2,
+      'both hits captured or the run failed',
+      5_000,
+    )
+    // Assert
+    const view = harness.run.view()
+    assert.equal(view.runFailure, undefined)
+    assert.deepEqual(view.stopsReached, [0, 0])
+    await harness.run.stop()
+  },
+)

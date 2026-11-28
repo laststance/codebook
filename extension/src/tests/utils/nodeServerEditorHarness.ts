@@ -4,6 +4,7 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import type * as vscode from 'vscode'
 
 import type { NodeServerDebuggerInput } from '../../nodeServerDebugger'
+import { awaitResponse } from '../../runtimeSupport/utils/awaitResponse'
 import type * as DebuggerModule from '../../vscodeNodeServerDebugger'
 
 import { loadModule } from './loadModule'
@@ -41,6 +42,10 @@ export async function editorHarness(
     noEntryPause?: boolean
     /** Holds the adapter's stack trace of a pause after the entry pause until the test settles it. */
     stackTraceGate?: Promise<void>
+    /** Delays the adapter's stack trace answer of every pause after the entry pause by this long, so a queue of reads takes a measurable time. */
+    stackTraceDelayMs?: number
+    /** Replaces the debugger's 20 s default deadline of one adapter read (its `awaitResponse`), so a test of cumulative latency runs in milliseconds. */
+    readDeadlineMs?: number
     /** Holds every `stopDebugging` call until the test settles it, so a release stays under way. */
     stopGate?: Promise<void>
     documents?: Array<{
@@ -212,6 +217,10 @@ export async function editorHarness(
         })
       if (command === 'stackTrace' && options.stackTraceFails && entryDone)
         throw new Error('stackTrace timed out')
+      if (command === 'stackTrace' && entryDone)
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.stackTraceDelayMs ?? 0),
+        )
       if (command === 'stackTrace' && entryDone) await options.stackTraceGate
       if (command === 'stackTrace')
         return {
@@ -386,6 +395,19 @@ export async function editorHarness(
     {
       vscode: editor,
       './ownedRepositoryBreakpoint': breakpointModule,
+      // A test of cumulative latency shortens the one-read deadline, which the module takes from this stand-in.
+      ...(options.readDeadlineMs === undefined
+        ? {}
+        : {
+            './runtimeSupport/utils/awaitResponse': {
+              awaitResponse: <Value>(
+                response: PromiseLike<Value>,
+                description: string,
+                signal?: AbortSignal,
+                timeoutMs = options.readDeadlineMs,
+              ) => awaitResponse(response, description, signal, timeoutMs),
+            },
+          }),
       './utils/bindOwnedNodeTestDebugSession': {
         bindOwnedNodeTestDebugSession: async (
           bound: vscode.DebugSession,

@@ -1569,11 +1569,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    */
   private async retireOwnedStops(): Promise<void> {
     const session = this.boundSession()
-    await awaitResponse(
-      this.classification,
-      'the stops that already arrived',
-      this.abort.signal,
-    )
+    // Every queued read has its own deadline (and the debugger's release cancels them), so the queue as a whole needs none: a deadline of one read over several slow but healthy ones would fail a run whose reads each fit.
+    await untilAborted(this.classification, this.abort.signal)
     // One after the other: each retirement waits for the adapter's reply that excludes it.
     for (const { breakpoint } of this.armed)
       await breakpoint.retire(session, this.abort.signal)
