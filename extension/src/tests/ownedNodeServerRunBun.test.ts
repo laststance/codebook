@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { defer } from './utils/defer'
 import {
@@ -451,7 +452,59 @@ test(
       harness.order.some((step) => step.startsWith('capture:')),
       false,
     )
+    // The held pause then refuses the declared request's write, so the run settles with the request ended and the window never opens again.
     peerCheck.resolve()
+    await until(harness, (current) => current.requestFailure !== undefined)
+    assert.equal(harness.sender.bytesWritten, 1)
+    assert.deepEqual(
+      harness.order.filter((step) => step.startsWith('window:')),
+      ['window:true', 'window:false', 'window:false'],
+    )
+  },
+)
+
+// Value: protects=the declared request after a sign-in opens the debugger's window again only when its first byte is about to be written, after the sign-in's window closed with the sign-in's response; fails_when=the window stays closed for the declared request (its stop is held as unattributed and never captured) or stays open between the two requests; seam=the harness's fake debugger recording setRequestWindow with the declared request's peer check held open; no_claim=the real adapter's stop ledger
+test(
+  'the window of a Bun run with sign-in is closed after the sign-in answered and opens again when the declared request is written',
+  { timeout: PEER_CHECK_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const options: HarnessOptions = {
+      launchLoader: BUN_LOADER,
+      signIn: {
+        path: '/login',
+        fields: { email: 'learner@example.test' },
+        secretField: 'password',
+        secret: 'ask-learner',
+      },
+    }
+    const harness = createHarness(options)
+    await harness.run.prepare()
+    await harness.run.sendRequest('key-1', { secret: 'hunter2-correct-horse' })
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    options.peerCheckGate = peerCheck.promise
+    options.onPeerCheckEntered = peerCheckEntered.resolve
+    const [signInExchange] = harness.sender.exchanges
+    signInExchange?.onSetCookie?.(['sid=s%3Aabc123def456; Path=/; HttpOnly'])
+    signInExchange?.response.resolve(RESPONSE_200)
+    await peerCheckEntered.promise
+    // Act
+    const windowWhileVerifying = harness.debug.requestWindowOpen
+    peerCheck.resolve()
+    await waitUntil(
+      () => (harness.sender.bytesWritten === 2 ? true : undefined),
+      'the declared request to be written',
+      5_000,
+    )
+    // Assert
+    assert.equal(windowWhileVerifying, false)
+    assert.equal(harness.debug.requestWindowOpen, true)
+    assert.equal(harness.debug.requestWindowIsSignIn, false)
+    assert.deepEqual(
+      harness.order.filter((step) => step.startsWith('window:')),
+      ['window:true', 'window:false', 'window:true'],
+    )
   },
 )
 
@@ -476,7 +529,7 @@ test(
     // The learner pauses only once the peer check is really open.
     await peerCheckEntered.promise
     // Act
-    harness.debug.learnerPause()
+    const pauseToken = harness.debug.learnerPause()
     peerCheck.resolve()
     const error = await outcome
     // Assert
@@ -484,6 +537,11 @@ test(
     assert.equal(error.code, 'LEARNER_PAUSED')
     assert.equal(harness.sender.bytesWritten, 0)
     assert.equal(harness.run.view().request, undefined)
+    assert.equal(harness.run.view().state, 'learner-paused')
+    // The learner continues: the run reads ready again, with no request left behind.
+    harness.debug.nativeContinue(pauseToken)
+    const settled = await until(harness, (view) => view.state === 'ready')
+    assert.equal(settled.request, undefined)
     assert.equal(harness.order.includes('window:true'), false)
   },
 )
@@ -515,13 +573,18 @@ test(
     )
     await peerCheckEntered.promise
     // Act
-    harness.debug.learnerPause()
+    const pauseToken = harness.debug.learnerPause()
     peerCheck.resolve()
     const error = await outcome
     // Assert
     assert.ok(error instanceof StudyError)
     assert.equal(error.code, 'LEARNER_PAUSED')
     assert.equal(harness.sender.bytesWritten, 0)
+    assert.equal(harness.run.view().state, 'learner-paused')
+    // The learner continues: the run reads ready again, with no request left behind.
+    harness.debug.nativeContinue(pauseToken)
+    const settled = await until(harness, (view) => view.state === 'ready')
+    assert.equal(settled.request, undefined)
     assert.equal(harness.order.includes('window:true'), false)
   },
 )
