@@ -734,6 +734,8 @@ test('a server that exits before it answers fails the run with SERVER_EXITED and
   assert.equal(view.runFailure?.code, 'SERVER_EXITED')
   assert.equal(view.requestFailure, undefined)
   assert.equal(harness.server.closeCalls, 1)
+  // The request ended with the run, so the debugger's attribution window is closed explicitly.
+  assert.equal(harness.debug.requestWindowOpen, false)
 })
 
 // protects=a leader that exits while a group member lives still closes the whole group; fails_when=the group is not closed after the leader's exit; no_claim=a real child
@@ -1083,6 +1085,8 @@ test('a Stop after the first byte ends the request without a failure and keeps i
   assert.equal(harness.run.view().state, 'stopped')
   assert.equal(harness.run.view().request?.method, 'GET')
   assert.equal(harness.sender.calls[0]?.signal?.aborted, true)
+  // The Stop ended the request, so the debugger's attribution window is closed explicitly, not left to the session's end.
+  assert.equal(harness.debug.requestWindowOpen, false)
   assert.equal(
     harness.events.some((event) => event.type === 'node-server.failure'),
     false,

@@ -464,8 +464,11 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     })
   }
 
-  /** A stop was admitted: the request still checking its connection writes nothing, and every running-time limit and the wall limit stop. */
+  /** A stop was admitted (the learner's Stop, a failure or the server's exit): the request still checking its connection writes nothing, the debugger's attribution window closes, and every running-time limit and the wall limit stop. */
   private cancelRequestAndTimers(): void {
+    // A request under way ends with the run, so its window closes here and not only when the debug session terminates.
+    if (this.inRequestWindow())
+      this.core.debuggerSession?.setRequestWindow(false)
     // A request still checking its connection writes nothing once the stop is admitted.
     this.requestAbort.abort(
       new StudyError(
