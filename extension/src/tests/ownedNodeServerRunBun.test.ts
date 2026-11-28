@@ -456,10 +456,13 @@ test(
     peerCheck.resolve()
     await until(harness, (current) => current.requestFailure !== undefined)
     assert.equal(harness.sender.bytesWritten, 1)
-    assert.deepEqual(
-      harness.order.filter((step) => step.startsWith('window:')),
-      ['window:true', 'window:false', 'window:false', 'window:false'],
+    // The window opened once, for the sign-in, ended closed, and never opened again (the number of repeated closings is no behavior).
+    const windowSteps = harness.order.filter((step) =>
+      step.startsWith('window:'),
     )
+    assert.equal(windowSteps[0], 'window:true')
+    assert.equal(windowSteps.at(-1), 'window:false')
+    assert.equal(windowSteps.slice(1).includes('window:true'), false)
   },
 )
 
