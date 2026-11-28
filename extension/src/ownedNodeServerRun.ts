@@ -74,9 +74,13 @@ type ReadyForRequest = {
 /** The codes a request failure of the run can carry. */
 type RequestFailureCode = NonNullable<NodeServerView['requestFailure']>['code']
 
-/** The sentence of a declared request refused after its sign-in because the learner holds a pause, or a pause the run has not heard of yet may be the learner's: the declared request was not sent and the sign-in already ran, so the run has nothing left to send; the learner continues the server, the chat stops this run, and a new run starts. */
+/** The sentence of a declared request refused after its sign-in because the learner holds a pause: the sign-in ran and the declared request was not sent, so the run has nothing left to send; the learner continues the server, the chat stops this run, and a new run starts. */
 const DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT =
   'The declared request was not sent because the learner held a pause of the server after the sign-in, which already ran; Codebook never resumes it. Let the learner continue the server in the debugger, then stop this run (codebook_stop) and start a new run.'
+
+/** The sentence of a declared request refused after its sign-in while a pause of the server was still being read: nobody knows yet whose pause it is (a stop Codebook itself would resume, or the learner's), so it asks for no Continue; the sign-in ran and the request was not sent, so the chat stops this run and starts a new one. */
+const DECLARED_REQUEST_REFUSED_WHILE_PAUSE_IS_READ_TEXT =
+  'The sign-in ran, but the declared request was not sent: a pause of the server was still being read. Stop this run (codebook_stop) and start a new run.'
 
 /**
  * Tells whether a send failure is a refusal before any byte left (a listener that is not the server, an unreadable owner, a stop admitted first, or a pause the learner holds).
@@ -103,31 +107,21 @@ function isRefusalBeforeAnyByte(error: unknown): error is StudyError & {
 }
 
 /**
- * Tells whether a refusal text is the learner's pause: a pause the learner holds, or one the run has not heard of yet (its stack is still being read), which may be the learner's.
- * Called by {@link refusalSentenceAfterSignIn} and by {@link OwnedNodeServerRun} when it words the refusal of the declared request after a sign-in.
+ * Chooses the sentence of a refusal that ends the declared request after its sign-in: a pause the learner holds gets the sentence that asks for a Continue, a pause that is still being read gets one that says only what happened and that the run must be stopped (the generic sentence asks to continue or send again as if the request were still waiting).
+ * Called by {@link OwnedNodeServerRun} when the declared request after a sign-in is refused before its first byte.
  * @param code - The refusal's code.
  * @param message - The refusal's sentence.
- * @returns `true` for `LEARNER_PAUSED` and for the sentence of a pause that is still being read.
- * @example isLearnerPauseRefusal('RUN_NOT_READY', NODE_SERVER_PAUSE_BEING_READ_TEXT) // => true
+ * @returns The sentence the request failure carries; the refusal's own for any other refusal.
+ * @example refusalSentenceAfterSignIn('LEARNER_PAUSED', 'x') // => 'The declared request was not sent because the learner held a pause …'
+ * @example refusalSentenceAfterSignIn('RUN_NOT_READY', NODE_SERVER_PAUSE_BEING_READ_TEXT) // => 'The sign-in ran, but the declared request was not sent: a pause of the server was still being read. …'
  */
-function isLearnerPauseRefusal(code: string, message: string): boolean {
-  return (
-    code === 'LEARNER_PAUSED' ||
-    (code === 'RUN_NOT_READY' && message === NODE_SERVER_PAUSE_BEING_READ_TEXT)
-  )
-}
-
-/**
- * Chooses the sentence of a refusal that ends the declared request after its sign-in: a pause of the learner's, held or still being read, gets a sentence that says the request is over and the run must be stopped (the generic one asks to continue or send again as if the request were still waiting).
- * Called by {@link OwnedNodeServerRun} when the declared request after a sign-in is refused before its first byte.
- * @param error - The refusal.
- * @returns The sentence the request failure carries.
- * @example refusalSentenceAfterSignIn(new StudyError('LEARNER_PAUSED', 'x')) // => 'The declared request was not sent because the learner held a pause …'
- */
-function refusalSentenceAfterSignIn(error: StudyError): string {
-  return isLearnerPauseRefusal(error.code, error.message)
-    ? DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT
-    : error.message
+function refusalSentenceAfterSignIn(code: string, message: string): string {
+  if (code === 'LEARNER_PAUSED')
+    return DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT
+  return code === 'RUN_NOT_READY' &&
+    message === NODE_SERVER_PAUSE_BEING_READ_TEXT
+    ? DECLARED_REQUEST_REFUSED_WHILE_PAUSE_IS_READ_TEXT
+    : message
 }
 
 /**
@@ -921,9 +915,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (refusal) {
       this.failRequest(
         'REQUEST_FAILED',
-        isLearnerPauseRefusal('RUN_NOT_READY', refusal)
-          ? DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT
-          : refusal,
+        refusalSentenceAfterSignIn('RUN_NOT_READY', refusal),
       )
       return
     }
@@ -1127,7 +1119,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
           error.code === 'PORT_OWNER_UNKNOWN'
           ? error.code
           : 'REQUEST_FAILED',
-        refusalSentenceAfterSignIn(error),
+        refusalSentenceAfterSignIn(error.code, error.message),
       )
       return
     }

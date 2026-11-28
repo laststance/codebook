@@ -331,11 +331,11 @@ test(
   },
 )
 
-/** The sentence a declared request carries when the learner's pause refuses it after the sign-in ran. */
+/** The sentence a declared request carries when a pause of the server was still being read after the sign-in ran: it asks for no Continue, since whose pause it is stays unknown. */
 const TERMINAL_PAUSE_SENTENCE =
-  'The declared request was not sent because the learner held a pause of the server after the sign-in, which already ran; Codebook never resumes it. Let the learner continue the server in the debugger, then stop this run (codebook_stop) and start a new run.'
+  'The sign-in ran, but the declared request was not sent: a pause of the server was still being read. Stop this run (codebook_stop) and start a new run.'
 
-// protects=a declared request refused after its sign-in because a pause of the server is still being read says the request was not sent, the sign-in already ran, and the run must be stopped and started again: the run consumed its one request, so no send is left; fails_when=the refusal keeps the generic sentence that asks to send again once the pause is reported, or omits the stop that releases the running server (Cycle 0153 ship pass 1 S13); seam=the editor's real debugger behind a sign-in run, an exception stop whose stack read is held and the sign-in's response; no_claim=the learner's reading of the sentence
+// protects=a declared request refused after its sign-in because a pause of the server is still being read says the sign-in ran, the request was not sent, and the run must be stopped and started again, and asks for no Continue because whose pause it is is not known yet: the run consumed its one request, so no send is left; fails_when=the refusal keeps the generic sentence that asks to send again once the pause is reported, omits the stop that releases the running server, or says the learner held the pause although it may be a stop Codebook would resume (Cycle 0153 ship pass 1 S13, ship pass 2 T13); seam=the editor's real debugger behind a sign-in run, an exception stop whose stack read is held and the sign-in's response; no_claim=the learner's reading of the sentence
 test(
   'a declared request refused after the sign-in while a pause is still being read tells the chat to stop the run and start a new one',
   { timeout: 15_000 },
