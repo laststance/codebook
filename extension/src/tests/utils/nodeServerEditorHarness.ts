@@ -447,12 +447,13 @@ export async function editorHarness(
   )
   /** The adapter's side: stops and the learner's resume. */
   const adapter = {
-    /** The adapter reports a stop of the thread (thread 1 unless named); with a frame, the stack answers it. */
+    /** The adapter reports a stop of the thread (thread 1 unless named); with a frame, the stack answers it; `allThreadsStopped` is passed through when given. */
     stop(
       reason: string,
       hitBreakpointIds?: number[],
       frame?: FrameAt,
       threadId = 1,
+      allThreadsStopped?: boolean,
     ): void {
       currentFrame = frame
       tracker?.onDidSendMessage?.({
@@ -462,7 +463,16 @@ export async function editorHarness(
           threadId,
           reason,
           ...(hitBreakpointIds ? { hitBreakpointIds } : {}),
+          ...(allThreadsStopped === undefined ? {} : { allThreadsStopped }),
         },
+      })
+    },
+    /** The adapter reports that every thread stopped without naming one (a `stopped` event with no `threadId`). */
+    stoppedWithoutThread(reason = 'pause'): void {
+      tracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'stopped',
+        body: { reason, allThreadsStopped: true },
       })
     },
     /** The learner presses Continue (for thread 1 unless named) and the adapter has not answered yet: the editor's request reached the adapter; the returned function delivers the adapter's answer, accepted (every thread runs on, or only the named one when `allThreadsContinued` is false) or rejected (the thread stays paused). */

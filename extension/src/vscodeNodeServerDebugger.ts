@@ -59,6 +59,8 @@ type NativeStop = {
   inSignInAtStop?: boolean
   /** Whether the learner asked for this stop (the first stop after an accepted Pause request), so the run holds it as the learner's whatever line it landed on. */
   learnerRequested?: boolean
+  /** Whether the adapter reported every thread stopped by this stop, whichever thread it names: a Continue of one thread then proves nothing about the others, so the stop ends only when every thread is confirmed running. */
+  allThreadsStopped?: boolean
   /** Whether `inRequestWindowAtStop` rests on the learner's Continue that was still waiting for its answer when the stop arrived (the window is about to reopen), so a refused Continue takes it back. */
   windowFromPendingResume?: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
@@ -133,6 +135,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   >()
   /** The learner's pause stops (the first stop of a session after an accepted editor `pause` request, whatever its reason) that have not run on, by token; the run's window opens again once none is held. */
   private readonly learnerPauseStops = new Map<number, NativeStop>()
+  /** The stops of the session that named no thread (token to session id): the adapter said it stopped without saying where, so the learner holds the whole session until every thread is confirmed running. */
+  private readonly unknownThreadHolds = new Map<number, string>()
   /** The editor's `pause` requests that are unanswered or accepted without a stop yet, as `<session id>:<request sequence>`, in the order they were sent; a refusal removes only its own request. */
   private readonly learnerPauseRequests = new Map<string, LearnerPauseRequest>()
   /** Whether the run meant its request window to be open ({@link setRequestWindow}), whatever a learner's pause did to the ledger since. */
@@ -310,7 +314,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     session: vscode.DebugSession,
     body: DebugProtocol.StoppedEvent['body'],
   ): void {
-    if (!Number.isInteger(body.threadId)) return
+    // A stop that names no thread cannot be read or told from the learner's: the whole session stays the learner's.
+    if (!Number.isInteger(body.threadId)) {
+      this.holdStopOfUnknownThread(session, body)
+      return
+    }
     // Each stop gets the next number, so a classification never answers a later stop.
     const sequence = ++this.nextToken
     const threads =
@@ -325,6 +333,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       sessionId: session.id,
       threadId: body.threadId!,
       reason: body.reason,
+      ...(body.allThreadsStopped === true ? { allThreadsStopped: true } : {}),
       hitBreakpointIds: Array.isArray(body.hitBreakpointIds)
         ? body.hitBreakpointIds.filter((id) => Number.isInteger(id))
         : undefined,
@@ -361,6 +370,31 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       return
     }
     this.enqueueClassification(stop)
+  }
+
+  /**
+   * Holds a stop that names no thread as the learner's: the write guard closes and the request window stays closed until every thread of the session is confirmed running (a resume of all threads).
+   * Why it exists: such a stop cannot be classified (its stack needs a thread), and dropping it would let the run write a request while the server is stopped. A Pause request of the session that no stop met yet is settled by it.
+   * Called by {@link onStopped}.
+   * @param session - The session that stopped.
+   * @param body - The adapter's `stopped` event.
+   * @example this.holdStopOfUnknownThread(session, { reason: 'pause', allThreadsStopped: true }) // learnerPausePending() is true until every thread ran
+   */
+  private holdStopOfUnknownThread(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): void {
+    const token = ++this.nextToken
+    this.unknownThreadHolds.set(token, session.id)
+    codebookStopLedger.closeWindow([session.id])
+    // A Pause request waiting for its stop is met by this one.
+    const stop = { sessionId: session.id, threadId: undefined, token }
+    if (!this.settleAcceptedLearnerPause(stop, true))
+      this.claimUnansweredLearnerPause(stop)
+    this.input.record('node-server.dap-stopped', {
+      sessionId: session.id,
+      reason: body.reason,
+    })
   }
 
   /**
@@ -592,7 +626,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * @example this.settleAcceptedLearnerPause({ sessionId: 's1', threadId: 1 }, false) // => true after an accepted Pause of thread 1, false for a stop of thread 2
    */
   private settleAcceptedLearnerPause(
-    stop: Pick<NativeStop, 'sessionId' | 'threadId'>,
+    stop: Pick<NativeStop, 'sessionId'> & { threadId?: number },
     allThreadsStopped: boolean,
   ): boolean {
     for (const [key, pauseRequest] of this.learnerPauseRequests)
@@ -617,7 +651,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * @example this.claimUnansweredLearnerPause({ sessionId: 's1', threadId: 1, token: 4 }) // => true between the editor's Pause request for thread 1 and the adapter's answer
    */
   private claimUnansweredLearnerPause(
-    stop: Pick<NativeStop, 'sessionId' | 'threadId' | 'token'>,
+    stop: Pick<NativeStop, 'sessionId' | 'token'> & { threadId?: number },
   ): boolean {
     for (const pauseRequest of this.learnerPauseRequests.values())
       if (
@@ -625,6 +659,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         !pauseRequest.accepted &&
         pauseRequest.settledByStopToken === undefined &&
         (pauseRequest.threadId === undefined ||
+          stop.threadId === undefined ||
           pauseRequest.threadId === stop.threadId)
       ) {
         pauseRequest.settledByStopToken = stop.token
@@ -645,7 +680,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       if (pauseRequest.sessionId === sessionId) return true
     for (const stop of this.learnerPauseStops.values())
       if (stop.sessionId === sessionId) return true
-    return false
+    return [...this.unknownThreadHolds.values()].includes(sessionId)
   }
 
   /**
@@ -676,9 +711,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     threadId?: number,
     newestStopToken = Number.POSITIVE_INFINITY,
   ): void {
+    // A stop of every thread (`allThreadsStopped`) ends only when every thread runs: a Continue of one thread proves nothing about the others.
     const ranOn = (stop: NativeStop): boolean =>
       stop.sessionId === sessionId &&
-      (threadId === undefined || stop.threadId === threadId) &&
+      (threadId === undefined ||
+        (stop.threadId === threadId && !stop.allThreadsStopped)) &&
       stop.token <= newestStopToken
     this.releasePausedThreads(sessionId, threadId, newestStopToken)
     // A stop that ran on is no pause any more: the release, which hands the session's earlier stops to the run, must not report it (a Bun target runs before its release).
@@ -694,6 +731,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.handlers?.onResume(token)
       }
     this.endLearnerPausesThatRanOn(ranOn)
+    if (threadId === undefined) this.endUnknownThreadHolds(sessionId)
     // A classification that waited for a stop that ran on has nothing left to wait for.
     this.wakeResumeAnswerWaiters()
   }
@@ -736,6 +774,22 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.learnerPauseStops.delete(token)
         this.reopenRequestWindow(stop.sessionId)
       }
+  }
+
+  /**
+   * Ends the holds of stops that named no thread once every thread of their session ran on; the request window opens again when nothing else of the learner is held.
+   * Called by {@link resumeThreads} after a resume of all threads.
+   * @param sessionId - The session whose threads all ran on.
+   * @example this.endUnknownThreadHolds('s1') // learnerPausePending() is false again when nothing else was held
+   */
+  private endUnknownThreadHolds(sessionId: string): void {
+    let ended = false
+    for (const [token, heldSession] of this.unknownThreadHolds)
+      if (heldSession === sessionId) {
+        this.unknownThreadHolds.delete(token)
+        ended = true
+      }
+    if (ended) this.reopenRequestWindow(sessionId)
   }
 
   /**
@@ -783,6 +837,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.learnerPauseRequests.delete(key)
     for (const [token, stop] of this.learnerPauseStops)
       if (stop.sessionId === session.id) this.learnerPauseStops.delete(token)
+    for (const [token, heldSession] of this.unknownThreadHolds)
+      if (heldSession === session.id) this.unknownThreadHolds.delete(token)
     if (!this.active.delete(session.id)) return
     this.input.record('node-server.session-terminated', {
       sessionId: session.id,
@@ -1317,9 +1373,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   learnerPauseAwaitsStop(): boolean {
     const sessionId = this.bound?.session.id
     if (sessionId === undefined) return false
-    const heldStops = [...this.learnerPauseStops.values()].some(
-      (stop) => stop.sessionId === sessionId,
-    )
+    const heldStops =
+      [...this.learnerPauseStops.values()].some(
+        (stop) => stop.sessionId === sessionId,
+      ) || [...this.unknownThreadHolds.values()].includes(sessionId)
     return (
       !heldStops &&
       [...this.learnerPauseRequests.values()].some(
@@ -1465,12 +1522,22 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * @example this.isAnotherThreadPaused({ sessionId: 's1', threadId: 2 }) // => true while thread 1 of 's1' is paused
    */
   private isAnotherThreadPaused(
-    pause: Pick<NodeServerDebuggerPause, 'sessionId' | 'threadId'>,
+    pause: Pick<NodeServerDebuggerPause, 'sessionId' | 'threadId' | 'token'>,
   ): boolean {
     const threads = this.pausedThreads.get(pause.sessionId)
+    // A stop of every thread, or of no named thread, holds threads that the paused-thread list does not name.
+    const holdsWholeSession =
+      [...this.unknownThreadHolds.values()].includes(pause.sessionId) ||
+      [...this.learnerPauseStops.values()].some(
+        (stop) =>
+          stop.sessionId === pause.sessionId &&
+          stop.allThreadsStopped === true &&
+          stop.token !== pause.token,
+      )
     return (
-      threads !== undefined &&
-      [...threads.keys()].some((thread) => thread !== pause.threadId)
+      holdsWholeSession ||
+      (threads !== undefined &&
+        [...threads.keys()].some((thread) => thread !== pause.threadId))
     )
   }
 

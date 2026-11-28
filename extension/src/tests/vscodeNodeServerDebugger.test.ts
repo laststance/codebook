@@ -1119,3 +1119,39 @@ test(
     await debug.release()
   },
 )
+
+// protects=a Pause of thread 1 that an all-threads stop reported on thread 2 settles keeps the learner's hold until every thread runs: a Continue of thread 2 alone leaves thread 1 stopped, so the write guard stays closed; fails_when=the partial continued event ends the hold of the stop it was reported on, and the guard opens while thread 1 is still stopped (Cycle 0153 ship pass 2 T7, OV1); seam=the editor harness's accepted Pause of thread 1, an all-threads stop on thread 2, a partial continued event and the learner's Continue of every thread; no_claim=js-debug's per-thread semantics
+test(
+  'a Continue of thread 2 alone does not release a Pause of thread 1 that an all-threads stop on thread 2 settled',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses({}, 1)
+    editor.adapter.stop(
+      'pause',
+      undefined,
+      { file: STOP_FILE, line: 30 },
+      2,
+      true,
+    )
+    await heard.nextPause()
+    // Act
+    editor.adapter.continued(2, false)
+    const pendingAfterPartialContinue = debug.learnerPausePending?.()
+    const windowAfterPartialContinue = codebookStopLedger.isWindowOpen(
+      'node-server-session',
+    )
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(pendingAfterPartialContinue, true)
+    assert.equal(windowAfterPartialContinue, false)
+    assert.equal(debug.learnerPausePending?.(), false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    await debug.release()
+  },
+)

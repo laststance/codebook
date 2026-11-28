@@ -667,3 +667,25 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a stop that names no thread closes the write guard until every thread ran on: the run writes no request while the server is stopped, and writes one once the learner continued it; fails_when=the stop is discarded because it carries no thread id, so the next request is written into a stopped server (Cycle 0153 ship pass 2 T7, OV1); seam=the editor's real debugger behind the run, an all-threads stop with no thread id and the learner's Continue; no_claim=which adapters report such a stop
+test(
+  'a stop that names no thread refuses the request until the learner continues it',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun()
+    editor.adapter.stoppedWithoutThread()
+    // Act
+    const refusal = await refusalOf(harness.run.sendRequest('key-1'))
+    const bytesWhileStopped = harness.sender.bytesWritten
+    editor.adapter.learnerContinues()
+    await harness.run.sendRequest('key-1')
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'LEARNER_PAUSED')
+    assert.equal(bytesWhileStopped, 0)
+    assert.ok(harness.sender.bytesWritten > 0)
+    await harness.run.stop()
+  },
+)
