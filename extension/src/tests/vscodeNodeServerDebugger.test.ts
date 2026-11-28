@@ -295,6 +295,35 @@ test(
   },
 )
 
+// protects=a learner Pause pressed while the server is still starting keeps the first stop paused for the learner; fails_when=the first stop, which settles the learner's unanswered Pause and names no hit ids, is taken for the `--inspect-brk` entry and continued, so the learner's Pause is resumed by Codebook (Cycle 0153 hosted review); seam=the editor harness's unanswered learner `pause` request, then a first stop with no hit ids; no_claim=how often a learner presses Pause before the entry release
+test(
+  'a learner Pause pressed before the entry release keeps the first stop paused as the learner pause',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness({ noAutomaticStop: true })
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.learnerSendsPause()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const continuesAfterRelease = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Assert
+    assert.equal(continuesAfterRelease, 0)
+    const first = await waitUntil(
+      () => heard.pauses[0],
+      'the first stop reported to the run',
+      2_000,
+    )
+    assert.equal(first.declaredStopIndex, undefined)
+    assert.equal(first.location?.line, 30)
+    assert.equal(first.learnerRequested, true)
+    await debug.release()
+  },
+)
+
 // protects=the learner's Continue in the editor reaches the run as a resume of that pause; fails_when=the run keeps a pause the learner continued; no_claim=the editor's button
 test('the learner continuing a reported pause reaches the run as a resume of its token', async () => {
   // Arrange

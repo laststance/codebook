@@ -1162,7 +1162,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       signal,
     )
     // Only a first stop that names no hit ids is the `--inspect-brk` entry break; one naming any id (owned, the learner's or both) is a breakpoint hit, reported as a pause and never continued here.
-    const isEntry = !first.hitBreakpointIds?.length
+    // A first stop that settled a learner Pause is the learner's pause, kept paused for them even when it is the entry break.
+    const isEntry = !first.hitBreakpointIds?.length && !first.learnerRequested
     this.entryToken = isEntry ? first.token : undefined
     this.entryReleased = true
     // A node run keeps every stop it saw during the arming, so only a stop that is still its thread's newest pause is handed to the run: one the learner already continued is no pause any more.
