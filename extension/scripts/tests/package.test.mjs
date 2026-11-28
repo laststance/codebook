@@ -97,7 +97,7 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
-  assert.equal(checked.extension.version, '0.2.147')
+  assert.equal(checked.extension.version, '0.2.148')
   assert.equal(checked.extension.apiVersion, '1.46')
   assert.equal(checked.entries, 36)
   // The bundled extension resolves the Bun bootstrap beside dist/extension.js; a path with '..' (computed for dist/utils) would leave dist once bundled.

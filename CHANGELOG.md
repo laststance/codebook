@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.148.0] - 2026-11-28 (development candidate)
+
+Cycle 0152 ([Issue #379](https://github.com/laststance/codebook/issues/379)), a feature cycle. **A server that runs on Bun, such as an app made with `bun create elysia app`, now pauses in the editor's native debugger.** Ask `/codebook` about one of its requests: the chat runs the server on Bun, stops on your TypeScript lines with their values, continues to the response and saves a Server replay.
+
+### Added
+- **Servers that run on Bun (MCP API 1.46).** When the repository runs its server with Bun (an Elysia app, `Bun.serve` or a `bun` dev script), the chat declares `loader: "bun"`. Codebook then starts `bun --no-install --preload <Codebook's inspector bootstrap> <entry>` with the first `bun` on the editor's `PATH`, else `~/.bun/bin/bun`. It needs Bun 1.4.4 or later; a pre-release of 1.4.4 counts as older and is refused, and the version is recorded as Bun reports it.
+- **Bun never installs missing packages for the run.** Install the repository's dependencies first: a missing dependency fails the server start with Bun's own output.
+- **The stops bind on your TypeScript lines, and the Variables view shows the handler's values.** Codebook arms the stops once the server's port accepts connections, before it sends the request. Declare stops inside the route handler or a function it calls, in files inside `packageRoot`.
+- **A stop that does not bind ends the run before the request is sent, and the message names the stop.** On Bun, the first statement of a module that only declares functions is such a line, so declare a later line of that function. Codebook checks every declared stop again right before it sends the request, and sends nothing if a stop was removed, moved or is no longer bound.
+- **A pause on a line that holds two declared stops is matched to a stop by its column.** A pause that matches neither, or both, is treated as your own pause, and so is a pause on a declared stop's line while you hold an enabled breakpoint of your own on that line (a disabled one does not count).
+- **Child processes the server forks run without Codebook's inspector,** so a forked helper never waits for the debugger.
+- **A missing, unreadable or older Bun is refused with `NODE_SERVER_SOURCE_REFUSED` before anything starts.** The message says how to install or update Bun.
+- **A saved Server replay of a Bun stop keeps the call stack and the stop's declared inspections,** which the replay's native debugger lists under Recorded inspections. It saves no automatic copy of the stop's scopes: Bun reports a function's own variables in the same kind of scope as an enclosing function's and the module's, and Codebook cannot tell them apart with certainty. A declared inspection reads a name as the stopped code sees it, as on a Node run, so declare an inspection for every value the explanation relies on.
+- **A Server replay of a Bun run is saved as history format 4 (format 5 with `signIn`),** which an older Codebook does not list in Saved studies and keeps on disk.
+
 ## [0.2.147.0] - 2026-11-27 (development candidate)
 
 Cycle 0151 ([Issue #376](https://github.com/laststance/codebook/issues/376)), a bug-fix cycle. Devin Desktop preserves your settings when an interrupted Codebook chat setup needs to be retried.
