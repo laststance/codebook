@@ -145,6 +145,8 @@ async function buildSummary({
     listChanges: async () => changes,
     runCheck: async (check) => codes[check.name] ?? 0,
     print: (line) => lines.push(line),
+    // The check that carries the suite passes only with the test runner's summary in its log; this fake gate's log holds a passed run.
+    readLog: async () => 'ℹ tests 3\nℹ pass 3\nℹ fail 0\n',
   })
   return `${lines.join('\n')}\n`
 }
