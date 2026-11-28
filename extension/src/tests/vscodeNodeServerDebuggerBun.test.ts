@@ -890,3 +890,33 @@ test(
     await debug.release()
   },
 )
+
+// Value: protects=on a Bun run a stop that arrives between a Continue request and its reply is still reported to the run and still counts as a paused thread; fails_when=the late reply of the earlier Continue removes the newer stop of the same thread (Cycle 0152 defect 4, Bun path), so a declared hit is lost and the run waits for it; seam=the editor harness's learner Continue request, a second declared hit, then the adapter's reply; no_claim=the adapter's real message order (the native check covers it)
+test(
+  'a Bun stop of the same thread that arrives before the reply to an earlier Continue is still reported as a pause',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause } = await openWindowOnBunRun()
+    editor.adapter.stop('breakpoint', undefined, { file: STOP_FILE, line: 14 })
+    const first = await nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', undefined, { file: STOP_FILE, line: 20 })
+    // Act
+    answerContinue()
+    const second = await nextPause()
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    await debug.resume(second, AbortSignal.timeout(5_000))
+    // Assert
+    assert.equal(first.declaredStopIndex, 0)
+    assert.equal(second.declaredStopIndex, 1)
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesBefore + 1,
+    )
+    await debug.release()
+  },
+)

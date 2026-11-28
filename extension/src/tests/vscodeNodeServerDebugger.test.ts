@@ -10,6 +10,7 @@ import type {
 } from '../nodeServerDebugger'
 import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { maskLearnerSecretText } from '../utils/maskLearnerSecretText'
 
 import { defer } from './utils/defer'
@@ -754,3 +755,49 @@ test('a stop resumed while its stack was read is not reported when the thread st
   assert.equal(reported.declaredStopIndex, 1)
   await debug.release()
 })
+
+// protects=a stop that arrives between a Continue request and its reply is still reported to the run and still counts as a paused thread, so the run holds or captures it; fails_when=the late reply of the earlier Continue removes the newer stop of the same thread, so it is never reported and its thread reads as running (Cycle 0152 defect 4, Node path); seam=the editor harness's learner Continue request, a second declared hit, then the adapter's reply; no_claim=the adapter's real message order (the native check covers it)
+test(
+  'a stop of the same thread that arrives before the reply to an earlier Continue is still reported as a pause',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[1]!], {
+      file: STOP_FILE,
+      line: 20,
+    })
+    // Act
+    answerContinue()
+    await waitUntil(
+      () => heard.pauses.length === 2,
+      'the second stop reported to the run',
+      2_000,
+    )
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    await debug.resume(heard.pauses[1]!, AbortSignal.timeout(5_000))
+    // Assert
+    assert.equal(heard.pauses[1]?.declaredStopIndex, 1)
+    // The reply ended the first pause only; Codebook's own resume then ended the second.
+    assert.deepEqual(plain(heard.resumes), [
+      heard.pauses[0]!.token,
+      heard.pauses[1].token,
+    ])
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesBefore + 1,
+    )
+    await debug.release()
+  },
+)

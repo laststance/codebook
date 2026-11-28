@@ -143,3 +143,32 @@ test('forgetting a session drops its waiting resumes and keeps another sessionâ€
   assert.equal(answer('session-1'), undefined)
   assert.deepEqual(answer('session-2'), { threadId: undefined })
 })
+
+// protects=the answer to a resume names the newest stop that existed when the request was sent, so a debugger resumes no later stop; fails_when=the token noted with the request is dropped or replaced by a later one; no_claim=how a debugger numbers its stops
+test('an answered resume carries the newest stop token noted with its request', () => {
+  // Arrange
+  const resumes = new PendingResumeRequests()
+  resumes.noteRequest(
+    'session-1',
+    {
+      type: 'request',
+      seq: 40,
+      command: 'continue',
+      arguments: { threadId: 3 },
+    },
+    5,
+  )
+
+  // Act
+  const ranOn = resumes.takeAnswered('session-1', {
+    type: 'response',
+    seq: 41,
+    request_seq: 40,
+    command: 'continue',
+    success: true,
+    body: { allThreadsContinued: false },
+  })
+
+  // Assert
+  assert.deepEqual(ranOn, { threadId: 3, newestStopToken: 5 })
+})

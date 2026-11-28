@@ -7,6 +7,8 @@ interface PendingResume {
   command: string
   threadId?: number
   singleThread: boolean
+  /** The token of the newest stop that existed when the request was sent. */
+  newestStopToken?: number
 }
 
 /**
@@ -26,14 +28,20 @@ export class PendingResumeRequests {
    * Remembers a resume or step request of a session; any other request is ignored.
    * @param sessionId - The debug session the request was sent to.
    * @param request - The request the editor sent to the adapter.
+   * @param newestStopToken - The token of the newest stop that existed when the request was sent; a debugger that numbers its stops passes it so the answer resumes no later stop.
    */
-  noteRequest(sessionId: string, request: DebugProtocol.Request): void {
+  noteRequest(
+    sessionId: string,
+    request: DebugProtocol.Request,
+    newestStopToken?: number,
+  ): void {
     if (!RESUME_COMMANDS.has(request.command)) return
     const threadId: unknown = request.arguments?.threadId
     this.pending.set(`${sessionId}:${request.seq}`, {
       command: request.command,
       threadId: typeof threadId === 'number' ? threadId : undefined,
       singleThread: request.arguments?.singleThread === true,
+      newestStopToken,
     })
   }
 
@@ -57,13 +65,14 @@ export class PendingResumeRequests {
    * - `undefined` when the response answers no remembered request, or the adapter refused it (the thread stays paused)
    * - `{ threadId: undefined }` when every thread of the session ran on
    * - `{ threadId }` when only that thread ran on
+   * - each of the two carries `newestStopToken` when the request was noted with one
    * @example
    * resumes.takeAnswered('session-1', { type: 'response', seq: 4, request_seq: 3, command: 'next', success: true }) // => { threadId: undefined }
    */
   takeAnswered(
     sessionId: string,
     response: DebugProtocol.Response,
-  ): { threadId: number | undefined } | undefined {
+  ): { threadId: number | undefined; newestStopToken?: number } | undefined {
     const key = `${sessionId}:${response.request_seq}`
     const pending = this.pending.get(key)
     if (!pending) return undefined
@@ -74,6 +83,12 @@ export class PendingResumeRequests {
       pending.command === 'continue'
         ? response.body?.allThreadsContinued !== false
         : !pending.singleThread
-    return { threadId: everyThread ? undefined : pending.threadId }
+    return {
+      threadId: everyThread ? undefined : pending.threadId,
+      // Only a request noted with a token carries one, so debuggers that number no stops see the shape they always did.
+      ...(pending.newestStopToken === undefined
+        ? {}
+        : { newestStopToken: pending.newestStopToken }),
+    }
   }
 }

@@ -450,8 +450,8 @@ export async function editorHarness(
         },
       })
     },
-    /** The learner presses Continue: the editor's request reaches the adapter, which accepts it (every thread runs on) or rejects it (the thread stays paused). */
-    learnerContinues(answer: { rejected?: boolean } = {}): void {
+    /** The learner presses Continue and the adapter has not answered yet: the editor's request reached the adapter; the returned function delivers the adapter's answer, accepted (every thread runs on) or rejected (the thread stays paused). */
+    learnerSendsContinue(): (answer?: { rejected?: boolean }) => void {
       const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
         type: 'request',
@@ -459,16 +459,21 @@ export async function editorHarness(
         command: 'continue',
         arguments: { threadId: 1 },
       })
-      tracker?.onDidSendMessage?.({
-        type: 'response',
-        seq: sequence + 1_000,
-        request_seq: sequence,
-        command: 'continue',
-        success: !answer.rejected,
-        ...(answer.rejected
-          ? { message: 'the thread is not paused' }
-          : { body: { allThreadsContinued: true } }),
-      })
+      return (answer = {}) =>
+        tracker?.onDidSendMessage?.({
+          type: 'response',
+          seq: sequence + 1_000,
+          request_seq: sequence,
+          command: 'continue',
+          success: !answer.rejected,
+          ...(answer.rejected
+            ? { message: 'the thread is not paused' }
+            : { body: { allThreadsContinued: true } }),
+        })
+    },
+    /** The learner presses Continue: the editor's request reaches the adapter, which accepts it (every thread runs on) or rejects it (the thread stays paused). */
+    learnerContinues(answer: { rejected?: boolean } = {}): void {
+      adapter.learnerSendsContinue()(answer)
     },
     /** The learner presses Pause: the editor's `pause` request reaches the adapter, which accepts it (a `pause` stop follows when the test reports one) or rejects it (the thread was already paused). */
     learnerPauses(answer: { rejected?: boolean } = {}): void {

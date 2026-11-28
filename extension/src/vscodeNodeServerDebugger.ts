@@ -192,7 +192,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       this.sessionsAwaitingLearnerPause.add(session.id)
     }
     // Whether the thread runs on is the adapter's answer: a rejected resume leaves it paused.
-    this.pendingResumes.noteRequest(session.id, request)
+    // The request resumes only the stops that exist now: a stop that arrives before its answer is a later pause.
+    this.pendingResumes.noteRequest(session.id, request, this.nextToken)
   }
 
   /** A message the adapter sends: replies and news for the breakpoints, a `continued` and a `stopped`. */
@@ -298,7 +299,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     response: DebugProtocol.Response,
   ): void {
     const ranOn = this.pendingResumes.takeAnswered(sessionId, response)
-    if (ranOn) this.resumeThreads(sessionId, ranOn.threadId)
+    if (ranOn)
+      this.resumeThreads(sessionId, ranOn.threadId, ranOn.newestStopToken)
   }
 
   /**
@@ -336,13 +338,19 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * Records that paused threads ran on (Codebook's resume, the learner's Continue or a step, the adapter's own continue) and reports each reported pause among them to the run.
    * @param sessionId - The session whose threads ran on.
    * @param threadId - The one thread that ran on; `undefined` for every thread of the session.
+   * @param newestStopToken - The newest stop the resume applies to: a reply to a Continue or step request resumes only the stops that existed when the request was sent, so a stop that arrived before the reply stays a pause; omitted, every stop of the threads ran on.
+   * @example this.resumeThreads('session-1', 2, 5) // thread 2's stops up to token 5 ran on; its stop 6 is still paused
    */
-  private resumeThreads(sessionId: string, threadId?: number): void {
+  private resumeThreads(
+    sessionId: string,
+    threadId?: number,
+    newestStopToken = Number.POSITIVE_INFINITY,
+  ): void {
     const ranOn = (stop: NativeStop): boolean =>
       stop.sessionId === sessionId &&
-      (threadId === undefined || stop.threadId === threadId)
-    if (threadId === undefined) this.pausedThreads.delete(sessionId)
-    else this.pausedThreads.get(sessionId)?.delete(threadId)
+      (threadId === undefined || stop.threadId === threadId) &&
+      stop.token <= newestStopToken
+    this.releasePausedThreads(sessionId, threadId, newestStopToken)
     // A stop that ran on is no pause any more: the release, which hands the session's earlier stops to the run, must not report it (a Bun target runs before its release).
     // Only a Bun run drops them here: a node run's release still finds the entry pause the learner continued first.
     if (this.runtime === 'bun')
@@ -356,6 +364,38 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.handlers?.onResume(token)
       }
     this.endLearnerPausesThatRanOn(ranOn)
+  }
+
+  /**
+   * Marks the threads a resume let run on as running, except a thread that stopped again after the resume's newest stop.
+   * Called by {@link resumeThreads} before it drops the stops themselves.
+   * @param sessionId - The session whose threads ran on.
+   * @param threadId - The one thread that ran on; `undefined` for every thread of the session.
+   * @param newestStopToken - The newest stop the resume applies to.
+   * @example this.releasePausedThreads('session-1', undefined, 5) // every thread of 'session-1' runs, but one that stopped as stop 6 stays paused
+   */
+  private releasePausedThreads(
+    sessionId: string,
+    threadId: number | undefined,
+    newestStopToken: number,
+  ): void {
+    const threads = this.pausedThreads.get(sessionId)
+    if (!threads) return
+    // A thread with a later stop (it arrived before the answer) is paused again, whatever the answer says.
+    const stoppedAgain = new Set(
+      this.sessionStops
+        .filter(
+          (stop) =>
+            stop.sessionId === sessionId && stop.token > newestStopToken,
+        )
+        .map((stop) => stop.threadId),
+    )
+    for (const paused of [...threads])
+      if (
+        (threadId === undefined || paused === threadId) &&
+        !stoppedAgain.has(paused)
+      )
+        threads.delete(paused)
   }
 
   /**
