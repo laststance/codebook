@@ -52,8 +52,8 @@ type NativeStop = {
   threadId: number
   reason: string
   hitBreakpointIds?: number[]
-  /** A Bun run: whether the request window was open when the adapter's `stopped` arrived, so a classification that finishes later still tells a pause before the request from one it caused. */
-  inRequestWindowAtStop?: boolean
+  /** Whether the request window was open when the adapter's `stopped` arrived, so a classification that finishes later still tells a pause before the request from one it caused. */
+  inRequestWindowAtStop: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
 }
@@ -258,8 +258,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       hitBreakpointIds: Array.isArray(body.hitBreakpointIds)
         ? body.hitBreakpointIds.filter((id) => Number.isInteger(id))
         : undefined,
-      // Bun runs during arming: its pause is judged by the window and the learner's breakpoints as they stood when it arrived.
-      ...(this.runtime === 'bun' ? this.bunStopEvidence(session.id) : {}),
+      // Every pause is judged by the window as it stood when it arrived; a Bun pause also by the learner's breakpoints then (Bun runs during arming).
+      inRequestWindowAtStop: codebookStopLedger.isWindowOpen(session.id),
+      ...(this.runtime === 'bun'
+        ? { learnerBreakpoints: this.learnerBreakpointsNow() }
+        : {}),
     }
     // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
     if (this.settleAcceptedLearnerPause(session.id))
@@ -280,33 +283,27 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Reads what a Bun stop is judged by, at the moment the adapter's `stopped` arrives: the request window and the learner's breakpoints.
-   * Why it exists: the classification finishes after the stack read, and neither the window nor the editor's breakpoint list may be read then (a learner's breakpoint that caused the pause can be removed during the wait). Called by {@link onStopped} for a Bun run.
-   * @param sessionId - The session that stopped.
-   * @returns The window state and the learner's enabled source breakpoints that are none of the run's own.
-   * @example this.bunStopEvidence('session-1') // => { inRequestWindowAtStop: true, learnerBreakpoints: [{ file: '/repo/src/a.ts', line: 14 }] }
+   * Reads the learner's enabled source breakpoints that are none of the run's own, at the moment a Bun stop arrives.
+   * Why it exists: the classification finishes after the stack read, and the editor's breakpoint list may not be read then (a learner's breakpoint that caused the pause can be removed during the wait). Called by {@link onStopped} for a Bun run.
+   * @returns The place of each enabled breakpoint of the learner.
+   * @example this.learnerBreakpointsNow() // => [{ file: '/repo/src/a.ts', line: 14 }]
    */
-  private bunStopEvidence(
-    sessionId: string,
-  ): Pick<NativeStop, 'inRequestWindowAtStop' | 'learnerBreakpoints'> {
+  private learnerBreakpointsNow(): LearnerBreakpointPlace[] {
     const ownedIds = new Set(
       this.armed.map(({ breakpoint }) => breakpoint.breakpoint.id),
     )
-    return {
-      inRequestWindowAtStop: codebookStopLedger.isWindowOpen(sessionId),
-      learnerBreakpoints: vscode.debug.breakpoints.flatMap((candidate) =>
-        candidate instanceof vscode.SourceBreakpoint &&
-        candidate.enabled &&
-        !ownedIds.has(candidate.id)
-          ? [
-              {
-                file: resolve(candidate.location.uri.fsPath),
-                line: candidate.location.range.start.line + 1,
-              },
-            ]
-          : [],
-      ),
-    }
+    return vscode.debug.breakpoints.flatMap((candidate) =>
+      candidate instanceof vscode.SourceBreakpoint &&
+      candidate.enabled &&
+      !ownedIds.has(candidate.id)
+        ? [
+            {
+              file: resolve(candidate.location.uri.fsPath),
+              line: candidate.location.range.start.line + 1,
+            },
+          ]
+        : [],
+    )
   }
 
   /**
@@ -846,9 +843,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     // Inside the request's window an owned hit is Codebook's stop; every other stop stays the learner's.
     codebookStopLedger.recordStop(
       session.id,
-      declaredStopIndex !== undefined &&
-        (stop.inRequestWindowAtStop ??
-          codebookStopLedger.isWindowOpen(session.id)),
+      declaredStopIndex !== undefined && stop.inRequestWindowAtStop,
     )
     this.livePauses.set(stop.token, { stop, trace })
     this.unreportedStops.delete(stop.token)
@@ -859,10 +854,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       reason: stop.reason,
       declaredStopIndex,
       location: this.locationOf(frame),
-      // The window as it stood when the stop arrived (Bun only), the same state the ledger verdict above used.
-      ...(stop.inRequestWindowAtStop === undefined
-        ? {}
-        : { inRequestWindowAtStop: stop.inRequestWindowAtStop }),
+      // The window as it stood when the stop arrived, the same state the ledger verdict above used.
+      inRequestWindowAtStop: stop.inRequestWindowAtStop,
     })
   }
 

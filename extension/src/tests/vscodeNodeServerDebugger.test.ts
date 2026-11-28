@@ -232,6 +232,8 @@ test('the entry pause is continued once, then a hit of the second stop and a lea
     reason: 'breakpoint',
     declaredStopIndex: 1,
     location: { path: 'src/routes/users.ts', line: 20 },
+    // No request window was opened, and a node pause carries the window it arrived in too.
+    inRequestWindowAtStop: false,
   })
   assert.equal(learner.declaredStopIndex, undefined)
   assert.equal(learner.location?.line, 30)
@@ -321,6 +323,30 @@ test('only an owned hit inside the request window counts as a stop Codebook caus
   assert.equal(insideWindow, true)
   assert.equal(learnersStop, false)
   assert.equal(outsideWindow, false)
+  await debug.release()
+})
+
+// protects=on a node run too, a declared stop hit while the request window is closed (between the sign-in response and the declared request's first byte) reaches the run as arrived outside the window, so the run holds it as unattributed instead of capturing it while the stop ledger calls it the learner's; fails_when=only a Bun run records the window at arrival, so a node run judges the hit by the request state when its stack has been read and the Study and the chat disagree about who caused the stop (Cycle 0153 review round R2, OCR A Minor); seam=the editor harness's node entry pause, a closed window and an owned hit; no_claim=the run's own classification (ownedNodeServerRun.test.ts)
+test('a node declared stop hit while the request window is closed reaches the run as arrived outside the window', async () => {
+  // Arrange
+  codebookStopLedger.reset()
+  const editor = await editorHarness()
+  const { debug, heard } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  debug.setRequestWindow(false)
+  // Act
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  const hit = await heard.nextPause()
+  // Assert
+  assert.equal(hit.declaredStopIndex, 0)
+  assert.equal(hit.inRequestWindowAtStop, false)
+  assert.equal(
+    codebookStopLedger.isCodebookCausedStop('node-server-session'),
+    false,
+  )
   await debug.release()
 })
 

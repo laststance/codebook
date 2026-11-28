@@ -953,7 +953,7 @@ export class NodeProcessRun {
    * - `start-hit` for a declared stop hit before the run was prepared
    * - `sign-in-hit` for one hit while the owner's sign-in request is out
    * - `request-hit` for one hit inside the owner's window
-   * - `unattributed` for one hit outside it, or one that arrived before the request's first byte was written (a Bun pause: the attribution of the arrival moment, never re-derived from the later request state)
+   * - `unattributed` for one hit outside it, or one that arrived before the request's first byte was written (the attribution of the arrival moment, never re-derived from the later request state)
    */
   private classify(
     pause: NodeServerDebuggerPause,
