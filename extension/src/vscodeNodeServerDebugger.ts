@@ -1143,6 +1143,12 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   async retireStops(signal: AbortSignal): Promise<void> {
     const session = this.boundSession()
+    // A stop that arrived while the request was out is classified by the owned breakpoints' binding, which a retirement ends: the run hears of every stop that already arrived before its breakpoints go.
+    await awaitResponse(
+      this.classification,
+      'the stops that already arrived',
+      signal,
+    )
     // One after the other: each retirement waits for the adapter's reply that excludes it.
     for (const { breakpoint } of this.armed)
       await breakpoint.retire(session, signal)

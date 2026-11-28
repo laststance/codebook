@@ -124,7 +124,7 @@ export interface NodeServerDebugger {
   ): Promise<NodeServerStopCapture>
   /** Resumes the paused thread (the run reserved the pause before). */
   resume(pause: NodeServerDebuggerPause, signal: AbortSignal): Promise<void>
-  /** Retires every owned breakpoint, one after the other, confirmed by the adapter. */
+  /** Retires every owned breakpoint, one after the other, confirmed by the adapter; the stops that already arrived are classified first, so a stop that hit while the request was out is still known as an owned hit. */
   retireStops(signal: AbortSignal): Promise<void>
   /** Removes the owned breakpoints, ends the session (detach, which resumes the target) and stops listening; safe to call again after a failure. */
   release(): Promise<void>

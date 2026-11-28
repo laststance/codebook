@@ -10,7 +10,7 @@ import {
   hitDeclaredStop,
   RUN_STOP_FILE,
 } from './utils/nodeServerEditorRunHarness'
-import { until } from './utils/nodeServerRunHarness'
+import { RESPONSE_200, until } from './utils/nodeServerRunHarness'
 
 const SECRET = 'hunter2-correct-horse'
 const SIGN_IN = {
@@ -142,6 +142,39 @@ test(
     assert.equal(harness.sender.bytesWritten, 0)
     assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), false)
     exitCheck.resolve()
+    await harness.run.stop()
+  },
+)
+
+// protects=a declared stop that arrived inside the request stays the request's capture when the response settles before the stop's stack read does: the run keeps the owned breakpoints' binding until every stop that already arrived is classified, and judges the stop by its arrival; fails_when=the response retires the breakpoints and closes the window first, so the stop read afterwards is held as unattributed with no capture (Cycle 0153 ship pass 1 S6, OV6); seam=the editor's real debugger behind the run, a second declared stop whose stack read is held, the response delivered before it is released; no_claim=the real timing of an adapter's stack read
+test(
+  'a declared stop that arrived inside the request is captured when the response is delivered before its stack read finished',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editorOptions: { stackTraceGate?: Promise<void> } = {}
+    const { editor, harness } = await editorRun({
+      editor: editorOptions,
+      run: { stops: 2 },
+    })
+    await harness.run.sendRequest('key-1')
+    hitDeclaredStop(editor, 0)
+    await until(harness, (view) => view.state === 'paused')
+    editor.adapter.learnerContinues()
+    const secondStackRead = defer<void>()
+    editorOptions.stackTraceGate = secondStackRead.promise
+    hitDeclaredStop(editor, 1)
+    // Act
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    await until(harness, (view) => view.state === 'responded')
+    secondStackRead.resolve()
+    const view = await until(
+      harness,
+      (current) => current.captures.length === 2,
+    )
+    // Assert
+    assert.deepEqual(view.stopsReached, [0, 1])
+    assert.equal(view.heldPause, undefined)
     await harness.run.stop()
   },
 )

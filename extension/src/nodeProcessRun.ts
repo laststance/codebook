@@ -963,7 +963,7 @@ export class NodeProcessRun {
    * - `learner` for a pause that is no hit of a declared stop
    * - `start-hit` for a declared stop hit before the run was prepared
    * - `sign-in-hit` for one hit while the owner's sign-in request is out
-   * - `request-hit` for one hit inside the owner's window
+   * - `request-hit` for one hit inside the owner's window, or one that arrived inside it whatever the window says by the time its stack was read
    * - `unattributed` for one hit outside it, or one that arrived before the request's first byte was written (the attribution of the arrival moment, never re-derived from the later request state)
    */
   private classify(
@@ -975,6 +975,8 @@ export class NodeProcessRun {
     if (pause.inRequestWindowAtStop === false) return 'unattributed'
     // The sign-in phase of the arrival moment decides, as the window does; a debugger that reports none leaves it to the run's state now.
     if (pause.inSignInAtStop ?? this.hooks.inSignIn?.()) return 'sign-in-hit'
+    // A hit that arrived inside the request's window is the request's, even when the response settled before the stack read finished: the arrival evidence is positive, and the request's later end says nothing against it.
+    if (pause.inRequestWindowAtStop === true) return 'request-hit'
     return this.hooks.inWindow() ? 'request-hit' : 'unattributed'
   }
 

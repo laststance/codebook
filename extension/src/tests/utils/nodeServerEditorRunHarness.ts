@@ -1,3 +1,9 @@
+import type {
+  NodeServerDebugger,
+  NodeServerDebuggerPause,
+  NodeServerStopCapture,
+} from '../../nodeServerDebugger'
+
 import { editorHarness, OWNED_IDS } from './nodeServerEditorHarness'
 import {
   createHarness,
@@ -11,6 +17,41 @@ export const RUN_STOP_FILE = `${WORKSPACE}/src/routes/users.ts`
 
 /** The editor harness's options. */
 type EditorOptions = NonNullable<Parameters<typeof editorHarness>[0]>
+
+/**
+ * Reads a pause the way a capture would, without a repository on disk: the run's capture path is real, and only what the debugger would read from the file is fixed.
+ * Why it exists: the real capture reads the cited file of the stop, and the run harness's workspace is no folder on disk.
+ * @param pause - The owned pause being captured.
+ * @returns A presentable capture of the pause's declared stop.
+ * @example await fixedCapture({ token: 1, declaredStopIndex: 1 }).line // => 15
+ */
+function fixedCapture(pause: NodeServerDebuggerPause): NodeServerStopCapture {
+  return {
+    path: 'src/routes/users.ts',
+    line: 14 + (pause.declaredStopIndex ?? 0),
+    sourceHash: 'cited-hash',
+    facts: [],
+    unavailable: [],
+    snapshot: { version: 1, frames: [], variables: [], limitations: [] },
+  }
+}
+
+/**
+ * Wraps the editor's real debugger so only its file read is replaced ({@link fixedCapture}); every other call and every piece of state is the real debugger's.
+ * @param real - The editor's real debugger.
+ * @returns A debugger that delegates to `real`.
+ * @example const debug = withFixedCapture(editor.createDebuggerFor(input))
+ */
+function withFixedCapture(real: NodeServerDebugger): NodeServerDebugger {
+  return new Proxy(real, {
+    get(target, property) {
+      if (property === 'capture')
+        return async (pause: NodeServerDebuggerPause) => fixedCapture(pause)
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
 
 /**
  * Builds a node-server run whose debugger is the editor's real one, behind the fake editor and adapter, so a test drives the run and the debugger together (the ordering of DAP events against the run's own steps).
@@ -37,7 +78,8 @@ export async function editorRun(
   const editor = await editorHarness(options.editor)
   const harness = createHarness({
     ...options.run,
-    createDebugger: (input) => editor.createDebuggerFor(input),
+    createDebugger: (input) =>
+      withFixedCapture(editor.createDebuggerFor(input)),
   })
   if (options.prepare !== false) await harness.run.prepare()
   return { editor, harness }
