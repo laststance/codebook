@@ -373,8 +373,8 @@ export async function runGate({
  * tests ran and none failed; a health script that one day stopped running the suite would otherwise pass the gate
  * without one. Called by {@link runGate} for a check marked `carriesSuite` that exited 0.
  * @param log - The whole text of the check's log.
- * @returns `{ passed, line }`: `passed` is `true` only for a summary with at least one test and no failed or cancelled
- * test; `line` is what the gate prints after the check's name.
+ * @returns `{ passed, line }`: `passed` is `true` only for a summary with at least one passed test and no failed or
+ * cancelled test; `line` is what the gate prints after the check's name.
  * @example
  * suiteVerdict('ℹ tests 3\nℹ pass 3\nℹ fail 0\n') // => { passed: true, line: 'suite: tests=3 pass=3 fail=0 cancelled=0 skipped=0 todo=0' }
  * suiteVerdict('no tests here') // => { passed: false, line: 'suite verdict missing: …' }
@@ -387,13 +387,14 @@ export function suiteVerdict(log) {
       line: 'suite verdict missing: its log holds no summary of a test run.',
     }
   const line = `suite: tests=${summary.tests} pass=${summary.pass} fail=${summary.fail} cancelled=${summary.cancelled ?? 0} skipped=${summary.skipped ?? 0} todo=${summary.todo ?? 0}`
+  // A run in which every test was skipped proves nothing ran: at least one test must have passed.
   const passed =
-    summary.tests > 0 && summary.fail === 0 && (summary.cancelled ?? 0) === 0
+    summary.pass > 0 && summary.fail === 0 && (summary.cancelled ?? 0) === 0
   return {
     passed,
     line: passed
       ? line
-      : `suite verdict missing: the test run counts no test, or a failed or cancelled one (${line}).`,
+      : `suite verdict missing: the test run counts no passed test, or a failed or cancelled one (${line}).`,
   }
 }
 

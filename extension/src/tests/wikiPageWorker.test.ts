@@ -618,8 +618,8 @@ test('once a lost thread has ended, the next stopped worker whose thread does no
   // gstack-timing-ok: the lost thread's end is awaited, not timed, and the 2 s only bound it; it has to come before the second worker's stop limit, 2.3 s after that worker's start (its page's deadline of 2 s, which SLOW_PAGE, taking far longer, passes, and the stop limit of 300 ms), and a held stop that went on ended its thread within 39 ms in 6 runs under coverage and two busy loops on two and four cores.
   const firstLostThreadEnd = await within(pool.endOfWorker(0), 2_000)
   const slowAnswers = await within(Promise.all([firstSlow, secondSlow]), 5_000)
-  // gstack-timing-ok: the answer is awaited, not timed. It needs a third worker thread to start after the stop limit, which took more than 2 s on a loaded machine (Cycle 0154), so the bound is this test's patience only. The real limit is the page's own deadline of 10 s, counted from its request above: a worker that starts too late makes the page answer `deadline`, which the assertion below refuses. The second stop is still held when the answer comes, which is what the test claims.
-  const behindWhileTheSecondStopIsHeld = await within(behind, 9_000)
+  // gstack-timing-ok: the answer is awaited, not timed. The page behind takes the place at the second worker's stop limit (300 ms from here), and its own deadline of 10 s starts only then, so the product answers within 10.3 s whatever happens: `served`, or `deadline` when the third worker's thread starts too late, which the assertion below refuses. The 12 s only keep a product that never answers from hanging the test; a bound under 10.3 s would end the wait before the product's own answer (a thread start took more than 2 s on a loaded machine, Cycle 0154).
+  const behindWhileTheSecondStopIsHeld = await within(behind, 12_000)
   letTheSecondStopGo()
   const secondLostThreadEnd = await within(pool.endOfWorker(1), 2_000)
   const pagesAskedTogether = await within(

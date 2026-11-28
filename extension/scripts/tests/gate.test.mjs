@@ -354,20 +354,25 @@ for (const [situation, log, line] of [
   [
     'counts a failed test',
     'ℹ tests 3\nℹ pass 2\nℹ fail 1\n',
-    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=1 cancelled=0 skipped=0 todo=0).',
+    '15-health suite verdict missing: the test run counts no passed test, or a failed or cancelled one (suite: tests=3 pass=2 fail=1 cancelled=0 skipped=0 todo=0).',
   ],
   [
     'counts a cancelled test',
     'ℹ tests 3\nℹ pass 2\nℹ fail 0\nℹ cancelled 1\n',
-    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=3 pass=2 fail=0 cancelled=1 skipped=0 todo=0).',
+    '15-health suite verdict missing: the test run counts no passed test, or a failed or cancelled one (suite: tests=3 pass=2 fail=0 cancelled=1 skipped=0 todo=0).',
   ],
   [
     'counts no test',
     'ℹ tests 0\nℹ pass 0\nℹ fail 0\n',
-    '15-health suite verdict missing: the test run counts no test, or a failed or cancelled one (suite: tests=0 pass=0 fail=0 cancelled=0 skipped=0 todo=0).',
+    '15-health suite verdict missing: the test run counts no passed test, or a failed or cancelled one (suite: tests=0 pass=0 fail=0 cancelled=0 skipped=0 todo=0).',
+  ],
+  [
+    'counts only skipped tests',
+    'ℹ tests 3\nℹ pass 0\nℹ fail 0\nℹ cancelled 0\nℹ skipped 3\n',
+    '15-health suite verdict missing: the test run counts no passed test, or a failed or cancelled one (suite: tests=3 pass=0 fail=0 cancelled=0 skipped=3 todo=0).',
   ],
 ])
-  // protects=the gate fails when the check that carries the suite exits 0 without proof of a passed test run; fails_when=a health check that ran no suite, or whose suite failed or was cut short, passes the gate; no_claim=none beyond protects
+  // protects=the gate fails when the check that carries the suite exits 0 without proof of a passed test run; fails_when=a health check that ran no suite, or whose suite failed, was cut short or passed no test (every test skipped), passes the gate; no_claim=none beyond protects
   test(`the gate fails when the log of the check that carries the suite ${situation}`, async () => {
     // Arrange
     const lines = []

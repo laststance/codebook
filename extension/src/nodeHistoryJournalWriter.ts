@@ -218,8 +218,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
 
   /**
    * Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards, and one already published stays (a no-op).
-   * @returns Settles, never rejecting, once the writer's record is removed: from then on another window reads the history as interrupted too. This window reads it so at once, so the run's own callers need not wait.
-   * @example await writer.abandon() // another window's store now reads the history as interrupted
+   * @returns Settles, never rejecting, once the removal of the writer's record was tried. With the record gone, another window reads the history as interrupted too; a record that could not be removed keeps the history live for other windows until this editor's process ends ({@link removeWriterRecord}). This window reads it as interrupted at once, so the run's own callers need not wait.
+   * @example await writer.abandon() // with the record gone, another window's store reads the history as interrupted
    */
   abandon(): Promise<void> {
     // A seal whose rename resolved stays sealed: the store was told and another window may list it sealed, so a late abandon (the temporary file's cleanup still awaited) retracts nothing.
