@@ -172,3 +172,31 @@ test('an answered resume carries the newest stop token noted with its request', 
   // Assert
   assert.deepEqual(ranOn, { threadId: 3, newestStopToken: 5 })
 })
+
+// Value: protects=a resume sent before any stop existed (token 0) still carries that token, so its late answer resumes no stop that arrived meanwhile; fails_when=the token is dropped as falsy and the answer then reads as resuming every stop; why_new=the existing token test only uses 5; seam=none; no_claim=how a debugger numbers its stops
+test('an answered resume sent before any stop existed carries the zero stop token', () => {
+  // Arrange
+  const resumes = new PendingResumeRequests()
+  resumes.noteRequest(
+    'session-1',
+    {
+      type: 'request',
+      seq: 50,
+      command: 'next',
+      arguments: { threadId: 4 },
+    },
+    0,
+  )
+
+  // Act
+  const ranOn = resumes.takeAnswered('session-1', {
+    type: 'response',
+    seq: 51,
+    request_seq: 50,
+    command: 'next',
+    success: true,
+  })
+
+  // Assert
+  assert.deepEqual(ranOn, { threadId: undefined, newestStopToken: 0 })
+})
