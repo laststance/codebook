@@ -3981,6 +3981,10 @@ export const LIBRARY_SECTION_DEPTH_LIMIT = 8
 /** The words the shared process core uses in its sentences for a server run; a script run passes its own ({@link NODE_SCRIPT_RUN_WORDS}). */
 export const NODE_SERVER_RUN_WORDS = { noun: 'server', profile: 'node-server' }
 
+/** The refusal of a request that waits for a pause of the server the run has not heard of yet (its stack is still being read); before a request was sent, sending again once the pause is reported is the way on. The run recognises it by this text to word the refusal of a declared request after its sign-in, where nothing can be sent again. */
+export const NODE_SERVER_PAUSE_BEING_READ_TEXT =
+  'A pause of the server is still being read, so the request was not sent. Read the run and send again once the pause is reported.'
+
 /** The words the shared process core uses in its sentences for a script run. */
 export const NODE_SCRIPT_RUN_WORDS = { noun: 'script', profile: 'node-script' }
 /** The most the pause waits for the browser's request of a route-handler hit to be seen: the server's pause and the page's `Network` event reach the run on different connections, so a hit may come first. */

@@ -627,7 +627,7 @@ test(
     assert.equal(requestFailure?.code, 'REQUEST_FAILED')
     assert.equal(
       requestFailure?.message,
-      'The declared request was not sent because the learner held a pause of the server after the sign-in; Codebook never resumes it. Let the learner continue the server in the debugger, then start the run again.',
+      'The declared request was not sent because the learner held a pause of the server after the sign-in, which already ran; Codebook never resumes it. Let the learner continue the server in the debugger, then stop this run (codebook_stop) and start a new run.',
     )
   },
 )

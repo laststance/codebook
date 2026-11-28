@@ -2,6 +2,7 @@ import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   MS_PER_MINUTE,
   NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
+  NODE_SERVER_PAUSE_BEING_READ_TEXT,
   NODE_SERVER_READY_TIMEOUT_MS,
   NODE_SERVER_REQUEST_TIMEOUT_MS,
   NODE_SERVER_REQUEST_WALL_LIMIT_MS,
@@ -73,9 +74,9 @@ type ReadyForRequest = {
 /** The codes a request failure of the run can carry. */
 type RequestFailureCode = NonNullable<NodeServerView['requestFailure']>['code']
 
-/** The sentence of a declared request the learner's pause refused after the sign-in: the request has ended, so the learner continues the server and the chat starts the run again. */
+/** The sentence of a declared request refused after its sign-in because the learner holds a pause, or a pause the run has not heard of yet may be the learner's: the declared request was not sent and the sign-in already ran, so the run has nothing left to send; the learner continues the server, the chat stops this run, and a new run starts. */
 const DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT =
-  'The declared request was not sent because the learner held a pause of the server after the sign-in; Codebook never resumes it. Let the learner continue the server in the debugger, then start the run again.'
+  'The declared request was not sent because the learner held a pause of the server after the sign-in, which already ran; Codebook never resumes it. Let the learner continue the server in the debugger, then stop this run (codebook_stop) and start a new run.'
 
 /**
  * Tells whether a send failure is a refusal before any byte left (a listener that is not the server, an unreadable owner, a stop admitted first, or a pause the learner holds).
@@ -102,14 +103,29 @@ function isRefusalBeforeAnyByte(error: unknown): error is StudyError & {
 }
 
 /**
- * Chooses the sentence of a refusal that ends the declared request after its sign-in: the learner's pause gets a sentence that says the request is over (the generic one asks to continue as if the request were still waiting).
+ * Tells whether a refusal text is the learner's pause: a pause the learner holds, or one the run has not heard of yet (its stack is still being read), which may be the learner's.
+ * Called by {@link refusalSentenceAfterSignIn} and by {@link OwnedNodeServerRun} when it words the refusal of the declared request after a sign-in.
+ * @param code - The refusal's code.
+ * @param message - The refusal's sentence.
+ * @returns `true` for `LEARNER_PAUSED` and for the sentence of a pause that is still being read.
+ * @example isLearnerPauseRefusal('RUN_NOT_READY', NODE_SERVER_PAUSE_BEING_READ_TEXT) // => true
+ */
+function isLearnerPauseRefusal(code: string, message: string): boolean {
+  return (
+    code === 'LEARNER_PAUSED' ||
+    (code === 'RUN_NOT_READY' && message === NODE_SERVER_PAUSE_BEING_READ_TEXT)
+  )
+}
+
+/**
+ * Chooses the sentence of a refusal that ends the declared request after its sign-in: a pause of the learner's, held or still being read, gets a sentence that says the request is over and the run must be stopped (the generic one asks to continue or send again as if the request were still waiting).
  * Called by {@link OwnedNodeServerRun} when the declared request after a sign-in is refused before its first byte.
  * @param error - The refusal.
  * @returns The sentence the request failure carries.
  * @example refusalSentenceAfterSignIn(new StudyError('LEARNER_PAUSED', 'x')) // => 'The declared request was not sent because the learner held a pause …'
  */
 function refusalSentenceAfterSignIn(error: StudyError): string {
-  return error.code === 'LEARNER_PAUSED'
+  return isLearnerPauseRefusal(error.code, error.message)
     ? DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT
     : error.message
 }
@@ -907,7 +923,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     // The sign-in already ran: a stop withdrawn meanwhile ends the declared request before its bytes.
     const refusal = this.core.requestRefusalNow()
     if (refusal) {
-      this.failRequest('REQUEST_FAILED', refusal)
+      this.failRequest(
+        'REQUEST_FAILED',
+        isLearnerPauseRefusal('RUN_NOT_READY', refusal)
+          ? DECLARED_REQUEST_REFUSED_BY_LEARNER_PAUSE_TEXT
+          : refusal,
+      )
       return
     }
     const cookie = cookieHeaderOf(cookies, declared.path)

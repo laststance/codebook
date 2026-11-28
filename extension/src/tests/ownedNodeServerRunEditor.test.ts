@@ -10,7 +10,11 @@ import {
   hitDeclaredStop,
   RUN_STOP_FILE,
 } from './utils/nodeServerEditorRunHarness'
-import { RESPONSE_200, until } from './utils/nodeServerRunHarness'
+import {
+  type HarnessOptions,
+  RESPONSE_200,
+  until,
+} from './utils/nodeServerRunHarness'
 
 const SECRET = 'hunter2-correct-horse'
 const SIGN_IN = {
@@ -278,6 +282,81 @@ test(
     // Assert
     assert.deepEqual(view.stopsReached, [0])
     assert.equal(view.heldPause, undefined)
+    await harness.run.stop()
+  },
+)
+
+const SET_COOKIE = 'sid=s%3Asid1234567890abcdef.sigABCDEFGHIJKLMNOP; Path=/'
+/** The sentence a declared request carries when the learner's pause refuses it after the sign-in ran. */
+const TERMINAL_PAUSE_SENTENCE =
+  'The declared request was not sent because the learner held a pause of the server after the sign-in, which already ran; Codebook never resumes it. Let the learner continue the server in the debugger, then stop this run (codebook_stop) and start a new run.'
+
+// protects=a declared request refused after its sign-in because a pause of the server is still being read says the request was not sent, the sign-in already ran, and the run must be stopped and started again: the run consumed its one request, so no send is left; fails_when=the refusal keeps the generic sentence that asks to send again once the pause is reported, or omits the stop that releases the running server (Cycle 0153 ship pass 1 S13); seam=the editor's real debugger behind a sign-in run, an exception stop whose stack read is held and the sign-in's response; no_claim=the learner's reading of the sentence
+test(
+  'a declared request refused after the sign-in while a pause is still being read tells the chat to stop the run and start a new one',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const stackRead = defer<void>()
+    const { editor, harness } = await editorRun({
+      editor: { stackTraceGate: stackRead.promise },
+      run: { signIn: SIGN_IN },
+    })
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    editor.adapter.stop('exception', undefined, {
+      file: RUN_STOP_FILE,
+      line: 30,
+    })
+    // Act
+    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    const view = await until(
+      harness,
+      (current) => current.requestFailure !== undefined,
+    )
+    // Assert
+    assert.equal(view.requestFailure?.code, 'REQUEST_FAILED')
+    assert.equal(view.requestFailure?.message, TERMINAL_PAUSE_SENTENCE)
+    stackRead.resolve()
+    await harness.run.stop()
+  },
+)
+
+// protects=a declared request whose own peer check finishes while a pause of the server is still being read ends with the same terminal sentence as the refusal before it; fails_when=the refusal at the write keeps the generic sentence that asks to send again (Cycle 0153 ship pass 1 S13); seam=the editor's real debugger behind a sign-in run, a held peer check of the declared request and an exception stop whose stack read is held; no_claim=the learner's reading of the sentence
+test(
+  'a declared request whose peer check ends while a pause is still being read ends with the terminal sentence',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const stackRead = defer<void>()
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    const runOptions: HarnessOptions = { signIn: SIGN_IN }
+    const { editor, harness } = await editorRun({
+      editor: { stackTraceGate: stackRead.promise },
+      run: runOptions,
+    })
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    // The declared request's peer check stays open until the stop arrived.
+    runOptions.peerCheckGate = peerCheck.promise
+    runOptions.onPeerCheckEntered = (): void => peerCheckEntered.resolve()
+    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    await peerCheckEntered.promise
+    // Act
+    editor.adapter.stop('exception', undefined, {
+      file: RUN_STOP_FILE,
+      line: 30,
+    })
+    peerCheck.resolve()
+    const view = await until(
+      harness,
+      (current) => current.requestFailure !== undefined,
+    )
+    // Assert
+    assert.equal(view.requestFailure?.code, 'REQUEST_FAILED')
+    assert.equal(view.requestFailure?.message, TERMINAL_PAUSE_SENTENCE)
+    stackRead.resolve()
     await harness.run.stop()
   },
 )

@@ -58,7 +58,7 @@ function withFixedCapture(real: NodeServerDebugger): NodeServerDebugger {
  * Why it exists: the run's fakes ({@link createHarness}) cannot model what the debugger knows about the learner's Pause, an unreported stop or the stop ledger, and the debugger's tests cannot model the run's write checks.
  * Called by the tests that need both sides.
  * @param options.editor - The fake editor's options (a held stack read, a rejected stack, a first stop).
- * @param options.run - The run harness's options (a held peer check, two stops, a Bun loader, a sign-in).
+ * @param options.run - The run harness's options (a held peer check, two stops, a Bun loader, a sign-in); the harness reads this object itself, so a later change to it is heard.
  * @param options.prepare - `false` leaves the run unprepared, so a test acts while it prepares.
  * @returns The fake editor with its adapter, and the run harness.
  * @example
@@ -76,11 +76,11 @@ export async function editorRun(
   harness: Harness
 }> {
   const editor = await editorHarness(options.editor)
-  const harness = createHarness({
-    ...options.run,
-    createDebugger: (input) =>
-      withFixedCapture(editor.createDebuggerFor(input)),
-  })
+  // The caller's own options object is the harness's, so a test that changes one later (a peer check gate it sets after the sign-in) is heard.
+  const runOptions: HarnessOptions = options.run ?? {}
+  runOptions.createDebugger = (input) =>
+    withFixedCapture(editor.createDebuggerFor(input))
+  const harness = createHarness(runOptions)
   if (options.prepare !== false) await harness.run.prepare()
   return { editor, harness }
 }

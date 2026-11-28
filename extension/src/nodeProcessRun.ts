@@ -1,6 +1,7 @@
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   NODE_SERVER_EXIT_SETTLE_MS,
+  NODE_SERVER_PAUSE_BEING_READ_TEXT,
   NODE_SERVER_RUN_WORDS,
   NODE_SERVER_REQUEST_CAPTURE_LIMIT,
   NODE_SERVER_STOP_DEADLINE_MS,
@@ -634,8 +635,7 @@ export class NodeProcessRun {
       if (unbound) return unboundBunStopText(unbound)
     }
     // A pause the run has not heard of yet may be older than the request: the request waits for its classification.
-    if (debug.hasUnreportedPause())
-      return 'A pause of the server is still being read, so the request was not sent. Read the run and send again once the pause is reported.'
+    if (debug.hasUnreportedPause()) return NODE_SERVER_PAUSE_BEING_READ_TEXT
     return undefined
   }
 
