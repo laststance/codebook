@@ -14,8 +14,14 @@ import { editorHarness, OWNED_IDS } from './utils/nodeServerEditorHarness'
 import { fakeServer } from './utils/nodeServerRunHarness'
 import { removeTestFolder } from './utils/removeTestFolder'
 
-/** The text of the script file both declared stops lie in; its hash is what the stops cite. */
-const SCRIPT_TEXT = 'export const script = () => 1\n'
+/** The text of the script file both declared stops lie in, with executable code on lines 3 and 4 (the stops' lines); its hash is what the stops cite. */
+const SCRIPT_TEXT = [
+  '// The script both declared stops lie in.',
+  "const label = 'script'",
+  'export const first = () => label.length',
+  'export const second = () => first() + 1',
+  '',
+].join('\n')
 
 /**
  * Builds the core of a script run (no request window of its own: the script is captured from its release until it exits) around the editor's real debugger, with a real script file so a capture reads the cited bytes.
@@ -140,6 +146,7 @@ test(
       )
       // Assert
       assert.equal(core.snapshot().captures[0]?.declaredStopIndex, 0)
+      assert.equal(core.snapshot().captures[0]?.line, 3)
       assert.equal(core.snapshot().heldPause, undefined)
     } finally {
       await core.stop().catch(() => undefined)
@@ -180,6 +187,10 @@ test(
       assert.deepEqual(
         core.snapshot().captures.map((capture) => capture.declaredStopIndex),
         [0, 1],
+      )
+      assert.deepEqual(
+        core.snapshot().captures.map((capture) => capture.line),
+        [3, 4],
       )
       assert.equal(core.snapshot().heldPause, undefined)
     } finally {
