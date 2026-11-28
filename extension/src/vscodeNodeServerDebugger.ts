@@ -43,6 +43,7 @@ import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
 import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
+import { untilAborted } from './utils/untilAborted'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
 
@@ -158,6 +159,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly resumeAnswerWaiters = new Set<() => void>()
   private releaseBegun = false
   private readonly releaser = new SharedAttempt(() => this.releaseOwned())
+  /** The one retirement of the owned breakpoints that every caller joins: the response and the capture budget may both end the request's stops, and the adapter confirms each removal once. */
+  private readonly retirer = new SharedAttempt(() => this.retireOwnedStops())
   private readonly tracker: vscode.Disposable
   private readonly termination: vscode.Disposable
 
@@ -1551,17 +1554,29 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     )
   }
 
+  /**
+   * Retires every owned breakpoint, joining the retirement already under way: the response that ends the request and the hit beyond the capture budget can ask for it in the same turn.
+   * @param signal - This caller's cancellation; the retirement itself goes on for the other callers.
+   * @example await Promise.all([debug.retireStops(signal), debug.retireStops(signal)]) // one retirement
+   */
   async retireStops(signal: AbortSignal): Promise<void> {
+    await untilAborted(this.retirer.run(), signal)
+  }
+
+  /**
+   * Retires the owned breakpoints one after the other once the stops that already arrived are classified.
+   * Why it exists: a stop that arrived while the request was out is classified by the owned breakpoints' binding, which a retirement ends, so the run hears of every stop that already arrived before its breakpoints go. Run once at a time through {@link retirer}.
+   */
+  private async retireOwnedStops(): Promise<void> {
     const session = this.boundSession()
-    // A stop that arrived while the request was out is classified by the owned breakpoints' binding, which a retirement ends: the run hears of every stop that already arrived before its breakpoints go.
     await awaitResponse(
       this.classification,
       'the stops that already arrived',
-      signal,
+      this.abort.signal,
     )
     // One after the other: each retirement waits for the adapter's reply that excludes it.
     for (const { breakpoint } of this.armed)
-      await breakpoint.retire(session, signal)
+      await breakpoint.retire(session, this.abort.signal)
   }
 
   // ---------------------------------------------------------------- release

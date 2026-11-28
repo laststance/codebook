@@ -794,3 +794,42 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=the response and the seventeenth hit may end the request's stops in the same turn and share one retirement: the answered request stays answered and the hit beyond the capture budget is continued uncaptured; fails_when=both callers retire the same breakpoints, one throws that a retirement is already pending, and an HTTP 200 turns into a run failure (Cycle 0153 ship pass 2 T10, OV5); seam=the editor's real debugger behind the run, sixteen captured hits, a seventeenth whose stack read is held and the response delivered before it is released; no_claim=the real timing of an adapter's stack read
+test(
+  'the response and the seventeenth hit share one retirement and leave the answered request answered',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editorOptions: { stackTraceGate?: Promise<void> } = {}
+    const { editor, harness } = await editorRun({ editor: editorOptions })
+    await harness.run.sendRequest('key-1')
+    for (let hit = 1; hit <= 16; hit += 1) {
+      hitDeclaredStop(editor, 0)
+      await until(harness, (view) => view.captures.length === hit)
+      editor.adapter.learnerContinues()
+      await until(harness, (view) => view.state === 'request-in-flight')
+    }
+    const lastStackRead = defer<void>()
+    editorOptions.stackTraceGate = lastStackRead.promise
+    hitDeclaredStop(editor, 0)
+    const continuesBefore = continueRequestsOf(editor).length
+    // Act
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    await until(harness, (view) => view.state === 'responded')
+    lastStackRead.resolve()
+    await waitUntil(
+      () =>
+        harness.run.view().runFailure !== undefined ||
+        continueRequestsOf(editor).length > continuesBefore,
+      'the seventeenth hit continued or the run failed',
+      5_000,
+    )
+    // Assert
+    const view = harness.run.view()
+    assert.equal(view.runFailure, undefined)
+    assert.equal(view.captureBudgetExhausted, true)
+    assert.equal(view.state, 'responded')
+    await harness.run.stop()
+  },
+)
