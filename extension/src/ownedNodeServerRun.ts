@@ -74,20 +74,25 @@ type ReadyForRequest = {
 type RequestFailureCode = NonNullable<NodeServerView['requestFailure']>['code']
 
 /**
- * Tells whether a send failure is a refusal before any byte left (a listener that is not the server, an unreadable owner, or a stop admitted first).
+ * Tells whether a send failure is a refusal before any byte left (a listener that is not the server, an unreadable owner, a stop admitted first, or a pause the learner holds).
  * Called by the request paths to keep a run ready after such a refusal.
  * @param error - Anything a sender rejected with.
  * @returns True for those {@link StudyError}s.
  * @example isRefusalBeforeAnyByte(new StudyError('LISTENER_NOT_OWNED', 'x')) // => true
  */
 function isRefusalBeforeAnyByte(error: unknown): error is StudyError & {
-  code: 'LISTENER_NOT_OWNED' | 'PORT_OWNER_UNKNOWN' | 'RUN_NOT_READY'
+  code:
+    | 'LISTENER_NOT_OWNED'
+    | 'PORT_OWNER_UNKNOWN'
+    | 'RUN_NOT_READY'
+    | 'LEARNER_PAUSED'
 } {
   return (
     error instanceof StudyError &&
     (error.code === 'LISTENER_NOT_OWNED' ||
       error.code === 'PORT_OWNER_UNKNOWN' ||
-      error.code === 'RUN_NOT_READY')
+      error.code === 'RUN_NOT_READY' ||
+      error.code === 'LEARNER_PAUSED')
   )
 }
 
@@ -979,10 +984,13 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    *
    * Why it exists: the sender awaits a process lookup between connecting and writing, and a stop withdrawn during it would otherwise let a mutating request go out unobserved; a pause that arrives before the bytes are written is no effect of the request, so the attribution window must not open earlier.
    * When it runs: passed to every sender as `beforeWrite` ({@link senderInput}); the sign-in request and the declared request after it included.
-   * @throws `RUN_NOT_READY` with the refusal sentence ({@link NodeProcessRun.requestRefusalNow}); the sender then writes nothing.
-   * @example this.beforeRequestWrite() // throws StudyError('RUN_NOT_READY', 'Declared stop 1 … did not bind on Bun: …')
+   * A pause classified while the peer was being verified (the learner's, or a declared stop outside the request) refuses the write too: Codebook never writes a request while a pause is held.
+   * @throws `LEARNER_PAUSED` ({@link NodeProcessRun.assertNoHeldPause}) while a pause is held, or `RUN_NOT_READY` with the refusal sentence ({@link NodeProcessRun.requestRefusalNow}); the sender then writes nothing, and the request paths take the window back as for any refusal before a byte.
+   * @example this.beforeRequestWrite() // throws StudyError('LEARNER_PAUSED', 'The learner paused the server; Codebook never resumes it. …')
    */
   private beforeRequestWrite(): void {
+    // A pause the learner holds (classified after the request began) stops the write before any byte.
+    this.core.assertNoHeldPause()
     const refusal = this.core.requestRefusalNow()
     if (refusal) throw new StudyError('RUN_NOT_READY', refusal)
     this.core.requireDebugger().setRequestWindow(true)
@@ -1048,9 +1056,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       this.requestPhase === 'request' &&
       isRefusalBeforeAnyByte(error)
     ) {
-      // A stop withdrawn during the peer check refuses with `RUN_NOT_READY`: the request ends as the earlier refusal after the sign-in does.
+      // A stop withdrawn during the peer check refuses with `RUN_NOT_READY`, a pause the learner holds with `LEARNER_PAUSED`: the request ends as `REQUEST_FAILED` carrying the sentence, as the earlier refusal after the sign-in does.
       this.failRequest(
-        error.code === 'RUN_NOT_READY' ? 'REQUEST_FAILED' : error.code,
+        error.code === 'LISTENER_NOT_OWNED' ||
+          error.code === 'PORT_OWNER_UNKNOWN'
+          ? error.code
+          : 'REQUEST_FAILED',
         error.message,
       )
       return

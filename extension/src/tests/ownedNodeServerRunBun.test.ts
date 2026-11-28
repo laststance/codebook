@@ -454,3 +454,115 @@ test(
     peerCheck.resolve()
   },
 )
+
+// Value: protects=a request is not written when the learner pauses the server while the sender is still verifying the connection's peer: the pause is classified as the learner's, Codebook never writes while one is held, and the chat reads LEARNER_PAUSED with the request taken back; fails_when=the last check before the first byte reads only the declared stops, so the POST goes out into a server the learner paused; seam=the harness's peer check held open while the fake debugger reports a learner pause; no_claim=how the editor shows the pause
+test(
+  'a Bun run writes no request byte and refuses with LEARNER_PAUSED when the learner pauses the server while the connection is being verified',
+  { timeout: PEER_CHECK_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    const harness = createHarness({
+      launchLoader: BUN_LOADER,
+      peerCheckGate: peerCheck.promise,
+      onPeerCheckEntered: peerCheckEntered.resolve,
+    })
+    await harness.run.prepare()
+    const outcome = harness.run.sendRequest('key-1').then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    )
+    // The learner pauses only once the peer check is really open.
+    await peerCheckEntered.promise
+    // Act
+    harness.debug.learnerPause()
+    peerCheck.resolve()
+    const error = await outcome
+    // Assert
+    assert.ok(error instanceof StudyError)
+    assert.equal(error.code, 'LEARNER_PAUSED')
+    assert.equal(harness.sender.bytesWritten, 0)
+    assert.equal(harness.run.view().request, undefined)
+    assert.equal(harness.order.includes('window:true'), false)
+  },
+)
+
+// Value: protects=the sign-in request is not written when the learner pauses the server while the sign-in's connection is being verified, and the run reads no request in flight; fails_when=the sign-in sender's last check ignores a held pause and the password is posted into a paused server; seam=the harness's peer check held open for the sign-in while the fake debugger reports a learner pause; no_claim=the sign-in's server behaviour
+test(
+  'a Bun run with sign-in writes no sign-in byte and refuses with LEARNER_PAUSED when the learner pauses the server while the connection is being verified',
+  { timeout: PEER_CHECK_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    const harness = createHarness({
+      launchLoader: BUN_LOADER,
+      peerCheckGate: peerCheck.promise,
+      onPeerCheckEntered: peerCheckEntered.resolve,
+      signIn: {
+        path: '/login',
+        fields: { email: 'learner@example.test' },
+        secretField: 'password',
+        secret: 'ask-learner',
+      },
+    })
+    await harness.run.prepare()
+    const typedByLearner = { secret: 'hunter2-correct-horse' }
+    const outcome = harness.run.sendRequest('key-1', typedByLearner).then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    )
+    await peerCheckEntered.promise
+    // Act
+    harness.debug.learnerPause()
+    peerCheck.resolve()
+    const error = await outcome
+    // Assert
+    assert.ok(error instanceof StudyError)
+    assert.equal(error.code, 'LEARNER_PAUSED')
+    assert.equal(harness.sender.bytesWritten, 0)
+    assert.equal(harness.order.includes('window:true'), false)
+  },
+)
+
+// Value: protects=the declared request after a sign-in is not written when the learner pauses the server while its own connection is being verified, and the request ends with the learner-paused sentence; fails_when=only the sign-in is guarded and the declared POST goes out into a paused server; seam=the harness's peer check held open for the declared request only; no_claim=the sign-in's server behaviour
+test(
+  'a Bun run with sign-in writes no declared request byte when the learner pauses the server while its connection is being verified',
+  { timeout: PEER_CHECK_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const options: HarnessOptions = {
+      launchLoader: BUN_LOADER,
+      signIn: {
+        path: '/login',
+        fields: { email: 'learner@example.test' },
+        secretField: 'password',
+        secret: 'ask-learner',
+      },
+    }
+    const harness = createHarness(options)
+    await harness.run.prepare()
+    await harness.run.sendRequest('key-1', { secret: 'hunter2-correct-horse' })
+    // The declared request's peer check stays open until the learner pauses.
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    options.peerCheckGate = peerCheck.promise
+    options.onPeerCheckEntered = peerCheckEntered.resolve
+    const [signInExchange] = harness.sender.exchanges
+    signInExchange?.onSetCookie?.(['sid=s%3Aabc123def456; Path=/; HttpOnly'])
+    signInExchange?.response.resolve(RESPONSE_200)
+    await peerCheckEntered.promise
+    // Act
+    harness.debug.learnerPause()
+    peerCheck.resolve()
+    // The run reads learner-paused while the pause is held; the request's failure is kept beside it.
+    await until(harness, (view) => view.requestFailure !== undefined)
+    // Assert
+    assert.equal(harness.sender.bytesWritten, 1)
+    assert.match(
+      JSON.stringify(harness.run.view()),
+      /The learner paused the server; Codebook never resumes it/,
+    )
+  },
+)
