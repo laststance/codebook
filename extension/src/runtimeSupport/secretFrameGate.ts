@@ -140,7 +140,9 @@ function installSecretFrameObserver(
     open: number | null
     unsafe: [number, number][]
     reason?: SecretFrameFailureReason
-  } = { open: null, unsafe: [] }
+    /** When a full check last saw the page safe; the observer's start before any. */
+    clearSinceMs: number
+  } = { open: null, unsafe: [], clearSinceMs: Date.now() }
   // The last non-empty value the control held: a page that clears the control after copying it must not end the checks.
   let lastValue = ''
   // How often each value already appeared in the rendered text when it arrived: page text, not a copy.
@@ -481,8 +483,17 @@ function installSecretFrameObserver(
   const check = (full = true): void => {
     const reason = unsafeReason(full)
     const now = Date.now()
-    if (reason !== undefined) openUnsafe(reason, now)
-    else if (full) closeUnsafe(now)
+    if (reason !== undefined) {
+      // What the per-paint check sees too (the armed control, the page's own controls) is found before the paint that shows it, so its unsafe time starts now. What only a full check sees (rendered text, a control in a shadow root or a frame) may have been drawn at any time since the last full check that saw the page safe, with no mutation this observer was told of (a new shadow root, a value a script set there): its unsafe time starts at that check, as a cross-origin interval's does.
+      if (state.open === null)
+        openUnsafe(
+          reason,
+          !full || unsafeReason(false) !== undefined ? now : state.clearSinceMs,
+        )
+    } else if (full) {
+      closeUnsafe(now)
+      state.clearSinceMs = now
+    }
     checkCrossOrigin(full)
   }
   // A value set by script raises no mutation: the controls are read before every paint as well.

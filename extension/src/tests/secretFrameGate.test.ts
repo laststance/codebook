@@ -568,6 +568,76 @@ test('a secret copied into the text of an open shadow root drops frames and fail
   assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
 })
 
+for (const [shown, showSecret] of [
+  [
+    'copied into the text of a new shadow root',
+    `(() => { const note = document.createElement('p'); note.textContent = 'you typed typed-secret'; document.getElementById('host').attachShadow({ mode: 'open' }).append(note) })()`,
+  ],
+  [
+    'set as the value of a text control in a new shadow root',
+    `(() => { const input = document.createElement('input'); input.type = 'text'; document.getElementById('host').attachShadow({ mode: 'open' }).append(input); input.value = 'typed-secret' })()`,
+  ],
+] as const)
+  // protects=the first images that show a secret in a shadow root no check had visited are withheld however late they reach the gate: the unsafe time found by the verification starts at the last full check that saw the page safe, not at the verification; fails_when=the unsafe time starts when the verification finds it, so an image captured more than the margin before that verification is stored although it shows the secret (the run then says it kept no image from that time); seam=a real headless page that has painted the change (two animation frames) and an image judged 200 ms after its capture; no_claim=closed shadow roots, which no script can read
+  test(`an image captured after a secret was ${shown} is dropped even when it reaches the gate 200 ms later`, async (context) => {
+    // Arrange
+    const page = await launchRealHeadlessPage(context)
+    if (!page) return
+    await page.load('<input id="pw" type="password"><div id="host"></div>')
+    const gate = new SecretFrameGate({
+      evaluate: (expression) => page.evaluate(expression),
+    })
+    await gate.arm('#pw', 'typed-secret')
+    const verdictBeforeTheSecretShows = await gate.admitFrame(Date.now())
+    await delay(CLEAR_OF_MARGIN_MS)
+
+    // Act: the page shows the secret and paints it; the image of that paint reaches the gate 200 ms after its capture.
+    await page.evaluate(showSecret)
+    await page.evaluate(
+      'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(1))))',
+    )
+    const capturedAfterThePaint = Date.now()
+    await delay(200)
+    const verdict = await gate.admitFrame(capturedAfterThePaint)
+
+    // Assert
+    assert.deepEqual([verdictBeforeTheSecretShows, verdict], ['pass', 'drop'])
+  })
+
+// protects=the withholding of a secret that only a full check can see reaches back to the last full check that saw the page safe and no further: an image captured before that check is still stored; fails_when=an unsafe time found late is dated at the gate's arming or drops every earlier image of the run; no_claim=images captured between that check and the secret's appearance, which are withheld on purpose (the observer cannot tell when in that time the secret was drawn)
+test('an image captured before the last verification that saw the page safe still passes after a secret shows in a new shadow root', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedBeforeTheSafeVerification = Date.now() - 20
+  await delay(CLEAR_OF_MARGIN_MS)
+  const safeVerdict = await gate.admitFrame(Date.now())
+  await delay(CLEAR_OF_MARGIN_MS)
+
+  // Act
+  await page.evaluate(
+    `(() => { const note = document.createElement('p'); note.textContent = 'you typed typed-secret'; document.getElementById('host').attachShadow({ mode: 'open' }).append(note) })()`,
+  )
+  await settle(page)
+  const verdicts = [
+    await gate.admitFrame(Date.now() - 20),
+    await gate.admitFrame(capturedBeforeTheSafeVerification),
+  ]
+
+  // Assert
+  assert.equal(safeVerdict, 'pass')
+  assert.deepEqual(verdicts, ['drop', 'pass'])
+  assert.deepEqual(failures, ['value-copied-to-text'])
+})
+
 // protects=a plain text control inside a same-origin iframe that holds the secret fails the gate; fails_when=the control test uses the parent realm's HTMLInputElement, which an iframe's input is not; no_claim=cross-origin iframes; real headless Chrome
 test('a plain control inside a same-origin iframe holding the secret drops frames and fails the run', async (context) => {
   // Arrange
