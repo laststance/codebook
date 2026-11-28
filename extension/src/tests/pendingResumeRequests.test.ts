@@ -217,28 +217,28 @@ test('a waiting continue covers the older stops of its threads only', () => {
   )
 
   // Act
-  const olderOnItsThread = resumes.wouldResume('session-1', {
+  const olderOnItsThread = resumes.coveringRequestSeqs('session-1', {
     threadId: 2,
     token: 5,
   })
-  const newerOnItsThread = resumes.wouldResume('session-1', {
+  const newerOnItsThread = resumes.coveringRequestSeqs('session-1', {
     threadId: 2,
     token: 6,
   })
-  const olderOnAnotherThread = resumes.wouldResume('session-1', {
+  const olderOnAnotherThread = resumes.coveringRequestSeqs('session-1', {
     threadId: 3,
     token: 4,
   })
-  const olderInAnotherSession = resumes.wouldResume('session-2', {
+  const olderInAnotherSession = resumes.coveringRequestSeqs('session-2', {
     threadId: 2,
     token: 4,
   })
 
   // Assert
-  assert.equal(olderOnItsThread, true)
-  assert.equal(newerOnItsThread, false)
-  assert.equal(olderOnAnotherThread, false)
-  assert.equal(olderInAnotherSession, false)
+  assert.deepEqual(olderOnItsThread, [7])
+  assert.deepEqual(newerOnItsThread, [])
+  assert.deepEqual(olderOnAnotherThread, [])
+  assert.deepEqual(olderInAnotherSession, [])
 })
 
 // protects=a response is recognised as the answer to a waiting resume until the answer was taken, so a refused Continue can be told from the reply to another request; fails_when=isPending stays true after takeAnswered or answers true for a request that is no resume; no_claim=the debugger's window handling

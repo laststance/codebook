@@ -64,6 +64,8 @@ type NativeStop = {
   allThreadsStopped?: boolean
   /** Whether `inRequestWindowAtStop` rests on the learner's Continue that was still waiting for its answer when the stop arrived (the window is about to reopen), so a refused Continue takes it back. */
   windowFromPendingResume?: boolean
+  /** The learner Continues that covered the stop's held pauses when it arrived, present with `windowFromPendingResume`: only their answers settle the verdict, whatever the request or the learner does after the arrival. */
+  resumeBasis?: ResumeBasis
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
   /** The owned breakpoints the adapter's `stopped` named by id, with the line each is accepted on, as they stood when it arrived, so an editor change while the stack was read cannot erase a hit that already arrived. */
@@ -71,6 +73,9 @@ type NativeStop = {
   /** A Bun run: where each of the run's own declared stops stood verified when the adapter's `stopped` arrived, so an id-less stop is matched against the bindings that could have caused it and a binding verified while the stack was read does not count. */
   ownedPlaces?: OwnedStopPlace[]
 }
+
+/** What a verdict that rests on learner Continues in flight was built from when the stop arrived: the learner's held pauses (by token) and the sequence numbers of the Continue or step requests that covered them. */
+type ResumeBasis = { heldTokens: number[]; requestSeqs: number[] }
 
 /** The place of one breakpoint the learner set: the resolved file path and the one-based line. */
 type LearnerBreakpointPlace = { file: string; line: number }
@@ -453,51 +458,64 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     sessionId: string,
   ): Pick<
     NativeStop,
-    'inRequestWindowAtStop' | 'inSignInAtStop' | 'windowFromPendingResume'
+    | 'inRequestWindowAtStop'
+    | 'inSignInAtStop'
+    | 'windowFromPendingResume'
+    | 'resumeBasis'
   > {
     // The window the run intends counts while the learner's Continue of the last held pause waits for its answer: the stop that arrives now is the request's, and the answer only reopens the ledger later.
-    const windowFromPendingResume =
-      !codebookStopLedger.isWindowOpen(sessionId) &&
-      this.windowReopensWhenPendingResumesAreAccepted(sessionId)
-    const inRequestWindowAtStop =
-      codebookStopLedger.isWindowOpen(sessionId) || windowFromPendingResume
+    const isWindowOpen = codebookStopLedger.isWindowOpen(sessionId)
+    const resumeBasis = isWindowOpen
+      ? undefined
+      : this.resumeBasisAtArrival(sessionId)
+    const inRequestWindowAtStop = isWindowOpen || resumeBasis !== undefined
     return {
       inRequestWindowAtStop,
       inSignInAtStop: inRequestWindowAtStop && this.requestWindowIsSignIn,
-      ...(windowFromPendingResume ? { windowFromPendingResume } : {}),
+      ...(resumeBasis ? { windowFromPendingResume: true, resumeBasis } : {}),
     }
   }
 
   /**
-   * Tells whether the request window the run intends is closed only by the learner's pauses of the session, and every one of those pauses has a Continue (or step) waiting for the adapter's answer.
-   * Why it exists: a stop that arrives between the learner's Continue request and its reply belongs to the request, but the reply that reopens the ledger window comes later; the debugger judges the arrival by what the answer will produce, and takes it back when the adapter refuses the Continue. Called by {@link windowAtArrival} and {@link reconcileProvisionalWindows}.
+   * Reads what the request window rests on when the run intends it open but the learner's pauses of the session close it, and every one of those pauses has a Continue (or step) waiting for the adapter's answer.
+   * Why it exists: a stop that arrives between the learner's Continue request and its reply belongs to the request, but the reply that reopens the ledger window comes later; the debugger judges the arrival by what the answer will produce, and takes it back when the adapter refuses the Continue. The held pauses and the covering requests are copied here, so the verdict is settled by those answers alone: a later HTTP response or a second Continue sent after the arrival cannot flip it. Called by {@link windowAtArrival}.
    * @param sessionId - The session the stop arrived on.
-   * @returns `true` when the run means its window open, the session is the bound live one, no Pause request of the learner is unsettled, at least one learner pause is held, and each has a covering resume request in flight.
-   * @example this.windowReopensWhenPendingResumesAreAccepted('s1') // => true between the learner's Continue of the only held pause and its reply
+   * @returns The held pauses and covering requests when the run means its window open, the session is the bound live one, no Pause request of the learner is unsettled, no stop without a thread is held, at least one learner pause is held and each has a covering resume request in flight; otherwise `undefined`.
+   * @example this.resumeBasisAtArrival('s1') // => { heldTokens: [3], requestSeqs: [9] } between the learner's Continue (seq 9) of the only held pause (token 3) and its reply
    */
-  private windowReopensWhenPendingResumesAreAccepted(
-    sessionId: string,
-  ): boolean {
+  private resumeBasisAtArrival(sessionId: string): ResumeBasis | undefined {
     if (
       !this.requestWindowIntendedOpen ||
       sessionId !== this.bound?.session.id ||
       this.boundSessionEnded()
     )
-      return false
+      return undefined
     for (const pauseRequest of this.learnerPauseRequests.values())
-      if (pauseRequest.sessionId === sessionId) return false
+      if (pauseRequest.sessionId === sessionId) return undefined
+    // A stop that named no thread is held until every thread runs, which no answer to one Continue proves.
+    if ([...this.unknownThreadHolds.values()].includes(sessionId))
+      return undefined
     const held = [...this.learnerPauseStops.values()].filter(
       (stop) => stop.sessionId === sessionId,
     )
-    return (
-      held.length > 0 &&
-      held.every((stop) => this.pendingResumes.wouldResume(sessionId, stop))
-    )
+    const requestSeqs = new Set<number>()
+    for (const stop of held) {
+      const covering = this.pendingResumes.coveringRequestSeqs(sessionId, stop)
+      // A held pause without a Continue in flight stays the learner's.
+      if (covering.length === 0) return undefined
+      for (const requestSeq of covering) requestSeqs.add(requestSeq)
+    }
+    return held.length > 0
+      ? {
+          heldTokens: held.map((stop) => stop.token),
+          requestSeqs: [...requestSeqs],
+        }
+      : undefined
   }
 
   /**
-   * Settles the window verdict of every stop that was judged by a learner Continue still waiting for its answer, once that Continue is answered: confirmed when the answers reopened the request window (every thread the learner held ran on), taken back when the learner's pause is still held (the Continue was refused, or let only some threads run).
-   * Why it exists: ownership granted by a Continue in flight is provisional; a stop must not be captured or continued by Codebook on a verdict the adapter's answer later contradicts. Called by {@link onAdapterMessage} after every answer to a resume or step request, and wakes the classifications that wait for it ({@link untilWindowVerdictIsFinal}).
+   * Settles the window verdict of every stop that was judged by learner Continues still waiting for their answers, once all of those Continues are answered: confirmed when none of the pauses the learner held at the arrival is still held (every thread it held ran on), taken back when one is (a Continue was refused, or let only some threads run).
+   * Why it exists: ownership granted by a Continue in flight is provisional; a stop must not be captured or continued by Codebook on a verdict the adapter's answer later contradicts. The verdict rests on the requests and held pauses copied at the arrival ({@link ResumeBasis}), never on the ledger or on Continues sent later. Called by {@link onAdapterMessage} after every answer to a resume or step request, and wakes the classifications that wait for it ({@link untilWindowVerdictIsFinal}).
    * @param sessionId - The session whose Continue was answered.
    * @example this.reconcileProvisionalWindows('s1') // the stop of 's1' judged by the Continue is judged as arrived outside the window when the learner's pause is still held
    */
@@ -505,9 +523,19 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     for (const stop of this.unreportedStops.values()) {
       if (stop.sessionId !== sessionId || !stop.windowFromPendingResume)
         continue
-      // Another Continue still in flight keeps the verdict provisional.
-      if (this.windowReopensWhenPendingResumesAreAccepted(sessionId)) continue
-      if (!codebookStopLedger.isWindowOpen(sessionId))
+      const basis = stop.resumeBasis
+      // A Continue that covered the stop at its arrival and has no answer yet keeps the verdict provisional.
+      if (
+        basis?.requestSeqs.some((requestSeq) =>
+          this.pendingResumes.isPending(sessionId, requestSeq),
+        )
+      )
+        continue
+      // Every covering Continue is answered: a pause the learner held then and still holds takes the verdict back (fail closed without a basis).
+      if (
+        !basis ||
+        basis.heldTokens.some((token) => this.learnerPauseStops.has(token))
+      )
         this.takeBackWindowVerdict(stop)
       else stop.windowFromPendingResume = false
     }

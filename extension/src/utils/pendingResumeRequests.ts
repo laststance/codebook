@@ -4,6 +4,8 @@ import { RESUME_COMMANDS } from '../runtimeSupport/constants'
 
 /** A resume or step request of a run's debug session that waits for the adapter's answer. */
 interface PendingResume {
+  /** The request's own sequence number, so a caller can name the request an answer will settle. */
+  requestSeq: number
   command: string
   threadId?: number
   singleThread: boolean
@@ -38,6 +40,7 @@ export class PendingResumeRequests {
     if (!RESUME_COMMANDS.has(request.command)) return
     const threadId: unknown = request.arguments?.threadId
     this.pending.set(`${sessionId}:${request.seq}`, {
+      requestSeq: request.seq,
       command: request.command,
       threadId: typeof threadId === 'number' ? threadId : undefined,
       singleThread: request.arguments?.singleThread === true,
@@ -57,18 +60,19 @@ export class PendingResumeRequests {
   }
 
   /**
-   * Tells whether a waiting resume or step request would let a stop run on once the adapter accepts it: it was sent after the stop arrived, it applies to the stop's thread, and the stop is not newer than the request.
-   * Why it exists: the learner's Continue is a request in flight for a while, and a stop that arrives meanwhile is judged by the state the Continue is about to produce. Called by the node-server debugger when a stop arrives.
+   * Names the waiting resume or step requests that would let a stop run on once the adapter accepts them: each was sent after the stop arrived, applies to the stop's thread, and the stop is not newer than the request.
+   * Why it exists: the learner's Continue is a request in flight for a while, and a stop that arrives meanwhile is judged by the state that Continue is about to produce; the debugger keeps the requests' sequence numbers, so the verdict rests on those answers alone, whatever is sent later. Called by the node-server debugger when a stop arrives.
    * @param sessionId - The debug session of the stop.
    * @param stop - The stop's thread and token.
-   * @returns `true` when some waiting request of the session covers the stop; a request noted without a token covers every stop that existed.
-   * @example resumes.wouldResume('session-1', { threadId: 1, token: 4 }) // => true while a continue noted at token 4 waits
+   * @returns The `seq` of every waiting request of the session that covers the stop (a request noted without a token covers every stop that existed); empty when none does.
+   * @example resumes.coveringRequestSeqs('session-1', { threadId: 1, token: 4 }) // => [7] while a continue (seq 7) noted at token 4 waits
    */
-  wouldResume(
+  coveringRequestSeqs(
     sessionId: string,
     stop: { threadId: number; token: number },
-  ): boolean {
+  ): number[] {
     const prefix = `${sessionId}:`
+    const covering: number[] = []
     for (const [key, request] of this.pending) {
       if (!key.startsWith(prefix)) continue
       // A request for one thread (`singleThread`) leaves the others stopped.
@@ -77,9 +81,9 @@ export class PendingResumeRequests {
       const coversStop =
         request.newestStopToken === undefined ||
         request.newestStopToken >= stop.token
-      if (coversThread && coversStop) return true
+      if (coversThread && coversStop) covering.push(request.requestSeq)
     }
-    return false
+    return covering
   }
 
   /**

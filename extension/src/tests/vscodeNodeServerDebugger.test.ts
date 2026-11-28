@@ -1246,3 +1246,69 @@ test(
     await debug.release()
   },
 )
+
+// protects=a declared hit that arrived while the learner's Continue of the only held pause was in flight stays judged inside the request when the request ends (the HTTP response closes the run's window) before the Continue is answered and the Continue then succeeds; fails_when=the verdict is resolved from the ledger when the answer comes, so the closed window reads as arrival outside the request and the hit is dropped as unattributed (Cycle 0153 ship pass 3 U4); seam=the editor harness's learner Pause and stop, a Continue request, a declared hit, the run closing its window and the Continue's accepted answer; no_claim=the run's own capture of the hit
+test(
+  'a hit that arrived during the learner Continue stays the request’s when the request ends before the Continue is answered',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    debug.setRequestWindow(false)
+    answerContinue()
+    const hit = await heard.nextPause()
+    // Assert
+    assert.equal(hit.declaredStopIndex, 0)
+    assert.equal(hit.inRequestWindowAtStop, true)
+    await debug.release()
+  },
+)
+
+// protects=a declared hit that arrived while the learner's first Continue was in flight is judged by that Continue's answer alone: a second Continue sent after the hit cannot make a refused first Continue count; fails_when=the second Continue in flight keeps the verdict provisional, so the hit waits for it and its acceptance would validate a hit that arrived while the learner still held a pause (Cycle 0153 ship pass 3 U4); seam=the editor harness's learner Pause and stop, two Continue requests (the second after the hit), the first refused while the second still waits; no_claim=the run's own handling of the hit
+test(
+  'a refused learner Continue is not made good by a second Continue sent after the hit arrived',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerFirstContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const answerSecondContinue = editor.adapter.learnerSendsContinue()
+    // Act
+    answerFirstContinue({ rejected: true })
+    // The first answer alone settles the verdict: the hit is reported while the second Continue still waits.
+    await waitUntil(
+      () => heard.pauses.length === 2,
+      'the hit reported to the run after the first Continue was refused',
+      2_000,
+    )
+    answerSecondContinue()
+    // Assert
+    assert.equal(heard.pauses[1]?.declaredStopIndex, 0)
+    assert.equal(heard.pauses[1]?.inRequestWindowAtStop, false)
+    await debug.release()
+  },
+)
