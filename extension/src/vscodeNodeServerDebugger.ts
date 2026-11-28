@@ -62,10 +62,20 @@ type NativeStop = {
   windowFromPendingResume?: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
+  /** A Bun run: where each of the run's own declared stops stood verified when the adapter's `stopped` arrived, so an id-less stop is matched against the bindings that could have caused it and a binding verified while the stack was read does not count. */
+  ownedPlaces?: OwnedStopPlace[]
 }
 
 /** The place of one breakpoint the learner set: the resolved file path and the one-based line. */
 type LearnerBreakpointPlace = { file: string; line: number }
+
+/** The verified place of one declared stop's owned breakpoint: the stop it arms, its file, the verified one-based line and the column when the adapter verified one. */
+type OwnedStopPlace = {
+  declaredStopIndex: number
+  file: string
+  line: number
+  column?: number
+}
 
 /** One `pause` request of the editor (the learner's Pause), until the first stop after its acceptance settles it. */
 type LearnerPauseRequest = {
@@ -282,7 +292,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         ? this.windowAtArrival(session.id)
         : {}),
       ...(this.runtime === 'bun'
-        ? { learnerBreakpoints: this.learnerBreakpointsNow() }
+        ? {
+            learnerBreakpoints: this.learnerBreakpointsNow(),
+            ownedPlaces: this.ownedPlacesNow(session),
+          }
         : {}),
     }
     // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
@@ -1018,7 +1031,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const hitIds = stop.hitBreakpointIds
     // A Bun stop without ids is judged by its place alone, which always needs the frame.
     if (this.runtime === 'bun' && !hitIds?.length)
-      return frame ? this.armedStopAtFrame(session, frame, stop) : undefined
+      return frame ? this.armedStopAtFrame(frame, stop) : undefined
     if (!hitIds) return undefined
     for (const { target, breakpoint } of this.armed) {
       const id = breakpoint.acknowledgedId(session)
@@ -1035,16 +1048,14 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   /**
    * Finds the one armed stop an ID-less Bun pause is, by its place: the stop's file, its verified line and, when the verified place has a column, that column.
-   * Why it exists: two stops may share a line (14:3 and 14:24) and a pause that names no id cannot be told between them by the line alone; an ambiguous or unmatched pause stays the learner's. Only a stop with a current verified binding is a candidate.
+   * Why it exists: two stops may share a line (14:3 and 14:24) and a pause that names no id cannot be told between them by the line alone; an ambiguous or unmatched pause stays the learner's. Only a stop with a verified binding when the pause arrived is a candidate: a binding the adapter verified later cannot have caused an earlier stop.
    * Called by {@link ownedHitIndexOf}.
-   * @param session - The bound session.
    * @param frame - The top frame of the pause.
-   * @param stop - The adapter's stop, which carries the learner's breakpoints as they stood when it arrived.
+   * @param stop - The adapter's stop, which carries the learner's breakpoints and the run's own verified places as they stood when it arrived.
    * @returns The declared stop index when exactly one armed stop matches; `undefined` for none or several.
-   * @example this.armedStopAtFrame(session, { line: 14, column: 24, source: { path: file } }, stop) // => 1 for stops at 14:3 and 14:24
+   * @example this.armedStopAtFrame({ line: 14, column: 24, source: { path: file } }, stop) // => 1 for stops at 14:3 and 14:24
    */
   private armedStopAtFrame(
-    session: vscode.DebugSession,
     frame: DebugProtocol.StackFrame,
     stop: NativeStop,
   ): number | undefined {
@@ -1054,19 +1065,38 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       this.learnerHeldBreakpointAt(stop, frame.source.path, frame.line)
     )
       return undefined
-    const matches = this.armed.filter(({ target, breakpoint }) => {
-      const place = breakpoint.boundPlace(session)
-      return (
-        place !== undefined &&
-        frame.source?.path === target.file &&
+    // The run's own verified places are the ones copied when the stop arrived, never the bindings now.
+    const matches = (stop.ownedPlaces ?? []).filter(
+      (place) =>
+        frame.source?.path === place.file &&
         frame.line === place.line &&
         // A verified place without a column matches any column of its line.
-        (place.column === undefined || frame.column === place.column)
-      )
+        (place.column === undefined || frame.column === place.column),
+    )
+    return matches.length === 1 ? matches[0]?.declaredStopIndex : undefined
+  }
+
+  /**
+   * Reads where each of the run's own declared stops stood verified at the moment a Bun stop arrives.
+   * Why it exists: the classification finishes after the stack read, and an owned breakpoint the adapter verified meanwhile cannot have caused the earlier pause, while one it withdrew meanwhile still could have. Called by {@link onStopped} for a Bun run, beside {@link learnerBreakpointsNow}.
+   * @param session - The session that stopped.
+   * @returns The verified place of each armed stop that has one, with its declared stop index and file.
+   * @example this.ownedPlacesNow(session) // => [{ declaredStopIndex: 0, file: '/repo/src/a.ts', line: 14, column: 3 }]
+   */
+  private ownedPlacesNow(session: vscode.DebugSession): OwnedStopPlace[] {
+    return this.armed.flatMap(({ target, breakpoint }) => {
+      const place = breakpoint.boundPlace(session)
+      return place
+        ? [
+            {
+              declaredStopIndex: target.declaredStopIndex,
+              file: target.file,
+              line: place.line,
+              column: place.column,
+            },
+          ]
+        : []
     })
-    return matches.length === 1
-      ? matches[0]?.target.declaredStopIndex
-      : undefined
   }
 
   /**

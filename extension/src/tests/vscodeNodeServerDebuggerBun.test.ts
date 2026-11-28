@@ -168,15 +168,19 @@ async function armTwoStops(debug: NodeServerDebugger): Promise<void> {
 // Value: protects=the first hit of a declared stop in a Bun module, which js-debug sends without hit ids (it handles a Bun module's first pause as the module's entry pause and rewrites it as a plain breakpoint), is the declared stop by its place; fails_when=a Bun stop without ids on the armed stop's line is reported as the learner's pause, so the run holds it, captures nothing and ends with PAUSE_HOLD_EXPIRED (Cycle 0152 N0 attempt 1 in VS Code 1.148.0); seam=the editor harness reporting a breakpoint stop with no ids on the declared line; no_claim=js-debug's real event (trace of probe E1-M2 and the N0 run)
 test('a Bun breakpoint stop without hit ids on an armed stop line is that declared stop', async () => {
   // Arrange
+  // The hit comes after the arming, as a real Bun run's does: a stop that arrived before the breakpoints existed cannot be their hit (Cycle 0153 ship pass 1 S12 moved it after the arming).
   const editor = await editorHarness({
-    firstStop: { reason: 'breakpoint', frame: { file: STOP_FILE, line: 14 } },
+    noEntryPause: true,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
   })
   const { debug } = editor.createDebugger(TWO_STOPS)
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
   await armTwoStops(debug)
-  // Act
+  editor.adapter.continued(1, true)
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  editor.adapter.stop('breakpoint', undefined, { file: STOP_FILE, line: 14 })
   const first = await nextPause()
   // Assert
   assert.equal(first.declaredStopIndex, 0)
@@ -251,18 +255,23 @@ function armStopsAt(
 // Value: protects=an ID-less Bun hit on a line that holds two declared stops is attributed by its column, so the second stop's hit is the second stop; fails_when=the hit goes to the first stop of the line (file and line alone decide), so the run captures the wrong stop; seam=the editor harness reporting an ID-less breakpoint stop at column 24; no_claim=js-debug's real column for a paused frame
 test('a Bun breakpoint stop without hit ids at the second column of a shared line is the second declared stop', async () => {
   // Arrange
+  // The hit comes after the arming, as a real Bun run's does (Cycle 0153 ship pass 1 S12 moved it after the arming).
   const editor = await editorHarness({
-    firstStop: {
-      reason: 'breakpoint',
-      frame: { file: STOP_FILE, line: 14, column: 24 },
-    },
+    noEntryPause: true,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
   })
   const { debug } = editor.createDebugger(SAME_LINE_STOPS)
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
   await armStopsAt(debug, SAME_LINE_STOPS)
-  // Act
+  editor.adapter.continued(1, true)
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  // Act
+  editor.adapter.stop('breakpoint', undefined, {
+    file: STOP_FILE,
+    line: 14,
+    column: 24,
+  })
   const first = await nextPause()
   // Assert
   assert.equal(first.declaredStopIndex, 1)
@@ -601,19 +610,24 @@ test('a Bun pause at a learner breakpoint on a declared stop line without a colu
 // Value: protects=an ID-less Bun pause on the line of a declared stop whose place has no column is still that declared stop when the editor holds no other breakpoint there; fails_when=the learner-breakpoint check refuses every line-only stop, so the run never captures a stop js-debug placed without a column; seam=the editor harness with a line-only reply and no other breakpoint; no_claim=js-debug's real column for a paused frame
 test('a Bun pause on a declared stop line without a column and without a learner breakpoint is that declared stop', async () => {
   // Arrange
+  // The hit comes after the arming, as a real Bun run's does (Cycle 0153 ship pass 1 S12 moved it after the arming).
   const editor = await editorHarness({
     breakpointReply: LINE_ONLY_REPLY,
-    firstStop: {
-      reason: 'breakpoint',
-      frame: { file: STOP_FILE, line: 14, column: 24 },
-    },
+    noEntryPause: true,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
   })
   const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
   await armStopsAt(debug, [{ line: 14, column: 3 }])
+  editor.adapter.continued(1, true)
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
   // Act
+  editor.adapter.stop('breakpoint', undefined, {
+    file: STOP_FILE,
+    line: 14,
+    column: 24,
+  })
   const pause = await nextPause()
   // Assert
   assert.equal(pause.declaredStopIndex, 0)
@@ -660,17 +674,22 @@ test('a Bun pause at the line-only stop of a shared line with a column-bearing s
             line: requested.line,
             column: requested.column,
           },
-    firstStop: {
-      reason: 'breakpoint',
-      frame: { file: STOP_FILE, line: 14, column: 10 },
-    },
+    // The hit comes after the arming, as a real Bun run's does (Cycle 0153 ship pass 1 S12 moved it after the arming).
+    noEntryPause: true,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
   })
   const { debug } = editor.createDebugger(SAME_LINE_STOPS)
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
   await armStopsAt(debug, SAME_LINE_STOPS)
+  editor.adapter.continued(1, true)
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
   // Act
+  editor.adapter.stop('breakpoint', undefined, {
+    file: STOP_FILE,
+    line: 14,
+    column: 10,
+  })
   const pause = await nextPause()
   // Assert
   assert.equal(pause.declaredStopIndex, 0)
@@ -1077,6 +1096,30 @@ test(
         .length,
       continuesBefore + 1,
     )
+    await debug.release()
+  },
+)
+
+// Value: protects=an id-less Bun pause on the line of an owned breakpoint that was not verified when the pause arrived stays the learner's pause even when the adapter verifies that breakpoint before the stack read answers; fails_when=the classification reads the owned bindings after the stack read, so a binding verified later makes the earlier pause the declared stop and the run captures a stop its own breakpoint did not cause (Cycle 0153 ship pass 1 S12); seam=the editor harness's withdrawn then re-verified owned breakpoint news around a gated stack trace and an id-less stop on its line; no_claim=js-debug's real timing of binding news
+test(
+  'a Bun pause that arrived while its declared stop was unbound stays the learner pause when the stop is verified before the stack read finishes',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause, gate } = await bunRunWithGatedStackReads()
+    editor.adapter.breakpointNews({ id: OWNED_IDS[0]!, verified: false })
+    editor.adapter.stop('breakpoint', undefined, { file: STOP_FILE, line: 14 })
+    // Act
+    editor.adapter.breakpointNews({
+      id: OWNED_IDS[0]!,
+      verified: true,
+      line: 14,
+      column: 3,
+    })
+    gate.resolve()
+    const pause = await nextPause()
+    // Assert
+    assert.equal(pause.declaredStopIndex, undefined)
     await debug.release()
   },
 )
