@@ -503,7 +503,8 @@ test("replacing the store's describer words an earlier summary's reason again", 
     channel: 'stdout',
     text: 'RUN src/theme.test.ts',
   })
-  writer.abandon()
+  // The restarted store judges the history by its writer's record, which is gone once the abandon settles.
+  await writer.abandon()
   await appendFile(
     join(
       directory,

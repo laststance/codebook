@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import fsPromises, {
   appendFile,
   mkdir,
@@ -12,7 +13,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { before, mock, test, type TestContext } from 'node:test'
 
-import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
+import {
+  NODE_TEST_HISTORY_DIRECTORY,
+  NODE_TEST_HISTORY_WRITER_FILE,
+} from '../constants'
 import {
   NodeTestHistoryStore,
   type NodeTestHistoryWriter,
@@ -1139,6 +1143,47 @@ test('a refused history entry still lets the run seal its verified prefix as par
   }
 })
 
+// protects=the writer's record is gone once an abandon settles, so a caller that awaits it reads the history as interrupted in another window too; fails_when=the abandon settles, or returns nothing to await, while the record is still being removed, so another window's store reads the abandoned history as recording; no_claim=when another window notices the removal on its own
+test('an abandoned history reads as interrupted in another window once the abandon settles', async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-abandon-settles-'),
+  )
+  const header = nodeTestHistoryHeader(createWorkspaceKey())
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey),
+    writer = await store.start(header)
+  const recordPath = join(
+    directory,
+    NODE_TEST_HISTORY_DIRECTORY,
+    header.studyId,
+    NODE_TEST_HISTORY_WRITER_FILE,
+  )
+  try {
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 4,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    const recordExistedWhileWriting = existsSync(recordPath)
+
+    // Act
+    await writer.abandon()
+    const recordExistsAfterAbandon = existsSync(recordPath)
+    const history = await new NodeTestHistoryStore(
+      directory,
+      header.workspaceKey,
+    ).read(header.studyId)
+
+    // Assert
+    assert.equal(recordExistedWhileWriting, true)
+    assert.equal(recordExistsAfterAbandon, false)
+    assert.equal(history.status, 'interrupted')
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
 test('a journal holding bytes its writer never confirmed stays an unsealed interrupted prefix', async () => {
   // Arrange: a write torn by an I/O failure leaves an incomplete line after the confirmed entries.
   const directory = await mkdtemp(
@@ -1170,7 +1215,8 @@ test('a journal holding bytes its writer never confirmed stays an unsealed inter
 
     // Assert
     await assert.rejects(sealing, /bytes its writer never confirmed/)
-    writer.abandon()
+    // The restarted editor's store reads the history as interrupted only once the writer's record is gone.
+    await writer.abandon()
     const history = await new NodeTestHistoryStore(
       directory,
       header.workspaceKey,

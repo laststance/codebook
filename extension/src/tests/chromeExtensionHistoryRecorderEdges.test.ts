@@ -536,7 +536,8 @@ test('a temporary frame blob is removed when its history is read as interrupted'
   await mkdir(frames, { recursive: true })
   await writeFile(join(frames, 'abc.png.1f2e.tmp'), 'half a frame')
   await entriesDurable(store, header.studyId, 2)
-  recorder.writer.abandon()
+  // Another window reads the history as interrupted only once the writer's record is gone, which the abandon's settling says.
+  await recorder.writer.abandon()
 
   // Act
   const history = await reopenedStore(learningDirectory).read(header.studyId)

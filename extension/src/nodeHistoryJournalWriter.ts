@@ -216,16 +216,21 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     })
   }
 
-  /** Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards, and one already published stays (a no-op). @example writer.abandon() */
-  abandon(): void {
+  /**
+   * Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards, and one already published stays (a no-op).
+   * @returns Settles, never rejecting, once the writer's record is removed: from then on another window reads the history as interrupted too. This window reads it so at once, so the run's own callers need not wait.
+   * @example await writer.abandon() // another window's store now reads the history as interrupted
+   */
+  abandon(): Promise<void> {
     // A seal whose rename resolved stays sealed: the store was told and another window may list it sealed, so a late abandon (the temporary file's cleanup still awaited) retracts nothing.
-    if (this.sealedHash !== undefined) return
+    if (this.sealedHash !== undefined) return Promise.resolve()
     this.abandoned = true
     this.closed = true
     this.closing = false
-    // Other windows read the history as interrupted once the record is gone (F260); the removal is awaited by nobody.
-    void this.removeWriterRecord()
+    // Other windows read the history as interrupted once the record is gone (F260).
+    const recordRemoved = this.removeWriterRecord()
     this.reportClosed()
+    return recordRemoved
   }
 
   /** Tells the store once that this writer no longer writes, from the publish's own tick, the seal's end, a removal of an empty history or an abandon, whichever comes first. @example this.reportClosed() */
