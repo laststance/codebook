@@ -1006,6 +1006,49 @@ test(
   },
 )
 
+// protects=a declared hit whose window verdict rests on an unanswered learner Continue is judged outside the window once its one deadline passes, even while answers to unrelated resume requests keep arriving, and its waiter is gone afterwards; fails_when=every unrelated answer restarts a full timeout for the same missing reply, so the hit (and every pause queued behind it) waits for as long as unrelated answers keep coming, or the expired waiter stays registered (Cycle 0153 final-range CLI V2); seam=the editor harness with a 400 ms read deadline, the learner's held pause of thread 1, its Continue left unanswered, a declared hit, then refused Continues of thread 2 every 100 ms; no_claim=js-debug's real answer timing
+test(
+  'answers to unrelated Continues do not extend the wait of a hit judged by an unanswered learner Continue',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness({ readDeadlineMs: 400 })
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // The learner's Continue of thread 1 is never answered, so the hit's verdict stays provisional until its deadline.
+    editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    const answersUntil = Date.now() + 3_000
+    let unrelatedAnswers = 0
+    // Refused Continues of thread 2 keep answering resume requests until the hit is reported or 3 s pass.
+    while (heard.pauses.length < 2 && Date.now() < answersUntil) {
+      editor.adapter.learnerSendsContinue(2)({ rejected: true })
+      unrelatedAnswers += 1
+      // gstack-timing-ok: the 100 ms only spaces the unrelated answers; the loop ends when the hit is reported (bounded by 3 s), and the assertions read what was reported, not how long it took
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    const hit = heard.pauses[1]
+    // Assert
+    assert.equal(hit?.declaredStopIndex, 0)
+    assert.equal(hit?.inRequestWindowAtStop, false)
+    assert.ok(
+      unrelatedAnswers < 20,
+      `the hit was reported only after ${unrelatedAnswers} unrelated answers`,
+    )
+    assert.equal(Reflect.get(debug, 'resumeAnswerWaiters').size, 0)
+    await debug.release()
+  },
+)
+
 // protects=a stop of another thread does not consume the learner's Pause of thread 1: the request window stays closed while thread 2 stops and runs on, and the stop of thread 1 that the Pause causes is the learner's; fails_when=the first stop of the session settles the Pause whatever its thread, so thread 2's run-on reopens the window and thread 1's stop on a declared line reads as the request's (Cycle 0153 ship pass 1 S10, OV7); seam=the editor harness's accepted Pause of thread 1, a stop and a run-on of thread 2, then a declared hit on thread 1; no_claim=whether js-debug reports several threads under one session
 test(
   'a stop of another thread does not settle the learner Pause of thread 1',

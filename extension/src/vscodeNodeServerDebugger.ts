@@ -556,34 +556,41 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     stop.windowFromPendingResume = false
   }
 
-  /** Wakes every classification that waits for an answer to a learner Continue. */
+  /** Wakes every classification that waits for an answer to a learner Continue; each waiter removes itself when its wait ends ({@link untilWindowVerdictIsFinal}). */
   private wakeResumeAnswerWaiters(): void {
-    const waiters = [...this.resumeAnswerWaiters]
-    this.resumeAnswerWaiters.clear()
-    for (const wake of waiters) wake()
+    for (const wake of [...this.resumeAnswerWaiters]) wake()
   }
 
   /**
    * Waits until a stop's window verdict no longer rests on a learner Continue that is still waiting for its answer.
-   * Why it exists: classifying and acting on a provisional verdict (a capture, or an automatic Continue of a sign-in hit) cannot be taken back; the stop waits for the answer, and one that never comes in time is judged as arrived outside the window (fail closed). Called by {@link classifyAndReport} for a declared hit.
+   * Why it exists: classifying and acting on a provisional verdict (a capture, or an automatic Continue of a sign-in hit) cannot be taken back; the stop waits for the answer, and one that never comes in time is judged as arrived outside the window (fail closed). The verdict has one deadline: an answer to an unrelated resume request wakes the waiter without granting a fresh timeout, and the waiter leaves {@link resumeAnswerWaiters} however its wait ends. Called by {@link classifyAndReport} for a declared hit.
    * @param stop - The stop being classified.
    * @example await this.untilWindowVerdictIsFinal(stop) // returns at once for a stop judged by a window that was open
    */
   private async untilWindowVerdictIsFinal(stop: NativeStop): Promise<void> {
-    while (
-      stop.windowFromPendingResume &&
+    const isProvisional = (): boolean =>
+      Boolean(stop.windowFromPendingResume) &&
       this.unreportedStops.has(stop.token)
-    ) {
-      try {
-        await awaitResponse(
-          new Promise<void>((resolve) => this.resumeAnswerWaiters.add(resolve)),
-          'the answer to the learner Continue',
-          this.abort.signal,
-        )
-      } catch {
-        // No answer in time, or the debugger is being released: the stop did not arrive inside the request's window.
-        this.takeBackWindowVerdict(stop)
+    if (!isProvisional()) return
+    let settleWhenFinal: (() => void) | undefined
+    const final = new Promise<void>((resolve) => {
+      settleWhenFinal = (): void => {
+        // An answer that leaves the verdict provisional keeps the same wait and its one deadline.
+        if (!isProvisional()) resolve()
       }
+      this.resumeAnswerWaiters.add(settleWhenFinal)
+    })
+    try {
+      await awaitResponse(
+        final,
+        'the answer to the learner Continue',
+        this.abort.signal,
+      )
+    } catch {
+      // No answer in time, or the debugger is being released: the stop did not arrive inside the request's window.
+      this.takeBackWindowVerdict(stop)
+    } finally {
+      if (settleWhenFinal) this.resumeAnswerWaiters.delete(settleWhenFinal)
     }
   }
 
