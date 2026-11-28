@@ -324,6 +324,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       // The session is over for writes from this turn on; the editor's termination notice that follows only cleans up.
       this.adapterTerminatedSessions.add(session.id)
       codebookStopLedger.closeWindow([session.id])
+      // The adapter can no longer deliver a stop a Pause asked for, so no Pause request of the session stays pending.
+      for (const [key, pauseRequest] of this.learnerPauseRequests)
+        if (pauseRequest.sessionId === session.id)
+          this.learnerPauseRequests.delete(key)
     }
   }
 
@@ -1437,12 +1441,17 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   /**
    * Tells whether the learner holds a pause of the bound session: a `pause` request that is unanswered or accepted without its stop, or a learner pause stop that has not run on.
    * Why it exists: the run reads it right before it writes a request, because a request written now would run while the learner asked for the server to stop. Called by the run through {@link NodeServerDebugger.learnerPausePending}.
-   * @returns `true` while any learner-pause record of the bound session remains; `false` before the attach.
+   * @returns `true` while any learner-pause record of the bound session remains and the session lives; `false` before the attach and once the session ended ({@link boundSessionEnded}), so the run reports the ended session.
    * @example debug.learnerPausePending() // => true between the editor's Pause request and the Continue of its stop
    */
   learnerPausePending(): boolean {
     const sessionId = this.bound?.session.id
-    return sessionId !== undefined && this.learnerHoldsPause(sessionId)
+    // A session that ended is reported as ended, never as a learner's pause to wait for or continue.
+    return (
+      sessionId !== undefined &&
+      !this.boundSessionEnded() &&
+      this.learnerHoldsPause(sessionId)
+    )
   }
 
   /**

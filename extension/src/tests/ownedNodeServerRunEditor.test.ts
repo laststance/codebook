@@ -829,6 +829,26 @@ test(
   },
 )
 
+// protects=a request refused after the adapter reported the session terminated names the ended session, not a learner Pause that can never produce its stop; fails_when=the Pause the learner sent stays pending after the terminated event, so the chat is told to wait for a stop of a session that is gone (Cycle 0153 ship pass 3 U9); seam=the editor's real debugger behind the run, an accepted Pause and a DAP terminated event before the editor's termination notice; no_claim=js-debug's real event order
+test(
+  'a request refused after the adapter reported the session terminated names the ended session even with a Pause sent',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun()
+    editor.adapter.learnerPauses()
+    editor.adapter.terminated()
+    // Act
+    const refusal = await refusalOf(harness.run.sendRequest('key-1'))
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'RUN_NOT_READY')
+    assert.match(refusal.message, /debug session of the server ended/)
+    assert.equal(harness.sender.bytesWritten, 0)
+    await harness.run.stop()
+  },
+)
+
 // protects=the response and the seventeenth hit may end the request's stops in the same turn and share one retirement: the answered request stays answered and the hit beyond the capture budget is continued uncaptured; fails_when=both callers retire the same breakpoints, one throws that a retirement is already pending, and an HTTP 200 turns into a run failure (Cycle 0153 ship pass 2 T10, OV5); seam=the editor's real debugger behind the run, sixteen captured hits, a seventeenth whose stack read is held and the response delivered before it is released; no_claim=the real timing of an adapter's stack read
 test(
   'the response and the seventeenth hit share one retirement and leave the answered request answered',
