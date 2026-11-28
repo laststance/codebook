@@ -2131,6 +2131,8 @@ export const NODE_SERVER_WRITER_QUEUE_LIMIT_BYTES = 4_194_304
 export const NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES = 524_288
 /** The longest text of one `output` entry of a node-server history. */
 export const NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS = 4_096
+/** The most output characters a node-server history sink holds behind a response or failure entry that still waits for earlier captures; past it the entry is written at once (a later capture is then dropped as a late hit), so the held output stays bounded. */
+export const NODE_SERVER_HISTORY_HELD_OUTPUT_LIMIT_CHARS = 262_144
 /** The longest code (a withdrawal's, a failure's) a node-server history entry stores. */
 export const NODE_SERVER_HISTORY_CODE_LIMIT_CHARS = 128
 /** The longest frame name a `stop` entry stores. */

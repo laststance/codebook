@@ -1,6 +1,7 @@
 import {
   NODE_SERVER_HISTORY_CODE_LIMIT_CHARS,
   NODE_SERVER_HISTORY_CONTENT_TYPE_LIMIT_CHARS,
+  NODE_SERVER_HISTORY_HELD_OUTPUT_LIMIT_CHARS,
   NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
   NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS,
 } from './constants'
@@ -93,6 +94,14 @@ export class NodeServerHistorySinkImpl
   private terminal = false
   /** The terminal entry (response or failure) that waits for the stops that arrived before it; written by {@link runPendingTerminal}. */
   private pendingTerminal?: () => Promise<void> | void
+  /** The output that arrived while {@link pendingTerminal} waited; written behind the terminal entry. */
+  private readonly outputBehindTerminal: Array<{
+    elapsedMs: number
+    channel: 'stdout' | 'stderr'
+    text: string
+  }> = []
+  /** The characters held in {@link outputBehindTerminal}. */
+  private outputBehindTerminalChars = 0
 
   /** The server writer, typed concretely so its request methods are traced to this sink. */
   private get serverWriter(): NodeServerHistoryWriter {
@@ -329,11 +338,43 @@ export class NodeServerHistorySinkImpl
     after.then(release, release)
   }
 
-  /** Writes the held terminal entry, if one waits. */
+  /**
+   * Takes server output; while a terminal entry waits for earlier captures the output is kept behind it, so it is written after the response or failure it followed and keeps its own time.
+   * Why it exists: without it the output would be queued ahead of the held entry, moving the response behind output that the server printed after it and (the clock never moving back) stamping the response with that later time.
+   * Called by the run for every chunk the server prints.
+   * @param elapsedMs - Milliseconds since the launch.
+   * @param channel - The stream the chunk came from.
+   * @param text - The chunk.
+   * @example sink.output(30, 'stdout', 'late line\n') // written after a response that arrived at 20 ms and still waits for a capture
+   */
+  override output(
+    elapsedMs: number,
+    channel: 'stdout' | 'stderr',
+    text: string,
+  ): void {
+    if (!this.pendingTerminal) {
+      super.output(elapsedMs, channel, text)
+      return
+    }
+    this.outputBehindTerminal.push({ elapsedMs, channel, text })
+    this.outputBehindTerminalChars += text.length
+    // The held output is bounded: past the limit the entry is written now, as a seal would write it.
+    if (
+      this.outputBehindTerminalChars >
+      NODE_SERVER_HISTORY_HELD_OUTPUT_LIMIT_CHARS
+    )
+      this.runPendingTerminal()
+  }
+
+  /** Writes the held terminal entry, if one waits, then the output that arrived behind it. */
   private runPendingTerminal(): void {
     const write = this.pendingTerminal
     this.pendingTerminal = undefined
     if (write) this.guard(write)
+    const behind = this.outputBehindTerminal.splice(0)
+    this.outputBehindTerminalChars = 0
+    for (const chunk of behind)
+      super.output(chunk.elapsedMs, chunk.channel, chunk.text)
   }
 
   override flush(): void {
