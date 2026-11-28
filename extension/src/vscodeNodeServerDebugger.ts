@@ -1154,8 +1154,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       NODE_TEST_ATTACH_TIMEOUT_MS,
       signal,
     )
-    // A declared stop hit before any entry pause (its file is the entry itself) is a hit, not the entry.
-    const isEntry = this.ownedHitIndexOf(first) === undefined
+    // Only a first stop that names no hit ids is the `--inspect-brk` entry break; one naming any id (owned, the learner's or both) is a breakpoint hit, reported as a pause and never continued here.
+    const isEntry = !first.hitBreakpointIds?.length
     this.entryToken = isEntry ? first.token : undefined
     this.entryReleased = true
     // A node run keeps every stop it saw during the arming, so only a stop that is still its thread's newest pause is handed to the run: one the learner already continued is no pause any more.
@@ -1265,27 +1265,24 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * Tells whether a stop is the hit of an armed declared stop: its reason is `breakpoint`, the adapter names the owned breakpoint's id, and the top frame stands in the stop's file on its verified line (on the declared line while the registration is pending).
    * A Bun target's stop that names no id is judged by its place alone: js-debug handles a Bun module's first pause as that module's entry pause (Bun has no instrumentation breakpoint), rewrites it as a plain breakpoint and drops the hit ids (Cycle 0152 N0), so an armed stop's own hit arrives without them.
    * @param stop - The adapter's stop, which carries the owned breakpoints it named when it arrived.
-   * @param frame - The top frame; without one only the ids decide (the entry check).
+   * @param frame - The paused top frame.
    * @returns The declared stop index, or `undefined` for every other pause.
    * @example this.ownedHitIndexOf(stop, frame) // => 1 for a hit of the second declared stop
    */
   private ownedHitIndexOf(
     stop: NativeStop,
-    frame?: DebugProtocol.StackFrame,
+    frame: DebugProtocol.StackFrame,
   ): number | undefined {
     if (stop.reason !== 'breakpoint') return undefined
     const hitIds = stop.hitBreakpointIds
-    // A Bun stop without ids is judged by its place alone, which always needs the frame.
+    // A Bun stop without ids is judged by its place alone.
     if (this.runtime === 'bun' && !hitIds?.length)
-      return frame ? this.armedStopAtFrame(frame, stop) : undefined
+      return this.armedStopAtFrame(frame, stop)
     if (!hitIds) return undefined
     // The owned breakpoints the adapter named when the stop arrived, never the registrations now.
-    for (const hit of stop.ownedHits ?? []) {
-      const isAtStop =
-        frame?.source?.path === hit.file && frame.line === hit.line
-      // Without a frame only the ids decide (the entry check).
-      if (isAtStop || !frame) return hit.declaredStopIndex
-    }
+    for (const hit of stop.ownedHits ?? [])
+      if (frame.source?.path === hit.file && frame.line === hit.line)
+        return hit.declaredStopIndex
     return undefined
   }
 

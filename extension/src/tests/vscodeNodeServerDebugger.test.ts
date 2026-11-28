@@ -265,6 +265,36 @@ test('a declared stop hit as the very first stop is reported as a pause, not con
   await debug.release()
 })
 
+// protects=a first Node stop that names hit ids is never the entry pause, even when one of them is the learner's: it is reported as a pause that stays the learner's and Codebook never continues it; fails_when=the entry is judged by the absence of an exclusive owned hit, so a stop naming an owned and a learner breakpoint is taken for the entry and continued, resuming the learner's breakpoint (Cycle 0153 final-range CLI V1); seam=the editor harness's first stop with hitBreakpointIds [7, 12], delivered after the owned breakpoints are acknowledged; no_claim=how often js-debug reports a mixed hit as a session's first stop
+test(
+  'a first stop naming an owned and a learner breakpoint is reported as the learner pause, not continued as the entry',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness({ noAutomaticStop: true })
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!, LEARNER_BREAKPOINT_ID], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const continuesAfterRelease = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Assert
+    assert.equal(continuesAfterRelease, 0)
+    const first = await waitUntil(
+      () => heard.pauses[0],
+      'the first stop reported to the run',
+      2_000,
+    )
+    assert.equal(first.declaredStopIndex, undefined)
+    assert.equal(first.location?.line, 14)
+    await debug.release()
+  },
+)
+
 // protects=the learner's Continue in the editor reaches the run as a resume of that pause; fails_when=the run keeps a pause the learner continued; no_claim=the editor's button
 test('the learner continuing a reported pause reaches the run as a resume of its token', async () => {
   // Arrange
