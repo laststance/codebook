@@ -184,7 +184,10 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
     this.releaseOptions.push(options)
     this.options.duringRelease?.(this)
   }
+  /** Whether the run's last `setRequestWindow` left the attribution window open, as the real debugger's stop ledger would judge a stop that arrives now. */
+  requestWindowOpen = false
   setRequestWindow(open: boolean): void {
+    this.requestWindowOpen = open
     this.order.push(`window:${open}`)
   }
   async capture(

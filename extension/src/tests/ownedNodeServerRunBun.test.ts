@@ -407,3 +407,50 @@ test('a Bun pause that arrived before the request was written is left to the lea
   )
   assert.deepEqual(harness.debug.resumed, [])
 })
+
+// Value: protects=the debugger's request-attribution window closes when the sign-in exchange ends, so a declared stop hit while the declared request is still connecting and verifying its peer is held as unattributed and is never captured as that request's hit; fails_when=the sign-in's window stays open into the declared request's connection and peer check (the hit is then saved as the request's capture although no byte of the declared request was written); seam=the harness's fake debugger recording setRequestWindow, with the declared request's peer check held open; no_claim=the real adapter's stop ledger or js-debug's event order
+test(
+  'a declared stop hit while the declared request after a sign-in is still being verified is held as unattributed, not captured',
+  { timeout: PEER_CHECK_TEST_TIMEOUT_MS },
+  async () => {
+    // Arrange
+    const options: HarnessOptions = {
+      launchLoader: BUN_LOADER,
+      signIn: {
+        path: '/login',
+        fields: { email: 'learner@example.test' },
+        secretField: 'password',
+        secret: 'ask-learner',
+      },
+    }
+    const harness = createHarness(options)
+    await harness.run.prepare()
+    await harness.run.sendRequest('key-1', { secret: 'hunter2-correct-horse' })
+    // The declared request's peer check stays open while the stop is hit.
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    options.peerCheckGate = peerCheck.promise
+    options.onPeerCheckEntered = peerCheckEntered.resolve
+    const [signInExchange] = harness.sender.exchanges
+    signInExchange?.onSetCookie?.(['sid=s%3Aabc123def456; Path=/; HttpOnly'])
+    signInExchange?.response.resolve(RESPONSE_200)
+    await peerCheckEntered.promise
+    // Act
+    const windowOpenAtHit = harness.debug.requestWindowOpen
+    harness.debug.pause({
+      declaredStopIndex: 0,
+      location: { path: 'src/routes/users.ts', line: 14 },
+      inRequestWindowAtStop: windowOpenAtHit,
+    })
+    // Assert
+    assert.equal(windowOpenAtHit, false)
+    const view = harness.run.view()
+    assert.equal(view.heldPause?.kind, 'unattributed')
+    assert.equal(view.captures.length, 0)
+    assert.equal(
+      harness.order.some((step) => step.startsWith('capture:')),
+      false,
+    )
+    peerCheck.resolve()
+  },
+)

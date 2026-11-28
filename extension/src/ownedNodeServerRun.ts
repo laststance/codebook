@@ -777,7 +777,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.addSecrets(cookieMaskValues(this.cookies.seenValues))
   }
 
-  /** The sign-in response arrived: a session sends the declared request with its cookie, anything else ends the request. */
+  /** The sign-in response arrived: the debugger's attribution window closes, then a session sends the declared request with its cookie, anything else ends the request. */
   private async onSignInResponse(
     response: NodeServerResponse,
     token: number,
@@ -786,6 +786,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (this.core.lifecycle !== 'live') return
     const { signIn } = this.input.configuration
     if (!signIn) return
+    // The sign-in exchange is over: its attribution window closes now, so a declared stop hit while the declared request connects and verifies its peer is no hit of that request. The declared request opens the window again in {@link beforeRequestWrite}.
+    this.core.debuggerSession?.setRequestWindow(false)
     const cookies = this.cookies ?? applySetCookies([], Date.now())
     const outcome = signInOutcomeOf(response.status, cookies)
     if (outcome.kind === 'failed') {
