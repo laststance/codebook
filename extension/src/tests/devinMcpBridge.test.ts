@@ -24,16 +24,18 @@ import {
 import { startServer } from '../server'
 
 import { createHarness } from './helpers'
-import { createFolders } from './utils/createFolders'
-import { forward } from './utils/forward'
-import { IDS } from './utils/IDS'
-import { listen } from './utils/listen'
+import {
+  createFolders,
+  writeDescriptor,
+  IDS,
+  runCapturingStderr,
+  listen,
+  makeLiveAgentFolder,
+  forward,
+} from './utils/devinMcpBridgeHarness'
 import { loadModule } from './utils/loadModule'
-import { makeLiveAgentFolder } from './utils/makeLiveAgentFolder'
 import { removeTestFolder } from './utils/removeTestFolder'
-import { runCapturingStderr } from './utils/runCapturingStderr'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
-import { writeDescriptor } from './utils/writeDescriptor'
 
 const FAST = { timeoutMs: 300, intervalMs: 20 }
 

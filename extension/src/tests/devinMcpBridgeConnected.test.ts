@@ -13,22 +13,24 @@ import { startServer } from '../server'
 
 import { createHarness } from './helpers'
 import { bridgeStopMarksPreload } from './utils/bridgeStopMarksPreload'
-import type { ConnectedBridge } from './utils/ConnectedBridge'
-import { createFolders } from './utils/createFolders'
-import { CURSOR_BRIDGE_MODULE_PATH } from './utils/CURSOR_BRIDGE_MODULE_PATH'
 import { defer } from './utils/defer'
-import { forward } from './utils/forward'
-import { IDS } from './utils/IDS'
-import { launchDevinBridge } from './utils/launchDevinBridge'
-import { listen } from './utils/listen'
+import {
+  createFolders,
+  writeSetupReceipts,
+  writeDescriptor,
+  IDS,
+  listen,
+  makeLiveAgentFolder,
+  forward,
+  REPLACING_INSTALLATION_ID,
+  CURSOR_BRIDGE_MODULE_PATH,
+  type ConnectedBridge,
+  launchDevinBridge,
+  occurrencesOf,
+} from './utils/devinMcpBridgeHarness'
 import { loadModule } from './utils/loadModule'
-import { makeLiveAgentFolder } from './utils/makeLiveAgentFolder'
-import { occurrencesOf } from './utils/occurrencesOf'
 import { removeTestFolder } from './utils/removeTestFolder'
-import { REPLACING_INSTALLATION_ID } from './utils/REPLACING_INSTALLATION_ID'
 import { within } from './utils/within'
-import { writeDescriptor } from './utils/writeDescriptor'
-import { writeSetupReceipts } from './utils/writeSetupReceipts'
 
 /**
  * Watches a started bridge process for its connected line; used by the tests that spawn the bridge entry.

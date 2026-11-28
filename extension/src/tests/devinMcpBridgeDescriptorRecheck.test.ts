@@ -13,14 +13,16 @@ import {
 } from '../utils/readBridgeDescriptor'
 import { createPathReadGate } from '../utils/shareReceiptRead'
 
-import { createFolders } from './utils/createFolders'
-import { INSTALLATION_ID } from './utils/INSTALLATION_ID'
-import { instanceIdOf } from './utils/instanceIdOf'
-import { listen } from './utils/listen'
+import {
+  createFolders,
+  writeSetupReceipts,
+  INSTALLATION_ID,
+  writeDescriptor,
+  instanceIdOf,
+  listen,
+  REPLACING_INSTALLATION_ID,
+} from './utils/devinMcpBridgeHarness'
 import { loadModule } from './utils/loadModule'
-import { REPLACING_INSTALLATION_ID } from './utils/REPLACING_INSTALLATION_ID'
-import { writeDescriptor } from './utils/writeDescriptor'
-import { writeSetupReceipts } from './utils/writeSetupReceipts'
 
 /** What a stand-in for the shared stdio bridge saw of one connection the Devin bridge made. */
 interface SeenConnection {

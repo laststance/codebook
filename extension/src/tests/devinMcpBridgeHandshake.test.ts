@@ -9,16 +9,18 @@ import { z } from 'zod'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { bridgeStopMarksPreload } from './utils/bridgeStopMarksPreload'
-import { createFolders } from './utils/createFolders'
-import { CURSOR_BRIDGE_MODULE_PATH } from './utils/CURSOR_BRIDGE_MODULE_PATH'
-import { DEVIN_INITIALIZE_REQUEST } from './utils/DEVIN_INITIALIZE_REQUEST'
+import {
+  createFolders,
+  writeDescriptor,
+  runCapturingStderr,
+  listen,
+  CURSOR_BRIDGE_MODULE_PATH,
+  launchDevinBridge,
+  DEVIN_INITIALIZE_REQUEST,
+  occurrencesOf,
+} from './utils/devinMcpBridgeHarness'
 import { handMovedInputClock } from './utils/handMovedInputClock'
-import { launchDevinBridge } from './utils/launchDevinBridge'
-import { listen } from './utils/listen'
-import { occurrencesOf } from './utils/occurrencesOf'
-import { runCapturingStderr } from './utils/runCapturingStderr'
 import { within } from './utils/within'
-import { writeDescriptor } from './utils/writeDescriptor'
 
 /** Requests 0 to 3 as one text, Devin's initialize first and three pings after it, cut inside the second ping, so a test can send them in two writes with one message split across both. */
 function initializeAndPingsInTwoParts(): [string, string] {

@@ -11,9 +11,8 @@ import {
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
-import { createFolders } from './utils/createFolders'
+import { createFolders, writeDescriptor } from './utils/devinMcpBridgeHarness'
 import { loadModule } from './utils/loadModule'
-import { writeDescriptor } from './utils/writeDescriptor'
 
 // protects=a selection scan's length with many same-window descriptors whose workspace lookups never answer; fails_when=each hanging candidate gets its own 200 ms floor after the deadline, so twenty of them add about four seconds; no_claim=how a real mount stops answering (the resolver never settles)
 test(
