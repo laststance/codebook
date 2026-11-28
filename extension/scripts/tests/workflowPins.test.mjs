@@ -1870,7 +1870,7 @@ test('the Format workflow checks formatting with a pinned Bun running bun fmt', 
 
   // Assert
   assert.notEqual(setup, null)
-  assert.equal(bunVersion, '1.4.4\n')
+  assert.equal(bunVersion, '1.4.5\n')
   assert.ok(
     workflow.indexOf('oven-sh/setup-bun') <
       workflow.indexOf('run: pnpm --dir extension format:check'),
@@ -2070,7 +2070,7 @@ test('both Test workflow jobs install the pinned Bun before they run tests', asy
     [true, true],
   )
   assert.deepEqual(installBeforeTests, [true, true])
-  assert.equal(bunVersion, '1.4.4\n')
+  assert.equal(bunVersion, '1.4.5\n')
 })
 
 // Value: protects=the measured health shards, which run every compiled test file under coverage, install the pinned Bun before they measure, so the Bun server-launch test runs there too; fails_when=the health-shard job measures without installing Bun or installs it unpinned; why_new=Cycle 0152 Task 5; seam=the text of .github/workflows/fallow.yml; no_claim=the shards' coverage
