@@ -978,9 +978,9 @@ test(
   },
 )
 
-// Value: protects=the end of a debug session clears every learner pause record of it, so an unanswered Pause the ended session left behind does not hold the request window closed after a later refused Pause; fails_when=the session's unanswered Pause stays recorded after the session terminated, so the window never opens again (Cycle 0153 review round R1, OCR A Info); seam=the editor harness's unanswered Pause, the session's end and a later refused Pause; no_claim=that a real session id is ever reused
+// Value: protects=the end of a debug session clears every learner pause record of it and its request window never opens again, whatever a later refused Pause says; fails_when=the session's unanswered Pause stays recorded after the session terminated, so the run still reads a learner pause pending, or the refused Pause reopens the window of the dead session (Cycle 0153 review round R1, OCR A Info; Cycle 0153 ship pass 1 S4 changed the window expectation: the ended session's window used to reopen here, which let a request be written after its debug session ended); seam=the editor harness's unanswered Pause, the session's end and a later refused Pause; no_claim=that a real session id is ever reused
 test(
-  'the request window opens again after a refused Pause once the session that left a Pause unanswered ended',
+  'an ended session holds no learner Pause and its request window stays closed after a later refused Pause',
   { timeout: 15_000 },
   async () => {
     // Arrange
@@ -990,7 +990,8 @@ test(
     // Act
     editor.adapter.learnerPauses({ rejected: true })
     // Assert
-    assert.equal(codebookStopLedger.isWindowOpen(editor.session.id), true)
+    assert.equal(debug.learnerPausePending?.(), false)
+    assert.equal(codebookStopLedger.isWindowOpen(editor.session.id), false)
     await debug.release()
   },
 )

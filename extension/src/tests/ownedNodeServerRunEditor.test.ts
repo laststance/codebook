@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
+import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 
 import { defer } from './utils/defer'
 import {
@@ -104,5 +105,43 @@ test(
       continuesAfterEntry,
     )
     assert.deepEqual(held.stopsHitDuringSignIn, [])
+  },
+)
+
+// protects=a request is not written after the debug session of the run ended: the editor ends the session before the run learns whether the server exited, and nothing observes a request written in between; fails_when=the session's end leaves the write eligible, so the peer check finishing within that wait writes the request and reopens the ledger window of the dead session (Cycle 0153 ship pass 1 S4); seam=the editor's real debugger behind the run, the editor's termination event, a held peer check and an exit check that stays open; no_claim=js-debug's real termination timing
+test(
+  'a node run writes no request once its debug session ended while the exit of the server is still being checked',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    const exitCheck = defer<void>()
+    const { editor, harness } = await editorRun({
+      run: {
+        peerCheckGate: peerCheck.promise,
+        onPeerCheckEntered: () => peerCheckEntered.resolve(),
+      },
+    })
+    // The run waits for the server's exit after the session ended; the check stays open, as the real 500 ms wait does.
+    harness.server.waitForExit = async () => {
+      await exitCheck.promise
+      return undefined
+    }
+    // Act
+    const sending = refusalOf(harness.run.sendRequest('key-1'))
+    await peerCheckEntered.promise
+    editor.adapter.end()
+    peerCheck.resolve()
+    const refusal = await sending
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'RUN_NOT_READY')
+    assert.match(refusal.message, /debug session of the server ended/)
+    assert.equal(harness.sender.bytesWritten, 0)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), false)
+    exitCheck.resolve()
+    await harness.run.stop()
   },
 )

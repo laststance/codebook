@@ -132,6 +132,10 @@ export interface NodeServerDebugger {
    * Whether the learner holds a pause of the bound session: a Pause request still waiting for its answer or its stop, or a pause stop of the learner that has not run on. The run refuses to write a request while it is true (Codebook never writes while the learner holds a pause), and the debugger keeps the request window closed meanwhile. A debugger without the editor's Pause (a direct inspector connection) omits it.
    */
   learnerPausePending?(): boolean
+  /**
+   * Whether the bound debug session is over for the run (the editor terminated it, or the release began), true from the turn the editor reports it. The run refuses to write a request then, and the debugger never opens the request window of that session again. A debugger without an editor session omits it.
+   */
+  boundSessionEnded?(): boolean
   /** Whether the target is paused at a stop the run has not been told about yet (its stack is still being read): the stop kills such a server first, since the pause may be inside the request (D14). */
   hasUnreportedPause(): boolean
 }

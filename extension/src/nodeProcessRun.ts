@@ -606,7 +606,7 @@ export class NodeProcessRun {
   }
 
   /**
-   * Tells whether the run may not write its request right now: a pause the run has not heard of yet (any runtime), or, for a Bun run, a declared stop the debugger withdrew since the run was prepared.
+   * Tells whether the run may not write its request right now: the bound debug session ended, a pause the run has not heard of yet (any runtime), or, for a Bun run, a declared stop the debugger withdrew since the run was prepared.
    *
    * Why it exists: a pause that arrived before the request must be classified before the request opens its window, on a node server as on Bun: the adapter already knows execution stopped while the run still reads the stack, so the learner's pause would otherwise be followed by a state-changing write. A Bun run also re-reads its late-armed bindings, because it arms after the server runs and the request is sent later (after a confirmation, or after the sign-in); a request that runs with an unbound stop changes data without the promised observation.
    * When it runs: called by the node-server run right before it writes the declared request's bytes, the one after the sign-in included.
@@ -615,6 +615,9 @@ export class NodeProcessRun {
    */
   requestRefusalNow(): string | undefined {
     const debug = this.requireDebugger()
+    // The editor ends the debug session before the run learns whether the server exited: nothing observes a request written now.
+    if (debug.boundSessionEnded?.())
+      return 'The debug session of the server ended, so the request was not sent.'
     // The unbound-stop check belongs to a Bun launch, which arms after the server runs; a node launch armed before its release.
     const stops = this.lateArmedStops
     if (stops) {

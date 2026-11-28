@@ -421,6 +421,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     if (
       this.requestWindowIntendedOpen &&
       sessionId === this.bound?.session.id &&
+      !this.boundSessionEnded() &&
       !this.learnerHoldsPause(sessionId)
     )
       codebookStopLedger.openWindow([sessionId])
@@ -993,10 +994,24 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     this.requestWindowIsSignIn = open && options?.signIn === true
     const sessionId = this.bound?.session.id
     if (!sessionId) return
-    // The run's intent to send never establishes ownership of a stop the learner asked for: while the learner holds a Pause of the session the window stays closed, and it opens when the last learner pause ends ({@link reopenRequestWindow}).
-    if (open && !this.learnerHoldsPause(sessionId))
+    // The run's intent to send never establishes ownership of a stop the learner asked for: while the learner holds a Pause of the session the window stays closed, and it opens when the last learner pause ends ({@link reopenRequestWindow}). A session that ended or is being released never gets a window again.
+    if (open && !this.boundSessionEnded() && !this.learnerHoldsPause(sessionId))
       codebookStopLedger.openWindow([sessionId])
     else codebookStopLedger.closeWindow([sessionId])
+  }
+
+  /**
+   * Tells whether the bound debug session is over for the run: the editor terminated it, or the run began releasing it.
+   * Why it exists: the editor ends a session before the run learns whether the server exited (it waits up to 500 ms for that), and a request written in between would run with no debugger watching. The run reads it right before it writes a request; it turns true in the turn the editor reports the termination. Called by the run through {@link NodeServerDebugger.boundSessionEnded}.
+   * @returns `true` once the bound session left the editor's active sessions or the release began; `false` before the attach.
+   * @example debug.boundSessionEnded() // => true in the turn after the editor's onDidTerminateDebugSession for the bound session
+   */
+  boundSessionEnded(): boolean {
+    const sessionId = this.bound?.session.id
+    return (
+      sessionId !== undefined &&
+      (this.releaseBegun || !this.active.has(sessionId))
+    )
   }
 
   /**
