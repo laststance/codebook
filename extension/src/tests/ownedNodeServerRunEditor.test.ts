@@ -496,3 +496,98 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a declared hit that arrived while the learner's Continue of the last held pause was still unanswered is neither captured nor continued before the answer: when the adapter then refuses the Continue the stop was never inside the request's window and is held as outside it; fails_when=the stop's stack read finishes first and the run publishes it as a capture on the verdict of the Continue, which the later refusal cannot take back (Cycle 0153 ship pass 2 T5, OV2, L3); seam=the editor's real debugger behind the run, the editor's Pause with its stop, a Continue request whose answer comes after the hit's stack read, then a refused answer; no_claim=the adapter's real message order
+test(
+  'a declared hit read before the learner Continue is refused is held outside the request and never captured',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun()
+    await harness.run.sendRequest('key-1')
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: RUN_STOP_FILE, line: 30 })
+    await until(harness, (view) => view.state === 'learner-paused')
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    const stackReadsBefore = editor.requests.filter(
+      (request) => request.command === 'stackTrace',
+    ).length
+    hitDeclaredStop(editor, 0)
+    await waitUntil(
+      () =>
+        editor.requests.filter((request) => request.command === 'stackTrace')
+          .length > stackReadsBefore,
+      "the hit's stack read",
+      5_000,
+    )
+    // Let the stack read's answer reach the debugger before the Continue is answered.
+    await new Promise((resolve) => setImmediate(resolve))
+    // Act
+    answerContinue({ rejected: true })
+    // The learner's Pause stop was the run's first pause, the hit its second.
+    await waitUntil(
+      () => harness.run.view().pauseGeneration >= 2,
+      'the hit reached the run',
+      5_000,
+    )
+    // Assert
+    const view = harness.run.view()
+    assert.deepEqual(view.captures, [])
+    assert.deepEqual(view.stopsReached, [])
+    assert.equal(view.state, 'learner-paused')
+    await harness.run.stop()
+  },
+)
+
+// protects=a declared hit that arrived while the learner's Continue was unanswered is held outside the request when the answer lets only one thread run on and the learner's Pause of another thread is still held; fails_when=the stop keeps the window the Continue promised although thread 1 is still stopped, so it is captured while the learner holds a pause (Cycle 0153 ship pass 2 T5, OV2); seam=the editor's real debugger behind the run, two Pause stops (threads 1 and 2), a Continue for thread 2 answered with allThreadsContinued false and a declared hit on thread 3; no_claim=js-debug's per-thread semantics
+test(
+  'a declared hit is held outside the request when the answered Continue left another thread of the learner paused',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun()
+    await harness.run.sendRequest('key-1')
+    editor.adapter.learnerPauses({}, 1)
+    editor.adapter.stop(
+      'pause',
+      undefined,
+      { file: RUN_STOP_FILE, line: 30 },
+      1,
+    )
+    editor.adapter.learnerPauses({}, 2)
+    editor.adapter.stop(
+      'pause',
+      undefined,
+      { file: RUN_STOP_FILE, line: 31 },
+      2,
+    )
+    await until(harness, (view) => view.state === 'learner-paused')
+    const answerContinue = editor.adapter.learnerSendsContinue(2)
+    const stackReadsBefore = editor.requests.filter(
+      (request) => request.command === 'stackTrace',
+    ).length
+    hitDeclaredStop(editor, 0, 3)
+    await waitUntil(
+      () =>
+        editor.requests.filter((request) => request.command === 'stackTrace')
+          .length > stackReadsBefore,
+      "the hit's stack read",
+      5_000,
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    // Act
+    answerContinue({ allThreadsContinued: false })
+    // The two Pause stops were the run's first pauses, the hit its third.
+    await waitUntil(
+      () => harness.run.view().pauseGeneration >= 3,
+      'the hit reached the run',
+      5_000,
+    )
+    // Assert
+    const view = harness.run.view()
+    assert.deepEqual(view.captures, [])
+    assert.deepEqual(view.stopsReached, [])
+    assert.equal(view.state, 'learner-paused')
+    await harness.run.stop()
+  },
+)

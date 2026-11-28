@@ -450,14 +450,19 @@ export async function editorHarness(
         },
       })
     },
-    /** The learner presses Continue and the adapter has not answered yet: the editor's request reached the adapter; the returned function delivers the adapter's answer, accepted (every thread runs on) or rejected (the thread stays paused). */
-    learnerSendsContinue(): (answer?: { rejected?: boolean }) => void {
+    /** The learner presses Continue (for thread 1 unless named) and the adapter has not answered yet: the editor's request reached the adapter; the returned function delivers the adapter's answer, accepted (every thread runs on, or only the named one when `allThreadsContinued` is false) or rejected (the thread stays paused). */
+    learnerSendsContinue(
+      threadId = 1,
+    ): (answer?: {
+      rejected?: boolean
+      allThreadsContinued?: boolean
+    }) => void {
       const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
         type: 'request',
         seq: sequence,
         command: 'continue',
-        arguments: { threadId: 1 },
+        arguments: { threadId },
       })
       return (answer = {}) =>
         tracker?.onDidSendMessage?.({
@@ -468,21 +473,25 @@ export async function editorHarness(
           success: !answer.rejected,
           ...(answer.rejected
             ? { message: 'the thread is not paused' }
-            : { body: { allThreadsContinued: true } }),
+            : {
+                body: {
+                  allThreadsContinued: answer.allThreadsContinued ?? true,
+                },
+              }),
         })
     },
     /** The learner presses Continue: the editor's request reaches the adapter, which accepts it (every thread runs on) or rejects it (the thread stays paused). */
     learnerContinues(answer: { rejected?: boolean } = {}): void {
       adapter.learnerSendsContinue()(answer)
     },
-    /** The learner presses Pause and the adapter has not answered yet: the editor's `pause` request reached the adapter; the returned function delivers the adapter's answer, accepted (a `pause` stop follows when the test reports one) or rejected (the thread was already paused). */
-    learnerSendsPause(): (answer?: { rejected?: boolean }) => void {
+    /** The learner presses Pause (for thread 1 unless named) and the adapter has not answered yet: the editor's `pause` request reached the adapter; the returned function delivers the adapter's answer, accepted (a `pause` stop follows when the test reports one) or rejected (the thread was already paused). */
+    learnerSendsPause(threadId = 1): (answer?: { rejected?: boolean }) => void {
       const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
         type: 'request',
         seq: sequence,
         command: 'pause',
-        arguments: { threadId: 1 },
+        arguments: { threadId },
       })
       return (answer = {}) =>
         tracker?.onDidSendMessage?.({
@@ -496,9 +505,9 @@ export async function editorHarness(
             : {}),
         })
     },
-    /** The learner presses Pause: the editor's `pause` request reaches the adapter, which accepts it (a `pause` stop follows when the test reports one) or rejects it (the thread was already paused). */
-    learnerPauses(answer: { rejected?: boolean } = {}): void {
-      adapter.learnerSendsPause()(answer)
+    /** The learner presses Pause (for thread 1 unless named): the editor's `pause` request reaches the adapter, which accepts it (a `pause` stop follows when the test reports one) or rejects it (the thread was already paused). */
+    learnerPauses(answer: { rejected?: boolean } = {}, threadId = 1): void {
+      adapter.learnerSendsPause(threadId)(answer)
     },
     /** The adapter's later news about a breakpoint it acknowledged (a DAP `breakpoint` event). */
     breakpointNews(

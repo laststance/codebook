@@ -145,6 +145,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private runtime: 'node' | 'bun' = 'node'
   private nextToken = 0
   private classification: Promise<void> = Promise.resolve()
+  /** The classifications that wait for the answer to a learner Continue their window verdict rests on; each is woken by every answer ({@link reconcileProvisionalWindows}). */
+  private readonly resumeAnswerWaiters = new Set<() => void>()
   private releaseBegun = false
   private readonly releaser = new SharedAttempt(() => this.releaseOwned())
   private readonly tracker: vscode.Disposable
@@ -246,8 +248,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         response.request_seq,
       )
       this.onResumeAnswered(session.id, response)
-      if (answersResume && !response.success) this.onResumeRefused(session.id)
       this.onLearnerPauseAnswered(session.id, response)
+      // Whatever the answer was, a window verdict that rested on the Continue is now confirmed or taken back.
+      if (answersResume) this.reconcileProvisionalWindows(session.id)
     }
     if (message.type !== 'event') return
     const event = message as DebugProtocol.Event
@@ -341,6 +344,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const earlierToken = threads.get(threadId)
     if (earlierToken === undefined) return
     this.unreportedStops.delete(earlierToken)
+    this.wakeResumeAnswerWaiters()
     // A Bun run hands its earlier stops to the run at the release; one that was replaced is none of them.
     if (this.runtime === 'bun') {
       const index = this.sessionStops.findIndex(
@@ -384,7 +388,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   /**
    * Tells whether the request window the run intends is closed only by the learner's pauses of the session, and every one of those pauses has a Continue (or step) waiting for the adapter's answer.
-   * Why it exists: a stop that arrives between the learner's Continue request and its reply belongs to the request, but the reply that reopens the ledger window comes later; the debugger judges the arrival by what the answer will produce, and takes it back when the adapter refuses the Continue. Called by {@link windowAtArrival} and {@link onResumeRefused}.
+   * Why it exists: a stop that arrives between the learner's Continue request and its reply belongs to the request, but the reply that reopens the ledger window comes later; the debugger judges the arrival by what the answer will produce, and takes it back when the adapter refuses the Continue. Called by {@link windowAtArrival} and {@link reconcileProvisionalWindows}.
    * @param sessionId - The session the stop arrived on.
    * @returns `true` when the run means its window open, the session is the bound live one, no Pause request of the learner is unsettled, at least one learner pause is held, and each has a covering resume request in flight.
    * @example this.windowReopensWhenPendingResumesAreAccepted('s1') // => true between the learner's Continue of the only held pause and its reply
@@ -410,22 +414,63 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Takes back the window a stop was judged by when the Continue it rested on was refused: the learner's pause is still held, so the stop was not inside the request's window.
-   * Called by {@link onAdapterMessage} when the adapter refuses a resume or step request. A stop the run already heard of keeps its verdict.
-   * @param sessionId - The session whose Continue was refused.
-   * @example this.onResumeRefused('s1') // the stop of 's1' still being read is judged as arrived outside the window
+   * Settles the window verdict of every stop that was judged by a learner Continue still waiting for its answer, once that Continue is answered: confirmed when the answers reopened the request window (every thread the learner held ran on), taken back when the learner's pause is still held (the Continue was refused, or let only some threads run).
+   * Why it exists: ownership granted by a Continue in flight is provisional; a stop must not be captured or continued by Codebook on a verdict the adapter's answer later contradicts. Called by {@link onAdapterMessage} after every answer to a resume or step request, and wakes the classifications that wait for it ({@link untilWindowVerdictIsFinal}).
+   * @param sessionId - The session whose Continue was answered.
+   * @example this.reconcileProvisionalWindows('s1') // the stop of 's1' judged by the Continue is judged as arrived outside the window when the learner's pause is still held
    */
-  private onResumeRefused(sessionId: string): void {
-    for (const stop of this.unreportedStops.values())
-      if (
-        stop.sessionId === sessionId &&
-        stop.windowFromPendingResume &&
-        !this.windowReopensWhenPendingResumesAreAccepted(sessionId)
-      ) {
-        stop.inRequestWindowAtStop = false
-        stop.inSignInAtStop = false
-        stop.windowFromPendingResume = false
+  private reconcileProvisionalWindows(sessionId: string): void {
+    for (const stop of this.unreportedStops.values()) {
+      if (stop.sessionId !== sessionId || !stop.windowFromPendingResume)
+        continue
+      // Another Continue still in flight keeps the verdict provisional.
+      if (this.windowReopensWhenPendingResumesAreAccepted(sessionId)) continue
+      if (!codebookStopLedger.isWindowOpen(sessionId))
+        this.takeBackWindowVerdict(stop)
+      else stop.windowFromPendingResume = false
+    }
+    this.wakeResumeAnswerWaiters()
+  }
+
+  /**
+   * Judges a stop as arrived outside the request's window: a learner's pause was still held when it arrived.
+   * @param stop - The stop whose provisional verdict is taken back.
+   */
+  private takeBackWindowVerdict(stop: NativeStop): void {
+    stop.inRequestWindowAtStop = false
+    stop.inSignInAtStop = false
+    stop.windowFromPendingResume = false
+  }
+
+  /** Wakes every classification that waits for an answer to a learner Continue. */
+  private wakeResumeAnswerWaiters(): void {
+    const waiters = [...this.resumeAnswerWaiters]
+    this.resumeAnswerWaiters.clear()
+    for (const wake of waiters) wake()
+  }
+
+  /**
+   * Waits until a stop's window verdict no longer rests on a learner Continue that is still waiting for its answer.
+   * Why it exists: classifying and acting on a provisional verdict (a capture, or an automatic Continue of a sign-in hit) cannot be taken back; the stop waits for the answer, and one that never comes in time is judged as arrived outside the window (fail closed). Called by {@link classifyAndReport} for a declared hit.
+   * @param stop - The stop being classified.
+   * @example await this.untilWindowVerdictIsFinal(stop) // returns at once for a stop judged by a window that was open
+   */
+  private async untilWindowVerdictIsFinal(stop: NativeStop): Promise<void> {
+    while (
+      stop.windowFromPendingResume &&
+      this.unreportedStops.has(stop.token)
+    ) {
+      try {
+        await awaitResponse(
+          new Promise<void>((resolve) => this.resumeAnswerWaiters.add(resolve)),
+          'the answer to the learner Continue',
+          this.abort.signal,
+        )
+      } catch {
+        // No answer in time, or the debugger is being released: the stop did not arrive inside the request's window.
+        this.takeBackWindowVerdict(stop)
       }
+    }
   }
 
   /**
@@ -615,6 +660,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.handlers?.onResume(token)
       }
     this.endLearnerPausesThatRanOn(ranOn)
+    // A classification that waited for a stop that ran on has nothing left to wait for.
+    this.wakeResumeAnswerWaiters()
   }
 
   /**
@@ -692,6 +739,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     // An ended session holds no target, so none of its stops can be paused any more.
     for (const [token, stop] of this.unreportedStops)
       if (stop.sessionId === session.id) this.unreportedStops.delete(token)
+    this.wakeResumeAnswerWaiters()
     codebookStopLedger.forget(session.id)
     this.pendingResumes.forgetSession(session.id)
     // An ended session holds no learner pause: its requests and held stops are dropped.
@@ -1035,6 +1083,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const declaredStopIndex = frame
       ? this.ownedHitIndexOf(stop, session, frame)
       : undefined
+    // A declared hit judged by a learner Continue that is still unanswered is not acted on before the answer confirms it.
+    if (declaredStopIndex !== undefined) {
+      await this.untilWindowVerdictIsFinal(stop)
+      if (!this.unreportedStops.has(stop.token)) return
+    }
     // Inside the request's window an owned hit is Codebook's stop; every other stop stays the learner's.
     codebookStopLedger.recordStop(
       session.id,
