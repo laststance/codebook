@@ -219,3 +219,39 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a sign-in whose connection failed closes its attribution window at once, so a declared line hit while the exit of the server is still being checked is held as a stop outside the request instead of being continued as the sign-in's; fails_when=the window stays open until the error report finishes its exit check, so the stop reads as arrived during the sign-in and Codebook continues it (Cycle 0153 ship pass 1 S9); seam=the editor's real debugger behind a sign-in run, a rejected sign-in response and an exit check that stays open; no_claim=a real connection reset
+test(
+  'a declared line hit after the sign-in connection failed is held and not continued while the server exit is still being checked',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const exitCheck = defer<void>()
+    const { editor, harness } = await editorRun({ run: { signIn: SIGN_IN } })
+    harness.server.waitForExit = async () => {
+      await exitCheck.promise
+      return undefined
+    }
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Act
+    harness.sender.exchanges[0]?.response.reject(
+      new StudyError('REQUEST_FAILED', 'connection reset'),
+    )
+    // Let the rejection reach the run before the stop arrives.
+    await new Promise((resolve) => setImmediate(resolve))
+    hitDeclaredStop(editor, 0)
+    const held = await until(harness, (view) => view.heldPause !== undefined)
+    // Assert
+    assert.deepEqual(held.stopsHitDuringSignIn, [])
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesBefore,
+    )
+    exitCheck.resolve()
+    await harness.run.stop()
+  },
+)

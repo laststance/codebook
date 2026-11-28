@@ -788,9 +788,24 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     )
     handle.response.then(
       (response) => void this.onSignInResponse(response, token),
-      (error: unknown) => void this.onRequestError(error, token),
+      (error: unknown) => {
+        // A failed exchange owns no stop from here on: its window closes now, not after the exit check the error report waits for.
+        this.closeAttributionWindowOfFailedExchange(token)
+        void this.onRequestError(error, token)
+      },
     )
     await this.awaitWritten(token, handle, undefined, 'sign-in')
+  }
+
+  /**
+   * Closes the debugger's attribution window of an exchange whose response promise rejected, before the run awaits the server's exit to word the failure.
+   * Why it exists: {@link onRequestError} waits up to the exit settle time, and a declared line hit meanwhile would still read as the failed sign-in's and be continued by Codebook; with the window closed it is held as a stop outside the request instead.
+   * @param token - The request the rejection belongs to; a rejection of an older request changes nothing.
+   * @example this.closeAttributionWindowOfFailedExchange(this.requestToken) // the sign-in's window closes at once
+   */
+  private closeAttributionWindowOfFailedExchange(token: number): void {
+    if (token !== this.requestToken || !this.inRequestWindow()) return
+    this.core.debuggerSession?.setRequestWindow(false)
   }
 
   /** The sign-in response headers arrived: the session's cookies and every form of their values join the mask set. The output stays held, because the declared response may rotate the session. */
