@@ -1180,3 +1180,24 @@ test(
     await debug.release()
   },
 )
+
+// protects=the answer to a learner Continue confirms only the stops that existed when the Continue was sent: a stop that names no thread and arrived before the answer stays held, so the write guard stays closed; fails_when=the all-threads answer to the old Continue ends the newer threadless stop's hold and the run writes a request while the server is stopped (Cycle 0153 ship pass 3 U1); seam=the editor harness's learner Continue request, a stop without a thread and the adapter's all-threads answer; no_claim=that js-debug ever sends a stop without a thread (its probe traces name thread 0 in every event)
+test(
+  'the answer to an older Continue does not release a stop that named no thread and arrived after the Continue',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stoppedWithoutThread('pause')
+    // Act
+    answerContinue({ allThreadsContinued: true })
+    // Assert
+    assert.equal(debug.learnerPausePending?.(), true)
+    await debug.release()
+  },
+)

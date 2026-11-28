@@ -747,7 +747,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         this.handlers?.onResume(token)
       }
     this.endLearnerPausesThatRanOn(ranOn)
-    if (threadId === undefined) this.endUnknownThreadHolds(sessionId)
+    if (threadId === undefined)
+      this.endUnknownThreadHolds(sessionId, newestStopToken)
     // A classification that waited for a stop that ran on has nothing left to wait for.
     this.wakeResumeAnswerWaiters()
   }
@@ -794,14 +795,19 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   /**
    * Ends the holds of stops that named no thread once every thread of their session ran on; the request window opens again when nothing else of the learner is held.
+   * Why the token bound exists: a reply to a Continue confirms only the stops that existed when its request was sent, so a hold that arrived after the request stays (a newer threadless stop cannot be ended by the old Continue's answer).
    * Called by {@link resumeThreads} after a resume of all threads.
    * @param sessionId - The session whose threads all ran on.
-   * @example this.endUnknownThreadHolds('s1') // learnerPausePending() is false again when nothing else was held
+   * @param newestStopToken - The newest stop the resume applies to; holds of later stops stay. Omitted, every hold of the session ends.
+   * @example this.endUnknownThreadHolds('s1', 5) // the hold of stop 4 ends, the hold of stop 6 stays; learnerPausePending() stays true while it does
    */
-  private endUnknownThreadHolds(sessionId: string): void {
+  private endUnknownThreadHolds(
+    sessionId: string,
+    newestStopToken = Number.POSITIVE_INFINITY,
+  ): void {
     let ended = false
     for (const [token, heldSession] of this.unknownThreadHolds)
-      if (heldSession === sessionId) {
+      if (heldSession === sessionId && token <= newestStopToken) {
         this.unknownThreadHolds.delete(token)
         ended = true
       }
