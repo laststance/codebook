@@ -232,8 +232,9 @@ test('the entry pause is continued once, then a hit of the second stop and a lea
     reason: 'breakpoint',
     declaredStopIndex: 1,
     location: { path: 'src/routes/users.ts', line: 20 },
-    // No request window was opened, and a node pause carries the window it arrived in too.
+    // No request window was opened, and every pause carries the window and sign-in phase it arrived in.
     inRequestWindowAtStop: false,
+    inSignInAtStop: false,
   })
   assert.equal(learner.declaredStopIndex, undefined)
   assert.equal(learner.location?.line, 30)
@@ -349,6 +350,42 @@ test('a node declared stop hit while the request window is closed reaches the ru
   )
   await debug.release()
 })
+
+// protects=a declared stop that arrives while the sign-in request's window is open is reported as arrived during the sign-in even when the window has closed and the sign-in is over by the time its stack has been read, and a stop in the declared request's window is not; fails_when=the sign-in phase is read when the classification finishes (or not recorded), so a stop the sign-in caused can be saved as the declared request's hit (Cycle 0153 review round R3, OCR A Minor); seam=the editor harness's gated stack read and the debugger's setRequestWindow with the sign-in marker; no_claim=the run's own classification (nodeServerSignInRun.test.ts)
+test(
+  'a declared stop that arrived in the sign-in window is reported as arrived during the sign-in after the window closed',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const gate = defer<void>()
+    const editor = await editorHarness({ stackTraceGate: gate.promise })
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true, { signIn: true })
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    debug.setRequestWindow(false)
+    gate.resolve()
+    const signInHit = await heard.nextPause()
+    editor.adapter.learnerContinues()
+    debug.setRequestWindow(true, { signIn: false })
+    editor.adapter.stop('breakpoint', [OWNED_IDS[1]!], {
+      file: STOP_FILE,
+      line: 20,
+    })
+    const declaredHit = await heard.nextPause()
+    // Assert
+    assert.equal(signInHit.inRequestWindowAtStop, true)
+    assert.equal(signInHit.inSignInAtStop, true)
+    assert.equal(declaredHit.inRequestWindowAtStop, true)
+    assert.equal(declaredHit.inSignInAtStop, false)
+    await debug.release()
+  },
+)
 
 // protects=retiring removes every owned breakpoint, one after another, each confirmed by the adapter; fails_when=one stays armed; no_claim=VS Code's own removal
 test('retiring the stops removes both owned breakpoints of the file', async () => {

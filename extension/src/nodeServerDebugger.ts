@@ -40,6 +40,10 @@ export type NodeServerDebuggerPause = {
    * Whether the request-attribution window was open when the adapter's `stopped` arrived. The run takes it as the pause's attribution and never re-derives it from the request state at classification time, so a pause that arrived before the request's bytes (the learner's Pause) is never read as a hit the request caused, on every runtime. Absent when the debugger reports no arrival evidence.
    */
   inRequestWindowAtStop?: boolean
+  /**
+   * Whether the open request window belonged to the sign-in request when the adapter's `stopped` arrived. The run takes it with {@link inRequestWindowAtStop} and never re-derives the sign-in phase at classification time, so a stop the sign-in caused (code that runs after its response was written) is no hit of the declared request that follows. Absent when the debugger reports no arrival evidence.
+   */
+  inSignInAtStop?: boolean
 }
 
 /** What a captured owned pause reads, already redacted. */
@@ -108,8 +112,11 @@ export interface NodeServerDebugger {
     signal: AbortSignal,
     options?: { entryPause: boolean },
   ): Promise<void>
-  /** Opens or closes the causal window of the declared request, so the editor tells a stop of the request from the learner's. */
-  setRequestWindow(open: boolean): void
+  /**
+   * Opens or closes the causal window of the declared request, so the editor tells a stop of the request from the learner's.
+   * `signIn` marks a window that opens for the sign-in request: a stop that arrives in it is reported as arrived during the sign-in ({@link NodeServerDebuggerPause.inSignInAtStop}).
+   */
+  setRequestWindow(open: boolean, options?: { signIn: boolean }): void
   /** Reads an owned pause's declared inspections, its source hash and the redacted snapshot; refuses a pause that was resumed meanwhile. */
   capture(
     pause: NodeServerDebuggerPause,

@@ -993,7 +993,10 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.core.assertNoHeldPause()
     const refusal = this.core.requestRefusalNow()
     if (refusal) throw new StudyError('RUN_NOT_READY', refusal)
-    this.core.requireDebugger().setRequestWindow(true)
+    // A window that opens for the sign-in request is marked as such, so a stop the sign-in causes is told apart from the declared request's.
+    this.core.requireDebugger().setRequestWindow(true, {
+      signIn: this.signInView.state === 'signing-in',
+    })
   }
 
   /** Reads which process the connected socket reaches and refuses unless it is the launched server. */

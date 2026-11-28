@@ -186,8 +186,11 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
   }
   /** Whether the run's last `setRequestWindow` left the attribution window open, as the real debugger's stop ledger would judge a stop that arrives now. */
   requestWindowOpen = false
-  setRequestWindow(open: boolean): void {
+  /** Whether the last window the run opened was marked as the sign-in request's. */
+  requestWindowIsSignIn = false
+  setRequestWindow(open: boolean, options?: { signIn: boolean }): void {
     this.requestWindowOpen = open
+    this.requestWindowIsSignIn = open && options?.signIn === true
     this.order.push(`window:${open}`)
   }
   async capture(

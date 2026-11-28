@@ -962,7 +962,8 @@ export class NodeProcessRun {
     if (!this.prepared) return 'start-hit'
     // The debugger judged the window when the stop arrived: a stop outside it is not the request's, however long the classification took.
     if (pause.inRequestWindowAtStop === false) return 'unattributed'
-    if (this.hooks.inSignIn?.()) return 'sign-in-hit'
+    // The sign-in phase of the arrival moment decides, as the window does; a debugger that reports none leaves it to the run's state now.
+    if (pause.inSignInAtStop ?? this.hooks.inSignIn?.()) return 'sign-in-hit'
     return this.hooks.inWindow() ? 'request-hit' : 'unattributed'
   }
 

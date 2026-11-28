@@ -54,6 +54,8 @@ type NativeStop = {
   hitBreakpointIds?: number[]
   /** Whether the request window was open when the adapter's `stopped` arrived, so a classification that finishes later still tells a pause before the request from one it caused. */
   inRequestWindowAtStop: boolean
+  /** Whether the open window belonged to the sign-in request when the adapter's `stopped` arrived. */
+  inSignInAtStop: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
 }
@@ -114,6 +116,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly learnerPauseRequests = new Map<string, LearnerPauseRequest>()
   /** Whether the run meant its request window to be open ({@link setRequestWindow}), whatever a learner's pause did to the ledger since. */
   private requestWindowIntendedOpen = false
+  /** Whether the window the run meant open belongs to the sign-in request, so a stop that arrives in it is the sign-in's. */
+  private requestWindowIsSignIn = false
   private armed: ArmedStop[] = []
   private bound?: Awaited<ReturnType<typeof bindOwnedNodeTestDebugSession>>
   private handlers?: NodeServerDebuggerHandlers
@@ -259,7 +263,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         ? body.hitBreakpointIds.filter((id) => Number.isInteger(id))
         : undefined,
       // Every pause is judged by the window as it stood when it arrived; a Bun pause also by the learner's breakpoints then (Bun runs during arming).
-      inRequestWindowAtStop: codebookStopLedger.isWindowOpen(session.id),
+      ...this.windowAtArrival(session.id),
       ...(this.runtime === 'bun'
         ? { learnerBreakpoints: this.learnerBreakpointsNow() }
         : {}),
@@ -280,6 +284,23 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       return
     }
     this.enqueueClassification(stop)
+  }
+
+  /**
+   * Reads the request window and its sign-in phase at the moment a stop arrives.
+   * Why it exists: the classification finishes after the stack read, when the sign-in may be over and the window closed; the run judges the stop by what stood at arrival. Called by {@link onStopped} for every stop.
+   * @param sessionId - The session that stopped.
+   * @returns Whether the window was open, and whether it belonged to the sign-in request (only a window that is open can).
+   * @example this.windowAtArrival('session-1') // => { inRequestWindowAtStop: true, inSignInAtStop: true } while the sign-in request is out
+   */
+  private windowAtArrival(
+    sessionId: string,
+  ): Pick<NativeStop, 'inRequestWindowAtStop' | 'inSignInAtStop'> {
+    const inRequestWindowAtStop = codebookStopLedger.isWindowOpen(sessionId)
+    return {
+      inRequestWindowAtStop,
+      inSignInAtStop: inRequestWindowAtStop && this.requestWindowIsSignIn,
+    }
   }
 
   /**
@@ -854,8 +875,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       reason: stop.reason,
       declaredStopIndex,
       location: this.locationOf(frame),
-      // The window as it stood when the stop arrived, the same state the ledger verdict above used.
+      // The window and its sign-in phase as they stood when the stop arrived, the same state the ledger verdict above used.
       inRequestWindowAtStop: stop.inRequestWindowAtStop,
+      inSignInAtStop: stop.inSignInAtStop,
     })
   }
 
@@ -963,8 +985,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     }
   }
 
-  setRequestWindow(open: boolean): void {
+  setRequestWindow(open: boolean, options?: { signIn: boolean }): void {
     this.requestWindowIntendedOpen = open
+    this.requestWindowIsSignIn = open && options?.signIn === true
     const sessionId = this.bound?.session.id
     if (!sessionId) return
     if (open) codebookStopLedger.openWindow([sessionId])
