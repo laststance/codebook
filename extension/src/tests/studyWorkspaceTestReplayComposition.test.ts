@@ -20,12 +20,14 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
-import { compositionOf } from './utils/compositionOf'
-import { landsOn } from './utils/landsOn'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
-import { openByOpenReplay } from './utils/openByOpenReplay'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
-import type { Harness } from './utils/testReplayCompositionHarness'
+import {
+  compositionOf,
+  type Harness,
+  landsOn,
+  openByOpenReplay,
+} from './utils/testReplayCompositionHarness'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 type HistoryHeader = ReturnType<typeof nodeTestHistoryHeader>

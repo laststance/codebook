@@ -18,12 +18,14 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
-import { compositionOf } from './utils/compositionOf'
-import { landsOn } from './utils/landsOn'
-import { openByOpenReplay } from './utils/openByOpenReplay'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { saveOtherBrowserStudy } from './utils/saveOtherBrowserStudy'
-import type { Harness } from './utils/testReplayCompositionHarness'
+import {
+  compositionOf,
+  type Harness,
+  landsOn,
+  openByOpenReplay,
+} from './utils/testReplayCompositionHarness'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 for (const ending of ['held', 'failed'] as const) {
