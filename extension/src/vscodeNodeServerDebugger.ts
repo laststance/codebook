@@ -654,11 +654,13 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   /**
    * Tells whether a pause is the newest stop of its thread and the thread has not run on since: the only pause a Codebook resume may name.
    * Why it exists: a thread's id alone cannot say which pause the caller means, and a resume sent for an older pause acts on the stop that replaced it (the learner's Continue of pause A and exception B that arrived before its answer).
-   * @param pause - The pause the caller read.
+   * @param pause - The pause the caller read (the entry stop of a node launch is one too).
    * @returns `true` when the pause's token is the newest stop of its still-paused thread.
    * @example this.isNewestPausedStop(pause) // => false after the same thread stopped again as a later stop
    */
-  private isNewestPausedStop(pause: NodeServerDebuggerPause): boolean {
+  private isNewestPausedStop(
+    pause: Pick<NativeStop, 'sessionId' | 'threadId' | 'token'>,
+  ): boolean {
     return (
       this.pausedThreads.get(pause.sessionId)?.get(pause.threadId) ===
       pause.token
@@ -960,8 +962,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     this.entryReleased = true
     for (const stop of this.sessionStops)
       if (stop.token !== this.entryToken) this.enqueueClassification(stop)
-    if (isEntry)
-      // The entry pause is continued exactly once.
+    // The entry pause is continued exactly once, and only while it is still its thread's newest pause: a learner who continued it first, with the thread stopped again since, leaves nothing Codebook may resume.
+    if (isEntry && this.isNewestPausedStop(first))
       await awaitResponse(
         session.customRequest('continue', { threadId: first.threadId }),
         'the entry continuation',

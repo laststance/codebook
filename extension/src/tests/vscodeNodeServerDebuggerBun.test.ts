@@ -807,7 +807,7 @@ test('a Bun pause that arrived before the request window opened is not recorded 
   await debug.release()
 })
 
-// Value: protects=a node run whose learner continued the entry pause before the release ran still finds that entry in the release, so the release does not wait for its timeout; fails_when=a resume drops the entry from the session's stops on a node run (the Bun-only bookkeeping leaks), and the release ends with a timeout; seam=the editor harness's entry pause, a learner Continue, then the release; no_claim=the real adapter's resume order
+// Value: protects=a node run whose learner continued the entry pause before the release ran still finds that entry in the release, so the release does not wait for its timeout, and it sends no continue for a pause that already ran on (Cycle 0153 ship pass 2 T3); fails_when=a resume drops the entry from the session's stops on a node run (the Bun-only bookkeeping leaks), and the release ends with a timeout, or the release sends a continue for the entry the learner already continued; seam=the editor harness's entry pause, a learner Continue, then the release; no_claim=the real adapter's resume order
 test('a node release still finds an entry pause the learner continued before it', async () => {
   // Arrange
   const editor = await editorHarness()
@@ -824,7 +824,7 @@ test('a node release still finds an entry pause the learner continued before it'
   // Assert
   assert.equal(
     editor.requests.filter((request) => request.command === 'continue').length,
-    1,
+    0,
   )
   await debug.release()
 })

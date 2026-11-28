@@ -1043,3 +1043,31 @@ test(
     await debug.release()
   },
 )
+
+// protects=the entry release continues the entry pause only while it is still its thread's newest stop: a learner who continued the entry during the arming, with the thread stopped again as an exception, loses nothing to a Codebook continue; fails_when=the release sends a raw continue for the entry's thread id, so the exception is resumed before it is classified and the run reports no pause (Cycle 0153 ship pass 2 T3); seam=the editor harness's learner Continue of the entry stop and a later exception of the same thread; no_claim=the run's own handling of the exception
+test(
+  'releasing the entry sends no continue when the learner continued the entry and the thread stopped again',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    editor.adapter.learnerContinues()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    // Act
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    // Assert
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      0,
+    )
+    await waitUntil(
+      () => heard.pauses.length === 1,
+      'the exception reported to the run',
+      2_000,
+    )
+    assert.equal(heard.pauses[0]?.reason, 'exception')
+    await debug.release()
+  },
+)
