@@ -44,6 +44,13 @@ async function settle(page: RealHeadlessPage): Promise<void> {
   await delay(CLEAR_OF_MARGIN_MS)
 }
 
+/** Waits two paints of the page, so the observer's check before a paint has run at least once since the call, whatever the machine's load. */
+async function paints(page: RealHeadlessPage): Promise<void> {
+  await page.evaluate(
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(1))))',
+  )
+}
+
 /** Types `value` into the armed control the way typed text arrives: the value, then an input event. */
 async function typeIntoControl(
   page: RealHeadlessPage,
@@ -511,8 +518,12 @@ test('a value set by script into a visible text control and cleared again before
   await delay(CLEAR_OF_MARGIN_MS)
   const capturedBefore = Date.now()
   await delay(CLEAR_OF_MARGIN_MS)
+  // The unsafe time starts at the observer's last check that saw the control empty: one after the pause above.
+  await paints(page)
   // Act
   await page.evaluate("document.getElementById('plain').value = 'typed-secret'")
+  // The copy is on screen for at least one paint.
+  await paints(page)
   await delay(CLEAR_OF_MARGIN_MS)
   const capturedWhileShown = Date.now()
   await delay(CLEAR_OF_MARGIN_MS)
@@ -522,6 +533,185 @@ test('a value set by script into a visible text control and cleared again before
   const during = await gate.admitFrame(capturedWhileShown)
   // Assert
   assert.deepEqual([earlier, during], ['pass', 'drop'])
+})
+
+// Value: protects=a secret a script shows in a text control inside an open shadow root and clears again, with no DOM mutation and before any verification, still makes that time unsafe; fails_when=the check before each paint reads only the page's own controls, so the copy is never seen and an image of it is stored; why_new=the shadow-root tests keep the copy until a verification reads it; seam=none; no_claim=closed shadow roots; a copy that a callback after the observer's shows and removes within one paint
+test('a value set by script into a text control inside an open shadow root and cleared again before any verification drops frames of that time', async (context) => {
+  // Arrange: the shadow root and its control are in the page when the gate is armed.
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  await page.evaluate(
+    `(() => { const input = document.createElement('input'); input.type = 'text'; input.id = 'plain'; document.getElementById('host').attachShadow({ mode: 'open' }).append(input) })()`,
+  )
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedBefore = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  // The unsafe time starts at the observer's last check that saw the control empty: one after the pause above.
+  await paints(page)
+  // Act
+  await page.evaluate(
+    "document.getElementById('host').shadowRoot.getElementById('plain').value = 'typed-secret'",
+  )
+  // The copy is on screen for at least one paint.
+  await paints(page)
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedWhileShown = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate(
+    "document.getElementById('host').shadowRoot.getElementById('plain').value = ''",
+  )
+  await settle(page)
+  const earlier = await gate.admitFrame(capturedBefore)
+  const during = await gate.admitFrame(capturedWhileShown)
+  // Assert
+  assert.deepEqual([earlier, during], ['pass', 'drop'])
+})
+
+// Value: protects=a shadow root attached to an element already in the page, which raises no mutation, is read before each paint from the attach on: a secret a script shows in its text control and clears again makes that time unsafe; fails_when=the observer learns of a shadow root only from a full check, so a root attached since the last one is never read; why_new=the other shadow-root tests attach the root before arming or keep the copy until a verification; seam=none; no_claim=closed shadow roots; a realm whose attachShadow cannot be wrapped
+test('a value set by script into a text control of a shadow root attached after arming and cleared again before any verification drops frames of that time', async (context) => {
+  // Arrange: the host is in the page when the gate is armed; its shadow root is attached afterwards, as a custom element upgraded late does.
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate(
+    `(() => { const input = document.createElement('input'); input.type = 'text'; input.id = 'plain'; document.getElementById('host').attachShadow({ mode: 'open' }).append(input) })()`,
+  )
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedBefore = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  // The unsafe time starts at the observer's last check that saw the control empty: one after the pause above.
+  await paints(page)
+  // Act
+  await page.evaluate(
+    "document.getElementById('host').shadowRoot.getElementById('plain').value = 'typed-secret'",
+  )
+  // The copy is on screen for at least one paint.
+  await paints(page)
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedWhileShown = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate(
+    "document.getElementById('host').shadowRoot.getElementById('plain').value = ''",
+  )
+  await settle(page)
+  const earlier = await gate.admitFrame(capturedBefore)
+  const during = await gate.admitFrame(capturedWhileShown)
+  // Assert
+  assert.deepEqual([earlier, during], ['pass', 'drop'])
+})
+
+// Value: protects=on a page that froze the browser's own prototypes, where the observer cannot hear of a new shadow root, a root attached after arming is still read before the paint that shows it: a secret a script shows in its text control and clears again makes that time unsafe; fails_when=a refused wrap of attachShadow leaves such a root unread until a full check happens to come; why_new=every other test runs on a page whose prototypes can be wrapped; seam=none; no_claim=canvas text on such a page (its draw calls cannot be heard, a stated limit)
+test('on a page that froze its prototypes, a value set by script into a text control of a shadow root attached after arming and cleared again before any verification drops frames of that time', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  // The frozen prototype itself cannot be sent back as a value: the expression answers 1.
+  await page.evaluate('(Object.freeze(Element.prototype), 1)')
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate(
+    `(() => { const input = document.createElement('input'); input.type = 'text'; input.id = 'plain'; document.getElementById('host').attachShadow({ mode: 'open' }).append(input) })()`,
+  )
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedBefore = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  // The unsafe time starts at the observer's last check that saw the control empty: one after the pause above.
+  await paints(page)
+  // Act
+  await page.evaluate(
+    "document.getElementById('host').shadowRoot.getElementById('plain').value = 'typed-secret'",
+  )
+  // The copy is on screen for at least one paint.
+  await paints(page)
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedWhileShown = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate(
+    "document.getElementById('host').shadowRoot.getElementById('plain').value = ''",
+  )
+  await settle(page)
+  const earlier = await gate.admitFrame(capturedBefore)
+  const during = await gate.admitFrame(capturedWhileShown)
+  // Assert
+  assert.deepEqual([earlier, during], ['pass', 'drop'])
+})
+
+// Value: protects=the document a same-origin frame loads later, which raises no mutation in the page, is read before the paint that shows it: a secret a script shows in its text control and clears again makes that time unsafe; fails_when=a frame's document is read only when a full check happens to come, so a document loaded since the last one is never read; why_new=the frame tests fill the frame's first document and keep the copy until a verification; seam=none; no_claim=frames of another origin (withheld as unreadable)
+test('a value set by script into a text control of the document a same-origin frame loaded after arming, cleared again before any verification, drops frames of that time', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><iframe id="frame"></iframe>')
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate(
+    `new Promise((resolve) => { const frame = document.getElementById('frame'); frame.addEventListener('load', () => resolve(1), { once: true }); frame.srcdoc = '<input id="plain" type="text">' })`,
+  )
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedBefore = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  // The unsafe time starts at the observer's last check that saw the control empty: one after the pause above.
+  await paints(page)
+  // Act
+  await page.evaluate(
+    "document.getElementById('frame').contentDocument.getElementById('plain').value = 'typed-secret'",
+  )
+  // The copy is on screen for at least one paint.
+  await paints(page)
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedWhileShown = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate(
+    "document.getElementById('frame').contentDocument.getElementById('plain').value = ''",
+  )
+  await settle(page)
+  const earlier = await gate.admitFrame(capturedBefore)
+  const during = await gate.admitFrame(capturedWhileShown)
+  // Assert
+  assert.deepEqual([earlier, during], ['pass', 'drop'])
+})
+
+// Value: protects=an image of the paint in which the secret first showed in a text control of the page is withheld although the observer's next check came late: the unsafe time starts at the last check that saw the control safe; fails_when=the unsafe time starts at the check that finds the copy, so a page busy for longer than the margin after that paint lets the image through while the copy is still on screen; why_new=the other tests leave the page idle, so the next check comes within the margin; seam=none; no_claim=a copy that a callback after the observer's shows and removes within one paint
+test('an image of the paint in which a later animation callback showed the secret in a text control is dropped although the page stayed busy for 300 ms after that paint', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(
+    '<input id="pw" type="password"><input id="plain" type="text">',
+  )
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedBefore = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  // Act: the page's own animation callback is registered after the observer's, so it runs after the observer's check of the same paint; a task right after that paint keeps the page busy, and the promise settles with the time of the callback once the page is free again.
+  const shownAt = await page.evaluate(
+    `new Promise((resolve) => requestAnimationFrame(() => { document.getElementById('plain').value = 'typed-secret'; const shownAt = Date.now(); setTimeout(() => { const until = Date.now() + 300; while (Date.now() < until) {} resolve(shownAt) }, 0) }))`,
+  )
+  assert.equal(typeof shownAt, 'number')
+  const earlier = await gate.admitFrame(capturedBefore)
+  const ofThatPaint = await gate.admitFrame(Number(shownAt) + 20)
+  // Assert
+  assert.deepEqual([earlier, ofThatPaint], ['pass', 'drop'])
 })
 
 // protects=a secret copied into the text of a same-origin iframe fails the gate; fails_when=the rendered-text check reads only the top document (an iframe document fails the parent realm's instanceof Document); no_claim=cross-origin iframes (their text cannot be read, a stated limit); real headless Chrome
@@ -975,6 +1165,29 @@ test('a typed value drawn on a canvas in a same-origin iframe drops frames and f
   // Act
   await page.evaluate(
     "(() => { const doc = document.querySelector('iframe').contentDocument; const canvas = doc.createElement('canvas'); doc.body.append(canvas); canvas.getContext('2d').strokeText('frame-canvas-secret', 5, 5) })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// Value: protects=a secret drawn on a canvas in the document a same-origin frame loaded later fails the gate: that document's canvas prototypes are wrapped before its first paint; fails_when=the observer counts a frame's realm as wrapped by its window object, which stays the same when the frame loads another document, so the new document's draws are never heard; why_new=the frame canvas test draws in the frame's first document; seam=none; no_claim=a draw made in the new document before its first paint
+test('a typed value drawn on a canvas in the document a same-origin frame loaded later drops frames and fails the run', async (context) => {
+  // Arrange: the frame's first load keeps the window of its empty first document; its second load brings a new realm behind the same window object.
+  const armed = await armedWithSecret(context, 'frame-canvas-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'frame-canvas-secret')
+  for (const content of ['<p>first document</p>', '<canvas></canvas>']) {
+    await page.evaluate(
+      `new Promise((resolve) => { const frame = document.querySelector('iframe') ?? document.getElementById('host').appendChild(document.createElement('iframe')); frame.addEventListener('load', () => resolve(1), { once: true }); frame.srcdoc = ${JSON.stringify(content)} })`,
+    )
+    await settle(page)
+  }
+  // Act
+  await page.evaluate(
+    "document.querySelector('iframe').contentDocument.querySelector('canvas').getContext('2d').strokeText('frame-canvas-secret', 5, 5)",
   )
   await settle(page)
   const verdict = await gate.admitFrame(Date.now() - 20)

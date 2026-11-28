@@ -142,7 +142,14 @@ function installSecretFrameObserver(
     reason?: SecretFrameFailureReason
     /** When a full check last saw the page safe; the observer's start before any. */
     clearSinceMs: number
-  } = { open: null, unsafe: [], clearSinceMs: Date.now() }
+    /** When a check of either kind last saw nothing unsafe among what the check before each paint reads; the observer's start before any. */
+    paintClearSinceMs: number
+  } = {
+    open: null,
+    unsafe: [],
+    clearSinceMs: Date.now(),
+    paintClearSinceMs: Date.now(),
+  }
   // The last non-empty value the control held: a page that clears the control after copying it must not end the checks.
   let lastValue = ''
   // How often each value already appeared in the rendered text when it arrived: page text, not a copy.
@@ -152,8 +159,17 @@ function installSecretFrameObserver(
   const observedRoots = new WeakSet<object>()
   // Set once any canvas of any reachable realm was asked to draw a watched value: pixels already drawn cannot be read back, so the page stays unsafe for the rest of the run.
   let drewValueOnCanvas = false
-  // The realms this observer already registered with, so a realm is visited once per observer.
-  const wrappedRealms = new WeakSet<object>()
+  // The documents whose realm this observer already registered with, so a realm is visited once per observer. A frame that loads another document has a new realm behind the same window object, so the document is the key.
+  const wrappedDocuments = new WeakSet<object>()
+  // The roots beside the page's own document whose plain controls the check before each paint reads: those the last full check found a control in, and every open shadow root attached since. A control comes to be in any other root it knows only through a mutation, which runs a full check first.
+  let paintInnerRoots = new Set<ParentNode>()
+  const renewPaintInnerRoots = (innerRoots: ParentNode[]): void => {
+    paintInnerRoots = new Set(
+      innerRoots.filter(
+        (root) => root.querySelector('input, textarea') !== null,
+      ),
+    )
+  }
   // Shared by every observer of a realm: a drawing method is wrapped once, and each observer joins the wrapper's listeners (a second arm or a re-arm wraps nothing again).
   const listenersKey = Symbol.for('codebook.secretFrameCanvasListeners')
   // A canvas drawing method once wrapped: it carries the listeners of every observer of its realm.
@@ -205,9 +221,8 @@ function installSecretFrameObserver(
     const roots: ParentNode[] = []
     const visit = (root: ParentNode): void => {
       roots.push(root)
-      // A frame document has its own canvas prototypes: wrap them as soon as the frame is reachable.
-      if ((root as Node).nodeType === 9)
-        wrapCanvasRealm((root as Document).defaultView)
+      // A frame document has its own prototypes: wrap them as soon as the frame is reachable.
+      if ((root as Node).nodeType === 9) wrapRealmOf(root as Document)
       // Mutations in a shadow root or a frame document are not seen by the observer on the page's document.
       observeRoot(root)
       for (const element of Array.from(root.querySelectorAll('*')))
@@ -342,10 +357,55 @@ function installSecretFrameObserver(
       // A realm that refuses the wrap (frozen prototype) is a stated limit of this gate.
     }
   }
-  const wrapCanvasRealm = (realm: Window | null): void => {
-    if (realm === null || wrappedRealms.has(realm)) return
-    wrappedRealms.add(realm)
+  // Shared by every observer of a realm, as the canvas listeners are: `attachShadow` is wrapped once.
+  const shadowListenersKey = Symbol.for('codebook.secretFrameShadowListeners')
+  // `attachShadow` once wrapped: it carries the listeners of every observer of its realm.
+  type AttachShadowMethod = ((...args: unknown[]) => unknown) & {
+    [key: symbol]: Set<(attached: unknown) => void>
+  }
+  // A shadow root attached to an element already in the page raises no mutation (a custom element upgraded late): the observer hears of it from the call, observes it from then on and reads its controls before each paint. A closed root stays unread, a stated limit of this gate.
+  const noteShadowRoot = (attached: unknown): void => {
+    const root = attached as ShadowRoot | null
+    if (root?.mode !== 'open') return
+    observeRoot(root)
+    paintInnerRoots.add(root)
+  }
+  // Whether every realm reached so far tells this observer of its new shadow roots. A realm that refuses the wrap (a page that froze the browser's own prototypes) does not: a full check then runs before every paint, so a root attached since the last one is still read before the paint that shows it.
+  let hearsNewShadowRoots = true
+  // Wraps a realm's `attachShadow` and answers whether this observer now hears of its new shadow roots.
+  const wrapAttachShadow = (realm: Window): boolean => {
+    const prototype = (
+      realm as unknown as {
+        Element?: { prototype: Record<string, unknown> }
+      }
+    ).Element?.prototype
+    const original = prototype?.attachShadow as AttachShadowMethod | undefined
+    if (prototype === undefined || typeof original !== 'function') return false
+    // Already wrapped by an earlier arm: only join its listeners.
+    const existing = original[shadowListenersKey]
+    if (existing !== undefined) {
+      existing.add(noteShadowRoot)
+      return true
+    }
+    const listeners = new Set([noteShadowRoot])
+    const wrapper = function (this: unknown, ...args: unknown[]) {
+      const attached = Reflect.apply(original, this, args)
+      for (const listener of listeners) listener(attached)
+      return attached
+    } as AttachShadowMethod
+    wrapper[shadowListenersKey] = listeners
+    // A frozen prototype keeps its own method: the write is refused, without an error outside strict code, so the result is read back.
+    return (
+      Reflect.set(prototype, 'attachShadow', wrapper) &&
+      prototype.attachShadow === wrapper
+    )
+  }
+  const wrapRealmOf = (shown: Document): void => {
+    const realm = shown.defaultView
+    if (realm === null || wrappedDocuments.has(shown)) return
+    wrappedDocuments.add(shown)
     wrapCanvasPrototypes(realm)
+    if (!wrapAttachShadow(realm)) hearsNewShadowRoots = false
   }
   // A plain control draws its value as text: a textarea, or an input that is neither a password nor hidden.
   const drawsValue = (element: Element): boolean =>
@@ -378,37 +438,42 @@ function installSecretFrameObserver(
     watched.some((value) => value.length >= copyMinChars && copiedToText(value))
       ? 'value-copied-to-text'
       : undefined
-  const watchedValueReason = (
-    watched: string[],
-    withText: boolean,
-  ): SecretFrameFailureReason | undefined => {
-    // The per-paint check reads the page's own controls only; a full check also reads shadow roots and frames.
-    const roots = withText ? visibleRoots() : [document]
-    if (watched.some((value) => plainControlHolds(value, roots)))
-      return 'control-replaced'
-    return withText ? textCopyReason(watched) : undefined
+  // The roots whose plain controls the check before each paint reads: the page's own document and the inner roots it knows that are still in the page.
+  const paintRoots = (): ParentNode[] => [
+    document,
+    ...Array.from(paintInnerRoots).filter((root) => (root as Node).isConnected),
+  ]
+  // What the check before each paint reads: the armed control, a value once drawn on a canvas, and the plain controls of the roots it knows.
+  const paintReason = (): SecretFrameFailureReason | undefined => {
+    const own = armedControlReason()
+    if (own !== undefined) return own
+    if (drewValueOnCanvas) return 'value-copied-to-text'
+    return watchedValues().some((value) =>
+      plainControlHolds(value, paintRoots()),
+    )
+      ? 'control-replaced'
+      : undefined
   }
-  // What the per-paint check never reads: a plain control in a shadow root or a frame, and a copy in rendered text or an attribute.
+  // What only a full check reads: the plain controls of inner roots found only now (a frame's new document, a root no call told of, a root that held no control before), and a copy in rendered text or an attribute. It renews the inner roots the check before each paint reads.
   const fullOnlyReason = (
     watched: string[],
   ): SecretFrameFailureReason | undefined => {
     const innerRoots = visibleRoots().filter((root) => root !== document)
-    if (watched.some((value) => plainControlHolds(value, innerRoots)))
+    const unreadRoots = innerRoots.filter((root) => !paintInnerRoots.has(root))
+    renewPaintInnerRoots(innerRoots)
+    if (watched.some((value) => plainControlHolds(value, unreadRoots)))
       return 'control-replaced'
     return textCopyReason(watched)
   }
-  const unsafeReason = (
-    withText: boolean,
-  ): SecretFrameFailureReason | undefined => {
-    const own = armedControlReason()
-    if (own !== undefined) return own
-    if (drewValueOnCanvas) return 'value-copied-to-text'
-    return watchedValueReason(watchedValues(), withText)
-  }
-  // An unsafe time opens once; the first reason the page became unsafe is kept.
-  const openUnsafe = (reason: SecretFrameFailureReason, now: number): void => {
-    if (state.open !== null) return
-    state.open = now
+  // An unsafe time starts when what is unsafe now was last seen safe; one already open only reaches further back. The first reason the page became unsafe is kept.
+  const openUnsafe = (
+    reason: SecretFrameFailureReason,
+    lastSeenSafeMs: number,
+  ): void => {
+    state.open =
+      state.open === null
+        ? lastSeenSafeMs
+        : Math.min(state.open, lastSeenSafeMs)
     state.reason ??= reason
   }
   const closeUnsafe = (now: number): void => {
@@ -490,36 +555,50 @@ function installSecretFrameObserver(
   }
   // `full` reads the rendered text as well; a check that skips it can open an unsafe time but never ends one.
   const check = (full = true): void => {
-    const reason = unsafeReason(full)
+    // The armed control is read first: it may hold a value no check has read yet.
+    const seenBeforePaints = paintReason()
+    const seenByFullCheckOnly = full
+      ? fullOnlyReason(watchedValues())
+      : undefined
     const now = Date.now()
-    if (reason !== undefined) {
-      // What the per-paint check sees too (the armed control, the page's own controls) is found before the paint that shows it, so its unsafe time starts now.
-      openUnsafe(reason, now)
-      // What only a full check sees may have been drawn at any time since the last full check that saw the page safe, with no mutation this observer was told of (a new shadow root, a value a script set there): the unsafe time reaches back to that check, as a cross-origin interval's does, also when another reason opened it later or is found beside it.
-      if (
-        full &&
-        state.open !== null &&
-        fullOnlyReason(watchedValues()) !== undefined
-      )
-        state.open = Math.min(state.open, state.clearSinceMs)
-    } else if (full) {
+    // What the check before each paint reads was last seen safe at the last check of either kind, so its unsafe time starts there: a paint that showed it since is inside, also when a page callback ran after this observer's or the page was too busy to run the next check within the margin.
+    if (seenBeforePaints !== undefined)
+      openUnsafe(seenBeforePaints, state.paintClearSinceMs)
+    else state.paintClearSinceMs = now
+    // What only a full check reads may have been drawn at any time since the last full check that saw the page safe, with no mutation this observer was told of: the unsafe time reaches back to that check, as a cross-origin interval's does, also when another reason opened it later or is found beside it.
+    if (seenByFullCheckOnly !== undefined)
+      openUnsafe(seenByFullCheckOnly, state.clearSinceMs)
+    if (
+      full &&
+      seenBeforePaints === undefined &&
+      seenByFullCheckOnly === undefined
+    ) {
       closeUnsafe(now)
       state.clearSinceMs = now
     }
     checkCrossOrigin(full)
   }
-  // A value set by script raises no mutation: the controls are read before every paint as well.
+  // Whether a frame the last full check knew shows a document no full check has read: a frame that loads another document raises no mutation in the page.
+  const hasUnreadFrameDocument = (): boolean =>
+    knownEmbeds.some((element) => {
+      if (!element.isConnected) return false
+      const shown = embeddedDocument(element)
+      return shown !== null && !observedRoots.has(shown)
+    })
+  // A value set by script raises no mutation: the controls are read before every paint as well. A full check runs instead when a frame shows a document none has read, or when a realm does not tell of its new shadow roots.
   const watchPaints = (): void => {
-    check(false)
+    check(!hearsNewShadowRoots || hasUnreadFrameDocument())
     requestAnimationFrame(watchPaints)
   }
   recordTypedBaseline()
-  wrapCanvasRealm(window)
+  wrapRealmOf(document)
   // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
   node?.addEventListener('input', () => check())
   // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
   observeRoot(document)
   checkCrossOrigin(true)
+  // The inner roots that hold a control now are read from the first paint on.
+  renewPaintInnerRoots(visibleRoots().filter((root) => root !== document))
   requestAnimationFrame(watchPaints)
   // A replacing document may already show the value: the unsafe time then starts now, not at the first query.
   if (selector === null) check()
