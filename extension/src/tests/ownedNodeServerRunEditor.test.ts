@@ -763,3 +763,34 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a request is not written once the adapter reported the debuggee terminated, before the editor's own termination notice: nothing observes a request written then; fails_when=only the editor's termination notice ends the session for the write check, so a request goes out after the adapter's terminated event (Cycle 0153 ship pass 2 T9); seam=the editor's real debugger behind the run, a DAP terminated event, a held peer check and an exit check that stays open; no_claim=js-debug's real event order
+test(
+  'a node run writes no request once the adapter reported the session terminated before the editor ended it',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    const { editor, harness } = await editorRun({
+      run: {
+        peerCheckGate: peerCheck.promise,
+        onPeerCheckEntered: () => peerCheckEntered.resolve(),
+      },
+    })
+    // Act
+    const sending = refusalOf(harness.run.sendRequest('key-1'))
+    await peerCheckEntered.promise
+    editor.adapter.terminated()
+    peerCheck.resolve()
+    const refusal = await sending
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'RUN_NOT_READY')
+    assert.match(refusal.message, /debug session of the server ended/)
+    assert.equal(harness.sender.bytesWritten, 0)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), false)
+    await harness.run.stop()
+  },
+)

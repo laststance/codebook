@@ -569,6 +569,10 @@ export async function editorHarness(
         body: { threadId: 2, reason },
       })
     },
+    /** The adapter reports the debuggee gone (a DAP `terminated` event), before the editor ends the session. */
+    terminated(): void {
+      tracker?.onDidSendMessage?.({ type: 'event', event: 'terminated' })
+    },
     /** The editor ends the session. */
     end(): void {
       terminate?.(session)

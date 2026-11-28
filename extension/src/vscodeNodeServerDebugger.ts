@@ -123,6 +123,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly pausedThreads = new Map<string, Map<number, number>>()
   /** The sessions whose adapter announced `supportsSingleThreadExecutionRequests`, so a Continue may name one thread alone. */
   private readonly singleThreadSessions = new Set<string>()
+  /** The sessions whose adapter sent a DAP `terminated` event: the target is gone for the run before the editor's own termination notice reaches it. */
+  private readonly adapterTerminatedSessions = new Set<string>()
   private readonly sessionStops: NativeStop[] = []
   /** The bound session's stops queued for the run that it has not been told about yet, by token. */
   private readonly unreportedStops = new Map<number, NativeStop>()
@@ -307,6 +309,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     }
     if (event.event === 'stopped')
       this.onStopped(session, (event as DebugProtocol.StoppedEvent).body)
+    if (event.event === 'terminated') {
+      // The session is over for writes from this turn on; the editor's termination notice that follows only cleans up.
+      this.adapterTerminatedSessions.add(session.id)
+      codebookStopLedger.closeWindow([session.id])
+    }
   }
 
   /** The adapter reports a stop: it is remembered, and reported to the run once the entry pause is released. */
@@ -825,6 +832,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private onSessionTerminated(session: vscode.DebugSession): void {
     this.pausedThreads.delete(session.id)
     this.singleThreadSessions.delete(session.id)
+    this.adapterTerminatedSessions.delete(session.id)
     // An ended session holds no target, so none of its stops can be paused any more.
     for (const [token, stop] of this.unreportedStops)
       if (stop.sessionId === session.id) this.unreportedStops.delete(token)
@@ -1340,16 +1348,18 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Tells whether the bound debug session is over for the run: the editor terminated it, or the run began releasing it.
+   * Tells whether the bound debug session is over for the run: the adapter reported it terminated, the editor terminated it, or the run began releasing it.
    * Why it exists: the editor ends a session before the run learns whether the server exited (it waits up to 500 ms for that), and a request written in between would run with no debugger watching. The run reads it right before it writes a request; it turns true in the turn the editor reports the termination. Called by the run through {@link NodeServerDebugger.boundSessionEnded}.
-   * @returns `true` once the bound session left the editor's active sessions or the release began; `false` before the attach.
+   * @returns `true` once the adapter's `terminated` event arrived, the bound session left the editor's active sessions, or the release began; `false` before the attach.
    * @example debug.boundSessionEnded() // => true in the turn after the editor's onDidTerminateDebugSession for the bound session
    */
   boundSessionEnded(): boolean {
     const sessionId = this.bound?.session.id
     return (
       sessionId !== undefined &&
-      (this.releaseBegun || !this.active.has(sessionId))
+      (this.releaseBegun ||
+        !this.active.has(sessionId) ||
+        this.adapterTerminatedSessions.has(sessionId))
     )
   }
 
