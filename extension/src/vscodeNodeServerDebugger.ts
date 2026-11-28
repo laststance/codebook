@@ -54,7 +54,12 @@ type NativeStop = {
   hitBreakpointIds?: number[]
   /** A Bun run: whether the request window was open when the adapter's `stopped` arrived, so a classification that finishes later still tells a pause before the request from one it caused. */
   inRequestWindowAtStop?: boolean
+  /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
+  learnerBreakpoints?: LearnerBreakpointPlace[]
 }
+
+/** The place of one breakpoint the learner set: the resolved file path and the one-based line. */
+type LearnerBreakpointPlace = { file: string; line: number }
 
 /** A declared stop with the owned breakpoint that arms it. */
 type ArmedStop = {
@@ -246,12 +251,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       hitBreakpointIds: Array.isArray(body.hitBreakpointIds)
         ? body.hitBreakpointIds.filter((id) => Number.isInteger(id))
         : undefined,
-      // Bun runs during arming: its pause is judged by the window as it stood when it arrived.
-      ...(this.runtime === 'bun'
-        ? {
-            inRequestWindowAtStop: codebookStopLedger.isWindowOpen(session.id),
-          }
-        : {}),
+      // Bun runs during arming: its pause is judged by the window and the learner's breakpoints as they stood when it arrived.
+      ...(this.runtime === 'bun' ? this.bunStopEvidence(session.id) : {}),
     }
     // The stop a learner's `pause` request caused is the learner's; its run-on reopens the request window.
     if (
@@ -272,6 +273,36 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       return
     }
     this.enqueueClassification(stop)
+  }
+
+  /**
+   * Reads what a Bun stop is judged by, at the moment the adapter's `stopped` arrives: the request window and the learner's breakpoints.
+   * Why it exists: the classification finishes after the stack read, and neither the window nor the editor's breakpoint list may be read then (a learner's breakpoint that caused the pause can be removed during the wait). Called by {@link onStopped} for a Bun run.
+   * @param sessionId - The session that stopped.
+   * @returns The window state and the learner's enabled source breakpoints that are none of the run's own.
+   * @example this.bunStopEvidence('session-1') // => { inRequestWindowAtStop: true, learnerBreakpoints: [{ file: '/repo/src/a.ts', line: 14 }] }
+   */
+  private bunStopEvidence(
+    sessionId: string,
+  ): Pick<NativeStop, 'inRequestWindowAtStop' | 'learnerBreakpoints'> {
+    const ownedIds = new Set(
+      this.armed.map(({ breakpoint }) => breakpoint.breakpoint.id),
+    )
+    return {
+      inRequestWindowAtStop: codebookStopLedger.isWindowOpen(sessionId),
+      learnerBreakpoints: vscode.debug.breakpoints.flatMap((candidate) =>
+        candidate instanceof vscode.SourceBreakpoint &&
+        candidate.enabled &&
+        !ownedIds.has(candidate.id)
+          ? [
+              {
+                file: resolve(candidate.location.uri.fsPath),
+                line: candidate.location.range.start.line + 1,
+              },
+            ]
+          : [],
+      ),
+    }
   }
 
   /**
@@ -809,7 +840,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const hitIds = stop.hitBreakpointIds
     // A Bun stop without ids is judged by its place alone, which always needs the frame.
     if (this.runtime === 'bun' && !hitIds?.length)
-      return frame ? this.armedStopAtFrame(session, frame) : undefined
+      return frame ? this.armedStopAtFrame(session, frame, stop) : undefined
     if (!hitIds) return undefined
     for (const { target, breakpoint } of this.armed) {
       const id = breakpoint.acknowledgedId(session)
@@ -830,17 +861,19 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * Called by {@link ownedHitIndexOf}.
    * @param session - The bound session.
    * @param frame - The top frame of the pause.
+   * @param stop - The adapter's stop, which carries the learner's breakpoints as they stood when it arrived.
    * @returns The declared stop index when exactly one armed stop matches; `undefined` for none or several.
-   * @example this.armedStopAtFrame(session, { line: 14, column: 24, source: { path: file } }) // => 1 for stops at 14:3 and 14:24
+   * @example this.armedStopAtFrame(session, { line: 14, column: 24, source: { path: file } }, stop) // => 1 for stops at 14:3 and 14:24
    */
   private armedStopAtFrame(
     session: vscode.DebugSession,
     frame: DebugProtocol.StackFrame,
+    stop: NativeStop,
   ): number | undefined {
-    // An enabled breakpoint of the learner on the pause's line could have caused it, so the pause is not told apart: it stays the learner's (fail closed).
+    // An enabled breakpoint of the learner on the pause's line could have caused it, so the pause is not told apart: it stays the learner's (fail closed). The list is the one copied when the stop arrived, never the editor's list now.
     if (
       frame.source?.path &&
-      this.learnerHoldsBreakpointAt(frame.source.path, frame.line)
+      this.learnerHeldBreakpointAt(stop, frame.source.path, frame.line)
     )
       return undefined
     const matches = this.armed.filter(({ target, breakpoint }) => {
@@ -859,24 +892,21 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Tells whether the editor holds an enabled breakpoint that is none of this run's own on a file and line.
-   * Why it exists: an ID-less Bun pause on a line could be the learner's own breakpoint; the editor's list is the evidence that tells them apart. A disabled breakpoint cannot pause, and the run's own breakpoints (every declared stop's, not only the one being matched) are not the learner's. Called by {@link armedStopAtFrame}.
+   * Tells whether the learner held an enabled breakpoint that is none of this run's own on a file and line when the stop arrived.
+   * Why it exists: an ID-less Bun pause on a line could be the learner's own breakpoint; the copy taken at arrival is the evidence that tells them apart, and it stays whole when the learner removes the breakpoint while the stack is read. A disabled breakpoint cannot pause, and the run's own breakpoints (every declared stop's, not only the one being matched) are not the learner's. Called by {@link armedStopAtFrame}.
+   * @param stop - The stop being classified.
    * @param file - The pause's file.
    * @param line - The one-based line of the pause.
-   * @returns `true` when an enabled source breakpoint of the learner lies on that file and line.
-   * @example this.learnerHoldsBreakpointAt('/repo/src/a.ts', 14) // => true after the learner set an enabled breakpoint on line 14
+   * @returns `true` when an enabled source breakpoint of the learner lay on that file and line at arrival.
+   * @example this.learnerHeldBreakpointAt(stop, '/repo/src/a.ts', 14) // => true when the learner's breakpoint on line 14 was enabled as the stop arrived
    */
-  private learnerHoldsBreakpointAt(file: string, line: number): boolean {
-    const ownedIds = new Set(
-      this.armed.map(({ breakpoint }) => breakpoint.breakpoint.id),
-    )
-    return vscode.debug.breakpoints.some(
-      (candidate) =>
-        candidate instanceof vscode.SourceBreakpoint &&
-        candidate.enabled &&
-        !ownedIds.has(candidate.id) &&
-        resolve(candidate.location.uri.fsPath) === resolve(file) &&
-        candidate.location.range.start.line + 1 === line,
+  private learnerHeldBreakpointAt(
+    stop: NativeStop,
+    file: string,
+    line: number,
+  ): boolean {
+    return (stop.learnerBreakpoints ?? []).some(
+      (place) => place.file === resolve(file) && place.line === line,
     )
   }
 

@@ -576,18 +576,22 @@ test('a Bun pause at a learner breakpoint on a declared stop line without a colu
   // Arrange
   const editor = await editorHarness({
     breakpointReply: LINE_ONLY_REPLY,
-    firstStop: {
-      reason: 'breakpoint',
-      frame: { file: STOP_FILE, line: 14, column: 24 },
-    },
+    noEntryPause: true,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
   })
   const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
   await armStopsAt(debug, [{ line: 14, column: 3 }])
   learnerBreakpointAt(editor, 14, 24)
+  editor.adapter.continued(1, true)
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
   // Act
+  editor.adapter.stop('breakpoint', undefined, {
+    file: STOP_FILE,
+    line: 14,
+    column: 24,
+  })
   const pause = await nextPause()
   // Assert
   assert.equal(pause.declaredStopIndex, undefined)
@@ -621,18 +625,22 @@ test('a Bun pause on a declared stop line is that declared stop when the only ot
   // Arrange
   const editor = await editorHarness({
     breakpointReply: LINE_ONLY_REPLY,
-    firstStop: {
-      reason: 'breakpoint',
-      frame: { file: STOP_FILE, line: 14, column: 3 },
-    },
+    noEntryPause: true,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
   })
   const { debug } = editor.createDebugger([{ line: 14, column: 3 }])
   await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
   const nextPause = nextPauseOf(debug)
   await armStopsAt(debug, [{ line: 14, column: 3 }])
   learnerBreakpointAt(editor, 14, 24, false)
+  editor.adapter.continued(1, true)
   await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
   // Act
+  editor.adapter.stop('breakpoint', undefined, {
+    file: STOP_FILE,
+    line: 14,
+    column: 3,
+  })
   const pause = await nextPause()
   // Assert
   assert.equal(pause.declaredStopIndex, 0)
@@ -887,6 +895,61 @@ test(
     const hit = await nextPause()
     // Assert
     assert.equal(hit.inRequestWindowAtStop, false)
+    await debug.release()
+  },
+)
+
+/** Arms the two stops on a Bun run whose stack reads wait for the returned gate, with the startup stop already continued, and returns what a test needs to hit a declared line while a stack read is pending. */
+async function bunRunWithGatedStackReads() {
+  codebookStopLedger.reset()
+  const gate = defer<void>()
+  const editor = await editorHarness({
+    noEntryPause: true,
+    stackTraceGate: gate.promise,
+    firstStop: { reason: 'exception', frame: { file: STOP_FILE, line: 3 } },
+  })
+  const { debug } = editor.createDebugger(TWO_STOPS)
+  await debug.attach({ ...BUN_ATTACH, signal: AbortSignal.timeout(5_000) })
+  const nextPause = nextPauseOf(debug)
+  await armTwoStops(debug)
+  editor.adapter.continued(1, true)
+  await debug.releaseEntry(AbortSignal.timeout(5_000), { entryPause: false })
+  return { editor, debug, nextPause, gate }
+}
+
+// Value: protects=an id-less Bun pause on a line where the learner held an enabled breakpoint when the stop arrived stays the learner's even when the learner removes that breakpoint before the stack read answers; fails_when=the classification reads the editor's breakpoint list after the stack read, so the removed breakpoint is gone and the learner's pause is taken for the declared stop and captured (Cycle 0152 defect 5); seam=the editor harness's gated stack trace and an editor breakpoint removed while it is held; no_claim=js-debug's real timing of a breakpoint removal
+test(
+  'a Bun pause at a learner breakpoint removed while the stack was read stays the learner pause',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause, gate } = await bunRunWithGatedStackReads()
+    learnerBreakpointAt(editor, 14, 3)
+    editor.adapter.stop('breakpoint', undefined, { file: STOP_FILE, line: 14 })
+    // Act
+    editor.editorBreakpoints.pop()
+    gate.resolve()
+    const pause = await nextPause()
+    // Assert
+    assert.equal(pause.declaredStopIndex, undefined)
+    await debug.release()
+  },
+)
+
+// Value: protects=a learner breakpoint added on a declared line after the stop arrived cannot have caused it, so the declared stop is still captured; fails_when=the classification reads the editor's breakpoint list after the stack read, so a breakpoint added later turns the run's own stop into the learner's; seam=the editor harness's gated stack trace and an editor breakpoint added while it is held; no_claim=which breakpoints learners add
+test(
+  'a Bun declared stop is still that stop when the learner adds a breakpoint on its line after the stop arrived',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, debug, nextPause, gate } = await bunRunWithGatedStackReads()
+    editor.adapter.stop('breakpoint', undefined, { file: STOP_FILE, line: 14 })
+    // Act
+    learnerBreakpointAt(editor, 14, 3)
+    gate.resolve()
+    const pause = await nextPause()
+    // Assert
+    assert.equal(pause.declaredStopIndex, 0)
     await debug.release()
   },
 )
