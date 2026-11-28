@@ -405,6 +405,40 @@ test(
   },
 )
 
+// protects=a declared request refused after the sign-in because the learner's Pause has produced no stop yet says the server has not stopped, not that the learner holds a pause to continue; fails_when=the refusal reads like a held pause, so the chat asks the learner to continue a stop that may never come (Cycle 0153 ship pass 3 U8); seam=the editor's real debugger behind a sign-in run, a held peer check of the declared request and an accepted Pause that no stop met; no_claim=the learner's reading of the sentence
+test(
+  'a declared request refused after the sign-in while the learner Pause has produced no stop says the server has not stopped yet',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const peerCheck = defer<void>()
+    const peerCheckEntered = defer<void>()
+    const runOptions: HarnessOptions = { signIn: SIGN_IN }
+    const { editor, harness } = await editorRun({ run: runOptions })
+    await harness.run.sendRequest('key-1', { secret: SECRET })
+    // The declared request's peer check stays open until the learner pressed Pause.
+    runOptions.peerCheckGate = peerCheck.promise
+    runOptions.onPeerCheckEntered = (): void => peerCheckEntered.resolve()
+    harness.sender.exchanges[0]?.onSetCookie?.([SET_COOKIE])
+    harness.sender.exchanges[0]?.response.resolve(RESPONSE_200)
+    await peerCheckEntered.promise
+    // Act
+    editor.adapter.learnerPauses()
+    peerCheck.resolve()
+    const view = await until(
+      harness,
+      (current) => current.requestFailure !== undefined,
+    )
+    // Assert
+    assert.equal(view.requestFailure?.code, 'REQUEST_FAILED')
+    assert.equal(
+      view.requestFailure?.message,
+      'The declared request was not sent because the learner pressed Pause after the sign-in, which already ran, and the server has not stopped yet; Codebook never writes a request while a pause is pending. Let the learner continue the server in the debugger once it stops, then stop this run (codebook_stop) and start a new run.',
+    )
+    await harness.run.stop()
+  },
+)
+
 // protects=a declared stop whose thread stopped again as an exception before the stop's stack read finished is no capture: the exception owns the thread's frames, so its variables never appear under the declared stop and the exception stays the learner's held pause; fails_when=the older stop is classified and captured after the thread stopped again, so the exception's local values are saved as the declared stop's capture (Cycle 0153 ship pass 2 T2); seam=the editor's real debugger behind the run, a held stack read, a learner Continue still waiting for its answer and an exception on the same thread and line; no_claim=the adapter's real message order
 test(
   'an exception that stops the thread again before a declared stop was read is held and never captured as the declared stop',
