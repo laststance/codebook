@@ -1071,3 +1071,51 @@ test(
     await debug.release()
   },
 )
+
+// protects=a stop that arrives before the adapter's accepted answer to the learner's Pause settles that Pause: continuing the stop releases the write guard and the request window opens again, with no second stop awaited; fails_when=the accepted answer leaves the Pause waiting for a stop that already came, so a ready server refuses every request after the learner continued (Cycle 0153 ship pass 2 T4, L2); seam=the editor harness's unanswered Pause, a pause stop, the accepted answer and the learner's Continue; no_claim=which order js-debug really answers in
+test(
+  'continuing a stop that arrived before the accepted answer to the learner Pause releases the write guard',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    const answerPause = editor.adapter.learnerSendsPause()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Act
+    answerPause()
+    const pendingWhileHeld = debug.learnerPausePending?.()
+    editor.adapter.learnerContinues()
+    // Assert
+    assert.equal(pendingWhileHeld, true)
+    assert.equal(debug.learnerPausePending?.(), false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), true)
+    await debug.release()
+  },
+)
+
+// protects=the debugger tells a Pause that no stop met yet from a stop the learner holds: the run words its refusal for the first, since there is nothing to continue; fails_when=both read the same, so the refusal asks the learner to continue a stop that does not exist (Cycle 0153 ship pass 2 L1); seam=the editor harness's accepted Pause with no stop, then the stop it causes; no_claim=the wording
+test(
+  'a Pause with no stop yet awaits its stop and a held stop does not',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    // Act
+    editor.adapter.learnerPauses()
+    const awaitingBeforeStop = debug.learnerPauseAwaitsStop?.()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    // Assert
+    assert.equal(awaitingBeforeStop, true)
+    assert.equal(debug.learnerPauseAwaitsStop?.(), false)
+    assert.equal(debug.learnerPausePending?.(), true)
+    await debug.release()
+  },
+)

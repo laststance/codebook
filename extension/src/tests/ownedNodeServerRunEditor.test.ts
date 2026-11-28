@@ -477,3 +477,22 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a request refused while the learner's Pause has produced no stop yet says the server has not stopped and names no stop to continue; fails_when=the refusal asks the learner to continue a pause that does not exist yet (Cycle 0153 ship pass 2 L1); seam=the editor's real debugger behind the run and an accepted Pause with no stop; no_claim=the learner's reading of the sentence
+test(
+  'a request refused while the learner Pause has produced no stop yet says the server has not stopped',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun()
+    editor.adapter.learnerPauses()
+    // Act
+    const refusal = await refusalOf(harness.run.sendRequest('key-1'))
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'LEARNER_PAUSED')
+    assert.match(refusal.message, /has not stopped yet/)
+    assert.equal(harness.sender.bytesWritten, 0)
+    await harness.run.stop()
+  },
+)

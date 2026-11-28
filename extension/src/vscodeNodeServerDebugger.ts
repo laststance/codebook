@@ -84,6 +84,8 @@ type LearnerPauseRequest = {
   threadId?: number
   /** Whether the adapter accepted the request; an unanswered request is not accepted yet. */
   accepted: boolean
+  /** The token of the stop that arrived while the request was unanswered and is taken as the one the request asked for: the adapter's answer, accepted or refused, then ends the request, and the stop stays held until it runs on. */
+  settledByStopToken?: number
 }
 
 /** A declared stop with the owned breakpoint that arms it. */
@@ -301,10 +303,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         : {}),
     }
     // The first stop after an accepted learner `pause` request is the learner's, whatever its reason; its run-on reopens the request window.
-    // A stop that arrives while a Pause is still unanswered stays the learner's too: when the adapter then refuses that Pause (the thread was already stopped) the stop is still held, so it keeps the window closed until it runs on.
+    // A stop that arrives while a Pause is still unanswered stays the learner's too, and settles that request: when the adapter then refuses the Pause (the thread was already stopped) or accepts it, the stop is the one held, so it keeps the window closed until it runs on and no second stop is awaited.
     if (
       this.settleAcceptedLearnerPause(stop, body.allThreadsStopped === true) ||
-      this.learnerPauseUnanswered(stop)
+      this.claimUnansweredLearnerPause(stop)
     ) {
       stop.learnerRequested = true
       this.learnerPauseStops.set(stop.token, stop)
@@ -480,7 +482,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Handles the adapter's answer to the editor's `pause` request: an accepted pause waits for the stop it causes; a refused one (the thread was already paused) caused no stop, so only that request ends and the window it closed may open again.
+   * Handles the adapter's answer to the editor's `pause` request: an accepted pause waits for the stop it causes, unless a stop already arrived for it ({@link claimUnansweredLearnerPause}), which settles it; a refused one (the thread was already paused) caused no stop, so only that request ends and the window it closed may open again.
    * Called by {@link onAdapterMessage} for every response.
    * @param sessionId - The session the response came from.
    * @param response - The adapter's response.
@@ -493,7 +495,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     const key = `${sessionId}:${response.request_seq}`
     const pauseRequest = this.learnerPauseRequests.get(key)
     if (!pauseRequest) return
-    if (response.success) {
+    // An accepted request that no stop has met yet waits for its stop; every other answer ends the request.
+    if (response.success && pauseRequest.settledByStopToken === undefined) {
       pauseRequest.accepted = true
       return
     }
@@ -528,23 +531,26 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   /**
-   * Tells whether a Pause request of the learner that the adapter has not answered yet could be the cause of a stop: it names the stop's thread (or no thread).
-   * Why it exists: the adapter may refuse the Pause because the thread already stopped, and the stop that arrived meanwhile is still the learner's to continue; an unanswered request cannot say which. Called by {@link onStopped} for every stop.
+   * Takes a stop that arrives while a Pause request of the learner is unanswered as that request's stop, when the request names the stop's thread (or no thread).
+   * Why it exists: the adapter may refuse the Pause because the thread already stopped, or accept it after the stop was reported; either way the stop is the learner's to continue and the request needs no second stop. The oldest matching request is the one settled. Called by {@link onStopped} for every stop.
    * @param stop - The stop that arrived.
-   * @returns `true` while such a request of the stop's session is unanswered.
-   * @example this.learnerPauseUnanswered({ sessionId: 's1', threadId: 1 }) // => true between the editor's Pause request for thread 1 and the adapter's answer
+   * @returns `true` when such a request of the stop's session was unanswered and now carries the stop; `false` otherwise.
+   * @example this.claimUnansweredLearnerPause({ sessionId: 's1', threadId: 1, token: 4 }) // => true between the editor's Pause request for thread 1 and the adapter's answer
    */
-  private learnerPauseUnanswered(
-    stop: Pick<NativeStop, 'sessionId' | 'threadId'>,
+  private claimUnansweredLearnerPause(
+    stop: Pick<NativeStop, 'sessionId' | 'threadId' | 'token'>,
   ): boolean {
     for (const pauseRequest of this.learnerPauseRequests.values())
       if (
         pauseRequest.sessionId === stop.sessionId &&
         !pauseRequest.accepted &&
+        pauseRequest.settledByStopToken === undefined &&
         (pauseRequest.threadId === undefined ||
           pauseRequest.threadId === stop.threadId)
-      )
+      ) {
+        pauseRequest.settledByStopToken = stop.token
         return true
+      }
     return false
   }
 
@@ -1212,6 +1218,26 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   learnerPausePending(): boolean {
     const sessionId = this.bound?.session.id
     return sessionId !== undefined && this.learnerHoldsPause(sessionId)
+  }
+
+  /**
+   * Tells whether the learner's pending pause is only a Pause request that no stop has met: some request of the bound session waits for its answer or its stop, and the learner holds no pause stop.
+   * Why it exists: the run words the refusal of a request differently when there is no stop to continue yet. Called by the run through {@link NodeServerDebugger.learnerPauseAwaitsStop}.
+   * @returns `true` while a Pause request of the bound session is outstanding and no learner pause stop is held; `false` before the attach.
+   * @example debug.learnerPauseAwaitsStop() // => true between the editor's Pause and the stop it causes
+   */
+  learnerPauseAwaitsStop(): boolean {
+    const sessionId = this.bound?.session.id
+    if (sessionId === undefined) return false
+    const heldStops = [...this.learnerPauseStops.values()].some(
+      (stop) => stop.sessionId === sessionId,
+    )
+    return (
+      !heldStops &&
+      [...this.learnerPauseRequests.values()].some(
+        (pauseRequest) => pauseRequest.sessionId === sessionId,
+      )
+    )
   }
 
   // ---------------------------------------------------------------- capture and resume

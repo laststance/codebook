@@ -1253,8 +1253,19 @@ export class NodeProcessRun {
    */
   assertNoLearnerPause(): void {
     this.assertNoHeldPause()
-    if (this.debug?.learnerPausePending?.())
-      throw new StudyError('LEARNER_PAUSED', this.learnerPausedSentence())
+    if (!this.debug?.learnerPausePending?.()) return
+    throw new StudyError(
+      'LEARNER_PAUSED',
+      // A Pause that has produced no stop yet has nothing to continue: the sentence says to wait for the stop.
+      this.debug.learnerPauseAwaitsStop?.()
+        ? this.pauseAwaitingStopSentence()
+        : this.learnerPausedSentence(),
+    )
+  }
+
+  /** The sentence of a refusal while the learner's Pause has produced no stop yet. */
+  private pauseAwaitingStopSentence(): string {
+    return `The learner pressed Pause and the ${this.words.noun} has not stopped yet, so the request was not sent. Codebook never writes a request while a pause of the learner is pending; ask the learner to continue the ${this.words.noun} in the debugger once it stops.`
   }
 
   /** The sentence of a refusal for the learner's own pause. */

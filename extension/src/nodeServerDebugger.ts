@@ -137,6 +137,10 @@ export interface NodeServerDebugger {
    */
   learnerPausePending?(): boolean
   /**
+   * Whether the learner's pending pause is only a Pause request that has produced no stop yet (the learner holds no stop to continue). The run words its refusal differently then: there is nothing to continue until the server stops.
+   */
+  learnerPauseAwaitsStop?(): boolean
+  /**
    * Whether the bound debug session is over for the run (the editor terminated it, or the release began), true from the turn the editor reports it. The run refuses to write a request then, and the debugger never opens the request window of that session again. A debugger without an editor session omits it.
    */
   boundSessionEnded?(): boolean
