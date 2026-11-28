@@ -98,8 +98,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly name: string
   private readonly abort = new AbortController()
   private readonly active = new Map<string, vscode.DebugSession>()
-  /** The threads the adapter reported stopped that have not run on since, by session. */
-  private readonly pausedThreads = new Map<string, Set<number>>()
+  /** The threads the adapter reported stopped that have not run on since, by session, each with the token of its newest stop (the only pause of the thread that a resume may still name). */
+  private readonly pausedThreads = new Map<string, Map<number, number>>()
   private readonly sessionStops: NativeStop[] = []
   /** The bound session's stops queued for the run that it has not been told about yet, by token. */
   private readonly unreportedStops = new Map<number, NativeStop>()
@@ -249,11 +249,13 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     body: DebugProtocol.StoppedEvent['body'],
   ): void {
     if (!Number.isInteger(body.threadId)) return
-    const threads = this.pausedThreads.get(session.id) ?? new Set<number>()
-    threads.add(body.threadId!)
-    this.pausedThreads.set(session.id, threads)
     // Each stop gets the next number, so a classification never answers a later stop.
     const sequence = ++this.nextToken
+    const threads =
+      this.pausedThreads.get(session.id) ?? new Map<number, number>()
+    // The thread's newest stop is the only pause a resume may still name.
+    threads.set(body.threadId!, sequence)
+    this.pausedThreads.set(session.id, threads)
     const stop: NativeStop = {
       token: sequence,
       sessionId: session.id,
@@ -462,7 +464,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    * @param sessionId - The session whose threads ran on.
    * @param threadId - The one thread that ran on; `undefined` for every thread of the session.
    * @param newestStopToken - The newest stop the resume applies to.
-   * @example this.releasePausedThreads('session-1', undefined, 5) // every thread of 'session-1' runs, but one that stopped as stop 6 stays paused
+   * @example this.releasePausedThreads('session-1', undefined, 5) // every thread of 'session-1' runs, but one whose newest stop is 6 stays paused
    */
   private releasePausedThreads(
     sessionId: string,
@@ -471,19 +473,11 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   ): void {
     const threads = this.pausedThreads.get(sessionId)
     if (!threads) return
-    // A thread with a later stop (it arrived before the answer) is paused again, whatever the answer says.
-    const stoppedAgain = new Set(
-      this.sessionStops
-        .filter(
-          (stop) =>
-            stop.sessionId === sessionId && stop.token > newestStopToken,
-        )
-        .map((stop) => stop.threadId),
-    )
-    for (const paused of [...threads])
+    for (const [paused, newestToken] of [...threads])
+      // A thread with a later stop (it arrived before the answer) is paused again, whatever the answer says.
       if (
         (threadId === undefined || paused === threadId) &&
-        !stoppedAgain.has(paused)
+        newestToken <= newestStopToken
       )
         threads.delete(paused)
   }
@@ -504,9 +498,18 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       }
   }
 
-  /** Whether the adapter reported the thread stopped and it has not run on since. */
-  private isThreadPaused(sessionId: string, threadId: number): boolean {
-    return this.pausedThreads.get(sessionId)?.has(threadId) === true
+  /**
+   * Tells whether a pause is the newest stop of its thread and the thread has not run on since: the only pause a Codebook resume may name.
+   * Why it exists: a thread's id alone cannot say which pause the caller means, and a resume sent for an older pause acts on the stop that replaced it (the learner's Continue of pause A and exception B that arrived before its answer).
+   * @param pause - The pause the caller read.
+   * @returns `true` when the pause's token is the newest stop of its still-paused thread.
+   * @example this.isNewestPausedStop(pause) // => false after the same thread stopped again as a later stop
+   */
+  private isNewestPausedStop(pause: NodeServerDebuggerPause): boolean {
+    return (
+      this.pausedThreads.get(pause.sessionId)?.get(pause.threadId) ===
+      pause.token
+    )
   }
 
   hasUnreportedPause(): boolean {
@@ -1105,7 +1108,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     signal: AbortSignal,
   ): Promise<void> {
     const session = this.active.get(pause.sessionId)
-    if (!session || !this.isThreadPaused(pause.sessionId, pause.threadId))
+    // A pause that is not its thread's newest stop was replaced by a later one: a continue now would act on that stop, which the caller never read.
+    if (!session || !this.isNewestPausedStop(pause))
       throw new Error('The owned pause is no longer current.')
     await awaitResponse(
       session.customRequest('continue', { threadId: pause.threadId }),

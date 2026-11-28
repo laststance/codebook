@@ -896,3 +896,49 @@ test(
     await debug.release()
   },
 )
+
+// protects=a Codebook resume names the newest stop of its thread only: after the learner's Continue of pause A and an exception B of the same thread that arrived before the answer, resuming A sends no continue and B stays reported and paused; fails_when=the thread id alone authorizes the resume, so the continue request acts on exception B and erases it before the run reports it (Cycle 0153 ship pass 1 S3, OV2); seam=the editor harness's learner Continue request, a second stop and the adapter's reply; no_claim=the run's own handling of the refusal
+test(
+  'resuming an older pause sends no continue once its thread stopped again before the learner Continue was answered',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness()
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const olderPause = await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editor.adapter.stop('exception', undefined, { file: STOP_FILE, line: 30 })
+    await waitUntil(
+      () => heard.pauses.length === 2,
+      'the exception stop reported to the run',
+      2_000,
+    )
+    const continuesBefore = editor.requests.filter(
+      (request) => request.command === 'continue',
+    ).length
+    // Act
+    const refusal = debug.resume(olderPause, AbortSignal.timeout(5_000))
+    await assert.rejects(refusal, /The owned pause is no longer current/)
+    answerContinue()
+    // Assert
+    assert.equal(
+      editor.requests.filter((request) => request.command === 'continue')
+        .length,
+      continuesBefore,
+    )
+    assert.equal(heard.pauses[1]?.reason, 'exception')
+    // The reply ended the older pause only; the exception is still a paused thread the run can resume.
+    assert.deepEqual(plain(heard.resumes), [olderPause.token])
+    await debug.resume(heard.pauses[1], AbortSignal.timeout(5_000))
+    assert.deepEqual(plain(heard.resumes), [
+      olderPause.token,
+      heard.pauses[1].token,
+    ])
+    await debug.release()
+  },
+)
