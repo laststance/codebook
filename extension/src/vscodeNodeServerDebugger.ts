@@ -58,6 +58,8 @@ type NativeStop = {
   inSignInAtStop?: boolean
   /** Whether the learner asked for this stop (the first stop after an accepted Pause request), so the run holds it as the learner's whatever line it landed on. */
   learnerRequested?: boolean
+  /** Whether `inRequestWindowAtStop` rests on the learner's Continue that was still waiting for its answer when the stop arrived (the window is about to reopen), so a refused Continue takes it back. */
+  windowFromPendingResume?: boolean
   /** A Bun run: the learner's enabled source breakpoints (none of the run's own) as the editor listed them when the adapter's `stopped` arrived, so a breakpoint removed while the stack was read still counts as a possible cause. */
   learnerBreakpoints?: LearnerBreakpointPlace[]
 }
@@ -223,7 +225,12 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       const response = message as DebugProtocol.Response
       for (const { breakpoint } of this.armed)
         breakpoint.onResponse(session, response)
+      const answersResume = this.pendingResumes.isPending(
+        session.id,
+        response.request_seq,
+      )
       this.onResumeAnswered(session.id, response)
+      if (answersResume && !response.success) this.onResumeRefused(session.id)
       this.onLearnerPauseAnswered(session.id, response)
     }
     if (message.type !== 'event') return
@@ -303,12 +310,67 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
    */
   private windowAtArrival(
     sessionId: string,
-  ): Pick<NativeStop, 'inRequestWindowAtStop' | 'inSignInAtStop'> {
-    const inRequestWindowAtStop = codebookStopLedger.isWindowOpen(sessionId)
+  ): Pick<
+    NativeStop,
+    'inRequestWindowAtStop' | 'inSignInAtStop' | 'windowFromPendingResume'
+  > {
+    // The window the run intends counts while the learner's Continue of the last held pause waits for its answer: the stop that arrives now is the request's, and the answer only reopens the ledger later.
+    const windowFromPendingResume =
+      !codebookStopLedger.isWindowOpen(sessionId) &&
+      this.windowReopensWhenPendingResumesAreAccepted(sessionId)
+    const inRequestWindowAtStop =
+      codebookStopLedger.isWindowOpen(sessionId) || windowFromPendingResume
     return {
       inRequestWindowAtStop,
       inSignInAtStop: inRequestWindowAtStop && this.requestWindowIsSignIn,
+      ...(windowFromPendingResume ? { windowFromPendingResume } : {}),
     }
+  }
+
+  /**
+   * Tells whether the request window the run intends is closed only by the learner's pauses of the session, and every one of those pauses has a Continue (or step) waiting for the adapter's answer.
+   * Why it exists: a stop that arrives between the learner's Continue request and its reply belongs to the request, but the reply that reopens the ledger window comes later; the debugger judges the arrival by what the answer will produce, and takes it back when the adapter refuses the Continue. Called by {@link windowAtArrival} and {@link onResumeRefused}.
+   * @param sessionId - The session the stop arrived on.
+   * @returns `true` when the run means its window open, the session is the bound live one, no Pause request of the learner is unsettled, at least one learner pause is held, and each has a covering resume request in flight.
+   * @example this.windowReopensWhenPendingResumesAreAccepted('s1') // => true between the learner's Continue of the only held pause and its reply
+   */
+  private windowReopensWhenPendingResumesAreAccepted(
+    sessionId: string,
+  ): boolean {
+    if (
+      !this.requestWindowIntendedOpen ||
+      sessionId !== this.bound?.session.id ||
+      this.boundSessionEnded()
+    )
+      return false
+    for (const pauseRequest of this.learnerPauseRequests.values())
+      if (pauseRequest.sessionId === sessionId) return false
+    const held = [...this.learnerPauseStops.values()].filter(
+      (stop) => stop.sessionId === sessionId,
+    )
+    return (
+      held.length > 0 &&
+      held.every((stop) => this.pendingResumes.wouldResume(sessionId, stop))
+    )
+  }
+
+  /**
+   * Takes back the window a stop was judged by when the Continue it rested on was refused: the learner's pause is still held, so the stop was not inside the request's window.
+   * Called by {@link onAdapterMessage} when the adapter refuses a resume or step request. A stop the run already heard of keeps its verdict.
+   * @param sessionId - The session whose Continue was refused.
+   * @example this.onResumeRefused('s1') // the stop of 's1' still being read is judged as arrived outside the window
+   */
+  private onResumeRefused(sessionId: string): void {
+    for (const stop of this.unreportedStops.values())
+      if (
+        stop.sessionId === sessionId &&
+        stop.windowFromPendingResume &&
+        !this.windowReopensWhenPendingResumesAreAccepted(sessionId)
+      ) {
+        stop.inRequestWindowAtStop = false
+        stop.inSignInAtStop = false
+        stop.windowFromPendingResume = false
+      }
   }
 
   /**

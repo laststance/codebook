@@ -942,3 +942,37 @@ test(
     await debug.release()
   },
 )
+
+// protects=a stop that arrived before the reply to the learner's Continue is judged as outside the request's window again when the adapter refuses that Continue: the learner's pause is still held; fails_when=the stop keeps the window the pending Continue promised, so a refused Continue lets a stop count as the request's while the learner still holds a pause (Cycle 0153 ship pass 1 OV4); seam=the editor harness's learner Pause and its stop, a Continue request, a gated stack read of the next stop and a refused reply; no_claim=a stop of another thread
+test(
+  'a stop that arrived before a refused learner Continue is judged outside the request window',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    codebookStopLedger.reset()
+    const gate = defer<void>()
+    const editorOptions: { stackTraceGate?: Promise<void> } = {}
+    const editor = await editorHarness(editorOptions)
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    debug.setRequestWindow(true)
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: STOP_FILE, line: 30 })
+    await heard.nextPause()
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    editorOptions.stackTraceGate = gate.promise
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    // Act
+    answerContinue({ rejected: true })
+    gate.resolve()
+    const hit = await heard.nextPause()
+    // Assert
+    assert.equal(hit.declaredStopIndex, 0)
+    assert.equal(hit.inRequestWindowAtStop, false)
+    assert.equal(codebookStopLedger.isWindowOpen('node-server-session'), false)
+    await debug.release()
+  },
+)

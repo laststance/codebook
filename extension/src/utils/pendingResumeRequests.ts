@@ -46,6 +46,43 @@ export class PendingResumeRequests {
   }
 
   /**
+   * Tells whether a response answers a resume or step request that still waits, so a caller can tell a refused resume from a response to some other request.
+   * @param sessionId - The debug session the response came from.
+   * @param requestSeq - The `request_seq` of the response.
+   * @returns `true` while the request is remembered; call it before {@link takeAnswered}, which forgets the request.
+   * @example resumes.isPending('session-1', 7) // => true until takeAnswered('session-1', …) took request 7
+   */
+  isPending(sessionId: string, requestSeq: number): boolean {
+    return this.pending.has(`${sessionId}:${requestSeq}`)
+  }
+
+  /**
+   * Tells whether a waiting resume or step request would let a stop run on once the adapter accepts it: it was sent after the stop arrived, it applies to the stop's thread, and the stop is not newer than the request.
+   * Why it exists: the learner's Continue is a request in flight for a while, and a stop that arrives meanwhile is judged by the state the Continue is about to produce. Called by the node-server debugger when a stop arrives.
+   * @param sessionId - The debug session of the stop.
+   * @param stop - The stop's thread and token.
+   * @returns `true` when some waiting request of the session covers the stop; a request noted without a token covers every stop that existed.
+   * @example resumes.wouldResume('session-1', { threadId: 1, token: 4 }) // => true while a continue noted at token 4 waits
+   */
+  wouldResume(
+    sessionId: string,
+    stop: { threadId: number; token: number },
+  ): boolean {
+    const prefix = `${sessionId}:`
+    for (const [key, request] of this.pending) {
+      if (!key.startsWith(prefix)) continue
+      // A request for one thread (`singleThread`) leaves the others stopped.
+      const coversThread =
+        !request.singleThread || request.threadId === stop.threadId
+      const coversStop =
+        request.newestStopToken === undefined ||
+        request.newestStopToken >= stop.token
+      if (coversThread && coversStop) return true
+    }
+    return false
+  }
+
+  /**
    * Drops every waiting request of a session that ended, since its adapter will never answer them.
    * @param sessionId - The debug session that terminated.
    * @example

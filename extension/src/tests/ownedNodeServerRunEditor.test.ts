@@ -255,3 +255,29 @@ test(
     await harness.run.stop()
   },
 )
+
+// protects=a declared breakpoint that is hit right after the learner pressed Continue on the last held learner pause, before the adapter answered, is the request's capture: the window the run intends counts while that Continue is in flight; fails_when=the held pause still closes the window when the stop arrives, so the stop is recorded as arrived outside the request and held as unattributed although the Continue reply reopened the window an instant later (Cycle 0153 ship pass 1 OV4); seam=the editor's real debugger behind the run, the editor's Pause with its stop, a Continue request whose reply is held and a declared hit before it; no_claim=the adapter's real message order (the native check covers it)
+test(
+  "a declared breakpoint hit before the reply to the learner Continue of the last held pause is captured as the request's",
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const { editor, harness } = await editorRun()
+    await harness.run.sendRequest('key-1')
+    editor.adapter.learnerPauses()
+    editor.adapter.stop('pause', undefined, { file: RUN_STOP_FILE, line: 30 })
+    await until(harness, (view) => view.state === 'learner-paused')
+    const answerContinue = editor.adapter.learnerSendsContinue()
+    // Act
+    hitDeclaredStop(editor, 0)
+    answerContinue()
+    const view = await until(
+      harness,
+      (current) => current.captures.length === 1,
+    )
+    // Assert
+    assert.deepEqual(view.stopsReached, [0])
+    assert.equal(view.heldPause, undefined)
+    await harness.run.stop()
+  },
+)
