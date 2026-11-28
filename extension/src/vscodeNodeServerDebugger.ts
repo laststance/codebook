@@ -637,6 +637,16 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     return this.unreportedStops.size > 0
   }
 
+  /**
+   * Settles when every stop that has arrived so far was classified and reported to the run; the queue never rejects (a failed read is journaled and the stop reported as no declared stop).
+   * Called by the run through {@link NodeServerDebugger.arrivedStopsReported}.
+   * @returns The classification queue as it stands now.
+   * @example await debug.arrivedStopsReported() // every stop that arrived before this call is known to the run
+   */
+  arrivedStopsReported(): Promise<void> {
+    return this.classification
+  }
+
   private onSessionTerminated(session: vscode.DebugSession): void {
     this.pausedThreads.delete(session.id)
     // An ended session holds no target, so none of its stops can be paused any more.

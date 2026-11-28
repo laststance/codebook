@@ -142,6 +142,10 @@ export interface NodeServerDebugger {
   boundSessionEnded?(): boolean
   /** Whether the target is paused at a stop the run has not been told about yet (its stack is still being read): the stop kills such a server first, since the pause may be inside the request (D14). */
   hasUnreportedPause(): boolean
+  /**
+   * Settles once every stop that has arrived so far had its stack read and was reported to the run (or ran on); it never rejects. The run asks it when the response ends the request, so the history keeps the stops that arrived inside the request before it writes the response. A debugger that reads no stacks in a queue omits it.
+   */
+  arrivedStopsReported?(): Promise<void>
 }
 
 /** The pieces a debugger factory is given. */

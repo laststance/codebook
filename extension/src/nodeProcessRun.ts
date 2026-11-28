@@ -313,6 +313,8 @@ export class NodeProcessRun {
   private readonly nativeHolds = new Map<number, () => void>()
   private readonly ownResumes = new Set<number>()
   private readonly ownedHits = new Map<number, number>()
+  /** The captures of declared hits that are being read, so the history can wait for the ones that arrived before the request's end ({@link whenArrivedStopsAreRecorded}). */
+  private readonly captureWork = new Set<Promise<void>>()
   private readonly stopsHitAtStart: number[] = []
   private readonly stopsHitDuringSignIn: number[] = []
   private readonly stopsReached: number[] = []
@@ -1004,7 +1006,8 @@ export class NodeProcessRun {
     this.beginHold(pause.token)
     if (pause.declaredStopIndex !== undefined)
       this.ownedHits.set(pause.token, pause.declaredStopIndex)
-    if (kind === 'request-hit') void this.captureHit(pause, this.generation)
+    if (kind === 'request-hit')
+      this.trackCapture(this.captureHit(pause, this.generation))
     else this.holdPause(kind, pause)
   }
 
@@ -1064,6 +1067,34 @@ export class NodeProcessRun {
       declaredStopIndex: pause.declaredStopIndex,
     })
     this.notify()
+  }
+
+  /**
+   * Remembers a capture that is being read until it settles.
+   * @param work - The capture ({@link captureHit} never rejects).
+   */
+  private trackCapture(work: Promise<void>): void {
+    const tracked = work.finally(() => this.captureWork.delete(tracked))
+    this.captureWork.add(tracked)
+  }
+
+  /**
+   * Tells the history what to wait for before it writes the end of the request: every stop that already arrived is classified and every capture it started has settled, so a hit that arrived inside the request is recorded before the request's response or failure.
+   * Why it exists: a stop that arrived before the response but whose stack read finishes after it is still captured live; the history's terminal entry would otherwise be written first and the capture dropped from the saved replay.
+   * Called by the node-server run when the response or a failure ends the request.
+   * @returns `undefined` when nothing is being read or captured (the entry may be written at once); else a promise that settles when it is safe to write it.
+   * @example const after = this.whenArrivedStopsAreRecorded() // history.response(elapsedMs, response, after)
+   */
+  whenArrivedStopsAreRecorded(): Promise<void> | undefined {
+    const debug = this.debug
+    if (!debug?.hasUnreportedPause() && this.captureWork.size === 0)
+      return undefined
+    return (async (): Promise<void> => {
+      await debug?.arrivedStopsReported?.()
+      // The stops just reported started their captures in this turn.
+      while (this.captureWork.size > 0)
+        await Promise.allSettled([...this.captureWork])
+    })()
   }
 
   /**

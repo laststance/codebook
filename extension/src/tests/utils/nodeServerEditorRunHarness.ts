@@ -39,14 +39,18 @@ function fixedCapture(pause: NodeServerDebuggerPause): NodeServerStopCapture {
 /**
  * Wraps the editor's real debugger so only its file read is replaced ({@link fixedCapture}); every other call and every piece of state is the real debugger's.
  * @param real - The editor's real debugger.
+ * @param capture - What a capture reads; the fixed stand-in unless a history test needs a presentable one.
  * @returns A debugger that delegates to `real`.
- * @example const debug = withFixedCapture(editor.createDebuggerFor(input))
+ * @example const debug = withFixedCapture(editor.createDebuggerFor(input), fixedCapture)
  */
-function withFixedCapture(real: NodeServerDebugger): NodeServerDebugger {
+function withFixedCapture(
+  real: NodeServerDebugger,
+  capture: (pause: NodeServerDebuggerPause) => NodeServerStopCapture,
+): NodeServerDebugger {
   return new Proxy(real, {
     get(target, property) {
       if (property === 'capture')
-        return async (pause: NodeServerDebuggerPause) => fixedCapture(pause)
+        return async (pause: NodeServerDebuggerPause) => capture(pause)
       const value: unknown = Reflect.get(target, property, target)
       return typeof value === 'function' ? value.bind(target) : value
     },
@@ -60,6 +64,7 @@ function withFixedCapture(real: NodeServerDebugger): NodeServerDebugger {
  * @param options.editor - The fake editor's options (a held stack read, a rejected stack, a first stop).
  * @param options.run - The run harness's options (a held peer check, two stops, a Bun loader, a sign-in); the harness reads this object itself, so a later change to it is heard.
  * @param options.prepare - `false` leaves the run unprepared, so a test acts while it prepares.
+ * @param options.capture - What every capture reads, in place of the fixed stand-in (a history test needs a presentable snapshot).
  * @returns The fake editor with its adapter, and the run harness.
  * @example
  * const { editor, harness } = await editorRun({ run: { stops: 2 } })
@@ -70,6 +75,7 @@ export async function editorRun(
     editor?: EditorOptions
     run?: HarnessOptions
     prepare?: boolean
+    capture?: (pause: NodeServerDebuggerPause) => NodeServerStopCapture
   } = {},
 ): Promise<{
   editor: Awaited<ReturnType<typeof editorHarness>>
@@ -79,7 +85,10 @@ export async function editorRun(
   // The caller's own options object is the harness's, so a test that changes one later (a peer check gate it sets after the sign-in) is heard.
   const runOptions: HarnessOptions = options.run ?? {}
   runOptions.createDebugger = (input) =>
-    withFixedCapture(editor.createDebuggerFor(input))
+    withFixedCapture(
+      editor.createDebuggerFor(input),
+      options.capture ?? fixedCapture,
+    )
   const harness = createHarness(runOptions)
   if (options.prepare !== false) await harness.run.prepare()
   return { editor, harness }

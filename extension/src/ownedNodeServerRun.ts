@@ -1089,7 +1089,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     // A response whose headers reported no cookies callback still ends the hold (a no-op once released).
     this.endOutputHold('release')
     this.response = response
-    this.input.history?.response(this.elapsedSinceLaunchMs(), response)
+    // A stop that arrived inside the request is recorded before the response, however late its stack read ends.
+    this.input.history?.response(
+      this.elapsedSinceLaunchMs(),
+      response,
+      this.core.whenArrivedStopsAreRecorded(),
+    )
     this.record('node-server.response', {
       status: response.status,
       contentType: response.contentType,
@@ -1157,7 +1162,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     const text = this.maskText(message)
     const { signIn } = this.input.configuration
     if (!signIn) {
-      this.input.history?.failRequest(this.elapsedSinceLaunchMs(), code, text)
+      this.input.history?.failRequest(
+        this.elapsedSinceLaunchMs(),
+        code,
+        text,
+        this.core.whenArrivedStopsAreRecorded(),
+      )
       this.finishFailure(code, text)
       return
     }
@@ -1177,7 +1187,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         ),
       })
     } else {
-      this.input.history?.failRequest(this.elapsedSinceLaunchMs(), code, text)
+      this.input.history?.failRequest(
+        this.elapsedSinceLaunchMs(),
+        code,
+        text,
+        this.core.whenArrivedStopsAreRecorded(),
+      )
     }
     this.finishFailure(code, text, { phase })
   }
