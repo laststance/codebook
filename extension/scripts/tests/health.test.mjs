@@ -259,7 +259,7 @@ async function runDirectoriesIn(temporary) {
   )
 }
 
-test('the measured gate keeps the budget retaken on revision 9fa198ad at the 20/15/30 limits', async () => {
+test('the measured gate keeps the budget retaken on revision c5dc8067 at the 20/15/30 limits', async () => {
   // Arrange
   const reference = JSON.parse(
     await readFile(join(extension, 'fallow-health-reference.json'), 'utf8'),
@@ -280,7 +280,7 @@ test('the measured gate keeps the budget retaken on revision 9fa198ad at the 20/
   // Assert: a baseline taken again from later source, or looser limits, fail here.
   assert.deepEqual(pinned, {
     mode: 'measured-istanbul',
-    sourceRevision: '9fa198ad30fd157d4aa7134369c3923987dfeea3',
+    sourceRevision: 'c5dc806705bd1eaf50580ee01b141155eb74002c',
     baseline: {
       file: 'fallow-health-measured-baseline.json',
       sha256:
@@ -292,6 +292,30 @@ test('the measured gate keeps the budget retaken on revision 9fa198ad at the 20/
     sha256(baseline.replaceAll('\r\n', '\n')),
     '19da3ffdc224d64486cfc79e90561bc0d935432bd4801727943fc4e0b3a11446',
   )
+})
+
+// Value: protects=the measured reference names the three settings files as they are now, so an edit to .fallowrc.json, .c8rc.json or .node-version without a retake fails the ordinary suite, not only the measured gate; fails_when=a settings file changes while the reference keeps its old hash, so `pnpm health`, the gate's health check and the CI health shards all refuse with "The settings differ from the reference" (Cycle 0152 review: an entry added to .fallowrc.json after a retake); seam=the real settings files and the real reference, hashed as the checker hashes them (CRLF read as LF); no_claim=that the baseline was retaken on the new settings
+test('the measured reference pins each settings file as it is now, so a settings edit without a retake fails here', async () => {
+  // Arrange
+  const reference = JSON.parse(
+    await readFile(join(extension, 'fallow-health-reference.json'), 'utf8'),
+  )
+  const repository = join(extension, '..')
+
+  // Act
+  const current = {}
+  for (const file of Object.keys(reference.settings))
+    current[file] = sha256(
+      (await readFile(join(repository, file), 'utf8')).replaceAll('\r\n', '\n'),
+    )
+
+  // Assert
+  assert.deepEqual(Object.keys(reference.settings), [
+    '.node-version',
+    'extension/.c8rc.json',
+    'extension/.fallowrc.json',
+  ])
+  assert.deepEqual(current, reference.settings)
 })
 
 test('a complete passing run reports health and discloses its skipped test', async (context) => {

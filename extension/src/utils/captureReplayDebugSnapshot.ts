@@ -4,6 +4,7 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import { z } from 'zod'
 
 import {
+  BUN_SCOPES_NOT_SAVED_LIMITATION,
   REDACTION_MASK,
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_INTERNALS_NOT_RECORDED,
@@ -80,6 +81,8 @@ interface CaptureInput {
   maskKnownText?(text: string): string
   /** The stop paused in its module's own top-level code (a module evaluation): the stopped frame's module scope ({@link moduleScopePositionOf}, js-debug's Eval scope of Next's eval-wrapped module) holds the stop's own values, so it is copied like local values, every top-level binding before any is expanded (one imported module object cannot use the whole budget). */
   moduleEvaluation?: boolean
+  /** A Bun stop: Bun reports a function's own variables in the same kind of scope as an enclosing function's and the module's, so no variable of the top frame's scopes is copied (each scope is recorded by name as not captured) and one limitation says so; the stop's declared inspections are what the replay keeps. */
+  savesNoScopeValues?: true
   limits?: {
     timeoutMs: number
     maxFrames: number
@@ -298,6 +301,20 @@ function ownModuleScopePositionOf(
     : undefined
 }
 
+/**
+ * Says whether the capture copies no scope value of a frame; called by {@link captureReplayDebugSnapshot} for every scope.
+ * @param frameIndex - The recorded stack-frame position.
+ * @param input - The capture input.
+ * @returns `true` for the top frame of a Bun stop, `false` for every other frame and every other runtime.
+ * @example savesNoValuesOf(0, { savesNoScopeValues: true }) // => true
+ */
+function savesNoValuesOf(
+  frameIndex: number,
+  input: Pick<CaptureInput, 'savesNoScopeValues'>,
+): boolean {
+  return frameIndex === 0 && input.savesNoScopeValues === true
+}
+
 /** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}), and a module evaluation's own module scope ({@link moduleScopePositionOf}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
 export async function captureReplayDebugSnapshot(
   input: CaptureInput,
@@ -329,9 +346,11 @@ export async function captureReplayDebugSnapshot(
     frameIndex: number,
     scopeName: string,
     presentationHint: string | undefined,
-    isOwnModuleScope: boolean,
+    isOwnFunctionOrModuleScope: boolean,
   ) =>
-    (isOwnModuleScope ||
+    // A Bun top frame copies no scope value, whatever the scope's label or position.
+    !savesNoValuesOf(frameIndex, input) &&
+    (isOwnFunctionOrModuleScope ||
       shouldCaptureReplayScope(frameIndex, scopeName, presentationHint)) &&
     (input.limits?.includeScope?.(frameIndex, scopeName) ?? true)
   const isTopLevelFirst = isTopLevelFirstCapture(input)
@@ -542,6 +561,8 @@ export async function captureReplayDebugSnapshot(
       return { variables, pending, unavailable: unavailable(error) }
     }
   }
+  if (input.savesNoScopeValues === true)
+    snapshot.limitations.push(BUN_SCOPES_NOT_SAVED_LIMITATION)
   if (
     (input.stack.totalFrames ?? input.stack.stackFrames.length) >
     Math.min(input.stack.stackFrames.length, maxFrames)

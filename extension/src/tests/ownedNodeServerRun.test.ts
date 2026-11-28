@@ -419,8 +419,9 @@ test('the request window opens before the request is written and the run reads r
     address: `127.0.0.1:${harness.port}`,
     sentAtMs: 12,
   })
+  // The debugger's attribution window opens once the sender is about to write, not before it connects.
   assert.ok(
-    harness.order.indexOf('window:true') < harness.order.indexOf('sendRequest'),
+    harness.order.indexOf('window:true') > harness.order.indexOf('sendRequest'),
   )
 })
 

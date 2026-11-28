@@ -5,6 +5,7 @@ import type { NodeServerStopEntry } from '../nodeServerHistorySchemas'
  * Tells whether a stored server stop can be presented in the replay debugger: the snapshot has frames, the top frame's path, line, column and source hash match the stop, and its scopes were read: at least one read scope (a truncated one counts, since its recorded values are kept and the truncation is disclosed), every other one read or left out by the capture's own policy ({@link REPLAY_SCOPE_NOT_CAPTURED_TEXT}); lower frames may lack source.
  * Called by {@link evaluateNodeServerCapture} for every stop, so the live cache, the library, Save and MCP agree on capture completeness; it applies the identity checks of {@link nodeStopSourceMatches} to the server stop's hash-only top frame, whose text the `source` entry already verified against the hash.
  * @param stop - The stored stop entry.
+ * @param scopeValuesNotSaved - `true` for a run whose policy saves no scope values at all (a Bun run): its scopes are all left out by that policy, so the "at least one read scope" requirement is dropped while every other check stays. Defaults to `false`, the rule of every other run.
  * @returns `true` when the stop is presentable; `false` for empty frames, a frame at another position, another source, no read scope, or a scope that failed to read.
  * @example isPresentableServerStop(stopWithEmptyFrames) // => false
  */
@@ -15,7 +16,10 @@ function isReadScope(
   return scope.unavailable === undefined || scope.variables.length > 0
 }
 
-export function isPresentableServerStop(stop: NodeServerStopEntry): boolean {
+export function isPresentableServerStop(
+  stop: NodeServerStopEntry,
+  scopeValuesNotSaved = false,
+): boolean {
   const top = stop.debuggerSnapshot.frames[0]
   if (!top?.source) return false
   return [
@@ -25,7 +29,8 @@ export function isPresentableServerStop(stop: NodeServerStopEntry): boolean {
     top.line === stop.source.line,
     top.column === stop.source.column,
     // At least one scope was read (the stopped frame's local one); the others were read or left out by the capture's own policy, and a scope that failed to read for any other reason is not presentable.
-    top.scopes.some(isReadScope),
+    // A run that saves no scope values has no read scope by policy; the check below still rejects any scope that failed for another reason.
+    scopeValuesNotSaved || top.scopes.some(isReadScope),
     top.scopes.every(
       (scope) =>
         isReadScope(scope) ||

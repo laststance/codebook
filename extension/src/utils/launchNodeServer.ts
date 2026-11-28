@@ -25,17 +25,14 @@ import {
 } from './confirmLaunchedGroup'
 import { isProcessGone } from './isProcessGone'
 import { isProcessGroupGone } from './isProcessGroupGone'
+import { journaledLaunchOf, launchCommandOf } from './nodeServerLaunchCommand'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { readProcessCwd } from './readProcessCwd'
 import { readProcessStart } from './readProcessStart'
-import { repositoryPosixPath } from './repositoryPosixPath'
 import type { ResolvedNodeServerLaunch } from './resolveNodeServerLaunch'
 import type { CauseRoots } from './sanitizeCause'
 import { signalProcessGroup } from './signalProcessGroup'
 import { watchOwnedProcess } from './watchOwnedProcess'
-
-/** The inspector option every server launch carries: a pause before the first line, on loopback, at a port node chooses and announces. */
-const INSPECTOR_OPTION = '--inspect-brk=127.0.0.1:0'
 
 /** What a node-server launch runs: the checked real paths ({@link ResolvedNodeServerLaunch}), the opened repository they lie in, and the external Node. */
 export type NodeServerLaunchRequest = ResolvedNodeServerLaunch & {
@@ -205,26 +202,11 @@ async function endGroupBySignals(input: {
 }
 
 /**
- * Writes a launch path as the journal names it: inside the repository as `<workspace>/<path>`.
- * @param workspace - The repository's real root.
- * @param path - A real path inside it.
- * @returns The sanitized path.
- * @example
- * journalPath('/repo', '/repo/apps/api/src/server.ts') // => '<workspace>/apps/api/src/server.ts'
- * journalPath('/repo', '/repo')                          // => '<workspace>'
- */
-function journalPath(workspace: string, path: string): string {
-  const inside = repositoryPosixPath(workspace, path)
-  // The repository root itself reads as the bare placeholder.
-  return inside === '.' ? '<workspace>' : `<workspace>/${inside}`
-}
-
-/**
- * Starts a repository's own server entry as `node --inspect-brk=127.0.0.1:0 [--import <the repository's tsx loader>] <entry>` in its package root, in a process group of its own, with the restricted environment of {@link buildNodeServerEnvironment}; Codebook never sets the port or any other variable, and never reads the server's `.env`.
- * The server stays paused before its first line until a debugger releases it; readiness and listener ownership are the run's checks.
+ * Starts a repository's own server entry as `node --inspect-brk=127.0.0.1:0 [--import <the repository's tsx loader>] <entry>`, or for `loader: "bun"` as `bun --no-install --preload <Codebook's inspector bootstrap> <entry>` ({@link launchCommandOf}), in its package root, in a process group of its own, with the restricted environment of {@link buildNodeServerEnvironment}; Codebook never sets the port or any other variable, and never reads the server's `.env`.
+ * A node server stays paused before its first line until a debugger releases it; a Bun server waits in the bootstrap until a debugger attaches and lets it run. Readiness and listener ownership are the run's checks.
  * Called by the node-server run after {@link resolveNodeServerLaunch} checked the real paths.
  * @param launch - The checked real paths, the repository root and the external Node ({@link NodeServerLaunchRequest}).
- * @param record - The run's journal: `node-server.started` (sanitized argv, inherited variable names, loader path, Node version, `secretEnvironmentInherited: false`) and `node-server.closed`.
+ * @param record - The run's journal: `node-server.started` (sanitized argv, inherited variable names, the loader path and Node version, or for Bun the loader and the Bun release, `secretEnvironmentInherited: false`) and `node-server.closed`.
  * @param onOutput - Receives each redacted, stamped output chunk at once, in arrival order.
  * @returns The owned server: its pid and process group, output, inspector endpoint, exit and close.
  * @example
@@ -237,15 +219,9 @@ export async function launchNodeServer(
   onOutput?: (event: ProcessOutputEvent) => void | Promise<void>,
 ) {
   const startedAt = process.hrtime.bigint()
-  const args = [
-    INSPECTOR_OPTION,
-    ...(launch.loader.kind === 'tsx' ? ['--import', launch.loader.url] : []),
-    // The library's resolve hook loads after the tsx loader, which stays first.
-    ...(launch.libraryArguments ?? []),
-    launch.entry,
-  ]
+  const { program, args } = launchCommandOf(launch)
   const environment = buildNodeServerEnvironment()
-  const child = spawn(launch.node.executable, args, {
+  const child = spawn(program, args, {
     cwd: launch.packageRoot,
     env: environment,
     detached: true,
@@ -275,20 +251,7 @@ export async function launchNodeServer(
   })
   record('node-server.started', {
     pid: child.pid,
-    args: [
-      INSPECTOR_OPTION,
-      ...(launch.loader.kind === 'tsx'
-        ? ['--import', journalPath(launch.workspace, launch.loader.path)]
-        : []),
-      ...(launch.libraryArguments ? ['--import', '<library-hook>'] : []),
-      journalPath(launch.workspace, launch.entry),
-    ],
-    cwd: journalPath(launch.workspace, launch.packageRoot),
-    loader:
-      launch.loader.kind === 'tsx'
-        ? journalPath(launch.workspace, launch.loader.path)
-        : 'node',
-    nodeVersion: launch.node.version,
+    ...journaledLaunchOf(launch),
     inheritedVariables: Object.keys(environment).sort(),
     secretEnvironmentInherited: false,
   })

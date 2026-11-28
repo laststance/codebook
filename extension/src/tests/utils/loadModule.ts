@@ -61,6 +61,8 @@ export async function loadModule<Module>(
     },
     AbortController,
     AbortSignal,
+    // The reason of an `AbortSignal.timeout` is this realm's DOMException; the module recognises it with `instanceof`.
+    DOMException,
     ...globals,
     require: (name: string) => {
       if (Object.hasOwn(dependencies, name)) return dependencies[name]

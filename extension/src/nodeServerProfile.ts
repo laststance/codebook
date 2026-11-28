@@ -1,5 +1,7 @@
 import {
   ACTIVE_TIMEOUT_MS,
+  BUN_LOADER_API,
+  BUN_MINIMUM_VERSION,
   CONFIGURED_OBSERVATION_LIMIT,
   NODE_SERVER_ACTION,
   NODE_SERVER_MINIMUM_EXTENSION_VERSION,
@@ -11,10 +13,10 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
 } from './constants'
+import { BUN_LOOKUP_DESCRIPTION } from './utils/resolveBunRuntime'
 
 /** What `codebook_status` says about the repository's own tsx: it depends on the declared entry, so it is checked at start, not here. */
-const NODE_SERVER_LOADER_NOTE =
-  "The repository's own tsx is checked at start, for a TypeScript entry only; a missing or outside-the-repository tsx is refused with NODE_SERVER_SOURCE_REFUSED."
+const NODE_SERVER_LOADER_NOTE = `The repository's own tsx is checked at start, for a TypeScript entry only; a missing or outside-the-repository tsx is refused with NODE_SERVER_SOURCE_REFUSED. A declared loader "bun" (API ${BUN_LOADER_API}) checks the learner's Bun at start (Bun ${BUN_MINIMUM_VERSION} or later, ${BUN_LOOKUP_DESCRIPTION}); a missing, unreadable or older Bun is refused with NODE_SERVER_SOURCE_REFUSED before anything is launched.`
 
 /**
  * Describes the node-server profile for `codebook_status`: its identity, its one action, its limits and its machine prerequisites, so an agent knows before a start whether the server form can run here and what is missing.

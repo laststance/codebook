@@ -46,6 +46,7 @@ import type { ResolvedNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { RunClock } from './utils/runningTimeLimit'
 import type { CauseRoots } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
+import { unboundBunStopText } from './utils/unboundBunStopText'
 
 /** What the launcher returns ({@link launchNodeServer}). */
 type LaunchedNodeProcess = Awaited<ReturnType<typeof launchNodeServer>>
@@ -270,7 +271,13 @@ export class NodeProcessRun {
   private debug?: NodeServerDebugger
   private currentInspectorPort?: number
   private stopViews: NodeServerStop[] = []
+  /** A Bun launch's declared stops, held from the attach until {@link armDeferredStops} arms them once the server listens. */
+  private deferredStops?: NodeServerStopTarget[]
+  /** The stops a Bun launch armed after the server listened; {@link requestRefusalNow} re-reads their bindings before every request. */
+  private lateArmedStops?: NodeServerStopTarget[]
   private prepared = false
+  /** True while {@link armDeferredStops} runs: a server exit then fails the start at once, as it does after the run is prepared. */
+  private armingDeferredStops = false
   private currentLifecycle: NodeProcessLifecycle = 'live'
   private stopAttempt?: Promise<void>
   private failedStops = 0
@@ -528,13 +535,121 @@ export class NodeProcessRun {
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
     ])
     const debug = this.requireDebugger()
-    await this.attachAndArm(server, launched.packageRoot, stops, attachSignal)
+    const runtime = launched.loader.kind === 'bun' ? 'bun' : 'node'
+    await this.attachAndArm(
+      server,
+      launched.packageRoot,
+      stops,
+      attachSignal,
+      runtime,
+    )
     preparation.beforeRelease?.()
+    // Bun offers no paused entry: the debugger's attach already let the server run, so nothing is continued.
     await this.step(`releasing the ${this.words.noun}`, () =>
-      debug.releaseEntry(signal),
+      debug.releaseEntry(signal, { entryPause: runtime === 'node' }),
     )
     this.released = true
     await preparation.afterRelease()
+  }
+
+  /**
+   * Arms the stops a Bun launch deferred, once the owner knows the server is up (its port listens) and before any request is sent.
+   *
+   * Why it exists: Bun has no paused entry, and js-debug's first breakpoint of a not yet loaded TypeScript file is a guess at the source line that it replaces once the file's source map is known; Bun removes the replacement with the guess when both bind the same place, so a stop armed before the load could silently never pause (Cycle 0152 probe E1-M2). Once the files are loaded, each stop is set once, at its mapped place.
+   * When it runs: called by the node-server run when its readiness check passed, before the run is marked prepared; a node launch armed its stops at the entry pause already, so the call does nothing.
+   * @throws The typed error of the arming step: a stop that binds elsewhere or not at all.
+   * @example await core.armDeferredStops()
+   */
+  async armDeferredStops(): Promise<void> {
+    const stops = this.deferredStops
+    if (!stops) return
+    this.deferredStops = undefined
+    const signal = AbortSignal.any([
+      this.abort.signal,
+      AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
+    ])
+    // An exit of the server from here on fails the start promptly instead of waiting for the arming deadline.
+    this.armingDeferredStops = true
+    const armed = await this.step('arming the declared stops', async () => {
+      const server = this.server
+      const exitBefore = server?.exited()
+      if (server && exitBefore)
+        throw serverExitedError(
+          exitBefore,
+          server.output(),
+          this.input.workspace,
+        )
+      const debug = this.requireDebugger()
+      const answered = await debug.armStops(stops, signal)
+      // The server already runs its code, so a stop the debugger left unverified now never binds: the run ends before its request.
+      this.assertEveryStopBound(stops, answered)
+      // A stop the adapter withdrew after it verified it is read again right before the run is marked prepared.
+      const current = debug.currentlyBoundStops?.()
+      if (current) this.assertEveryStopBound(stops, current)
+      // A server that exited meanwhile must not be published as ready.
+      const exitAfter = server?.exited()
+      if (server && exitAfter)
+        throw serverExitedError(
+          exitAfter,
+          server.output(),
+          this.input.workspace,
+        )
+      return answered
+    }).finally(() => {
+      this.armingDeferredStops = false
+    })
+    this.lateArmedStops = stops
+    this.applyBoundLines(armed)
+    this.record('node-server.stops-armed-after-listen', {
+      stops: armed.length,
+    })
+  }
+
+  /**
+   * Tells whether a Bun run may not write its request right now: a declared stop the debugger withdrew since the run was prepared, or a pause still being read.
+   *
+   * Why it exists: the arming's last binding check runs while the run prepares, but the request is sent later (after a confirmation, or after the sign-in), and a request that runs with an unbound stop changes data without the promised observation; a pause that arrived before the request must be classified before the request opens its window. A node launch arms before its server runs, so the call answers nothing for it.
+   * When it runs: called by the node-server run right before it writes the declared request's bytes, the one after the sign-in included.
+   * @returns The sentence to refuse the request with ({@link unboundBunStopText} for the first unbound stop), or `undefined` when the request may go.
+   * @example this.requestRefusalNow() // => 'Declared stop 1 at src/routes/users.ts:14 did not bind on Bun: …'
+   */
+  requestRefusalNow(): string | undefined {
+    const stops = this.lateArmedStops
+    if (!stops) return undefined
+    const current = this.requireDebugger().currentlyBoundStops?.() ?? []
+    const unbound = stops.find((stop) =>
+      current.some(
+        (arm) =>
+          arm.declaredStopIndex === stop.declaredStopIndex &&
+          arm.boundLine === undefined,
+      ),
+    )
+    if (unbound) return unboundBunStopText(unbound)
+    // A pause the run has not heard of yet may be older than the request: the request waits for its classification.
+    if (this.requireDebugger().hasUnreportedPause())
+      return 'A pause of the server is still being read, so the request was not sent. Read the run and send again once the pause is reported.'
+    return undefined
+  }
+
+  /**
+   * Refuses a late-armed stop that has no bound line, with the sentence that names it; called by {@link armDeferredStops} for the arming's answer and again for the re-read.
+   * @param stops - The declared stops.
+   * @param answered - The debugger's answer per stop.
+   * @throws The unbound-stop sentence ({@link unboundBunStopText}) for the first stop without a bound line.
+   * @example this.assertEveryStopBound(stops, [{ declaredStopIndex: 0, boundLine: 14 }])
+   */
+  private assertEveryStopBound(
+    stops: NodeServerStopTarget[],
+    answered: NodeServerArmedStop[],
+  ): void {
+    const unbound = stops.find((stop) =>
+      answered.some(
+        (arm) =>
+          arm.declaredStopIndex === stop.declaredStopIndex &&
+          arm.boundLine === undefined,
+      ),
+    )
+    if (unbound) throw new Error(unboundBunStopText(unbound))
   }
 
   /**
@@ -655,12 +770,13 @@ export class NodeProcessRun {
     await this.debug?.release().catch(() => undefined)
   }
 
-  /** Attaches the debugger, verifies the inspector, listens to its pauses and arms every declared stop. */
+  /** Attaches the debugger, verifies the inspector, listens to its pauses and arms every declared stop; a Bun launch defers the arming to {@link armDeferredStops}. */
   private async attachAndArm(
     server: OwnedNodeProcess,
     packageRoot: string,
     stops: NodeServerStopTarget[],
     signal: AbortSignal,
+    runtime: 'node' | 'bun',
   ): Promise<void> {
     const debug = this.requireDebugger()
     const { pid, processGroup } = this.identityOf(server)
@@ -671,7 +787,14 @@ export class NodeProcessRun {
     // The record is written before the attach, while the server waits paused: a window that dies now leaves a record the next activation reaps.
     await this.rememberLaunchedProcess(server, packageRoot)
     await this.step('attaching the debugger', () =>
-      debug.attach({ endpoint, packageRoot, pid, processGroup, signal }),
+      debug.attach({
+        endpoint,
+        packageRoot,
+        pid,
+        processGroup,
+        signal,
+        runtime,
+      }),
     )
     this.record('node-server.attached', { pid })
     debug.subscribe({
@@ -679,6 +802,11 @@ export class NodeProcessRun {
       onResume: (token) => this.onDebuggerResume(token),
       onEnd: (reason) => void this.onDebuggerEnd(reason),
     })
+    // A Bun launch arms its stops once the server listens, before any request (no entry pause holds it).
+    if (runtime === 'bun') {
+      this.deferredStops = stops
+      return
+    }
     // Every declared stop is armed before the server is released (D7).
     const armed = await this.step('arming the declared stops', () =>
       debug.armStops(stops, signal),
@@ -724,7 +852,12 @@ export class NodeProcessRun {
    * @param exit - How the process ended.
    */
   onServerExit(exit: NodeServerExit): void {
-    if (this.currentLifecycle !== 'live' || !this.prepared || !this.server)
+    // A Bun launch's late arming counts as prepared for an exit: the start fails at once.
+    if (
+      this.currentLifecycle !== 'live' ||
+      !(this.prepared || this.armingDeferredStops) ||
+      !this.server
+    )
       return
     this.failRun(
       serverExitedError(exit, this.server.output(), this.input.workspace),
@@ -820,13 +953,15 @@ export class NodeProcessRun {
    * - `start-hit` for a declared stop hit before the run was prepared
    * - `sign-in-hit` for one hit while the owner's sign-in request is out
    * - `request-hit` for one hit inside the owner's window
-   * - `unattributed` for one hit outside it
+   * - `unattributed` for one hit outside it, or one that arrived before the request's first byte was written (a Bun pause: the attribution of the arrival moment, never re-derived from the later request state)
    */
   private classify(
     pause: NodeServerDebuggerPause,
   ): 'learner' | 'start-hit' | 'sign-in-hit' | 'request-hit' | 'unattributed' {
     if (pause.declaredStopIndex === undefined) return 'learner'
     if (!this.prepared) return 'start-hit'
+    // The debugger judged the window when the stop arrived: a stop outside it is not the request's, however long the classification took.
+    if (pause.inRequestWindowAtStop === false) return 'unattributed'
     if (this.hooks.inSignIn?.()) return 'sign-in-hit'
     return this.hooks.inWindow() ? 'request-hit' : 'unattributed'
   }

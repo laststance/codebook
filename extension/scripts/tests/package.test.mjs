@@ -97,9 +97,14 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
-  assert.equal(checked.extension.version, '0.2.147')
-  assert.equal(checked.extension.apiVersion, '1.45')
-  assert.equal(checked.entries, 35)
+  assert.equal(checked.extension.version, '0.2.148')
+  assert.equal(checked.extension.apiVersion, '1.46')
+  assert.equal(checked.entries, 36)
+  // The bundled extension resolves the Bun bootstrap beside dist/extension.js; a path with '..' (computed for dist/utils) would leave dist once bundled.
+  assert.match(
+    original.get('extension/dist/extension.js').toString('utf8'),
+    /\(__dirname, "bunInspectorBootstrap\.js"\)/,
+  )
   assert.equal(receipt.dependencies.length, 16)
   assert.deepEqual(
     original.get('extension/skills/codebook/SKILL.md'),

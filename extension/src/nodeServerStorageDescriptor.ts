@@ -1,9 +1,7 @@
 import {
   NODE_SERVER_HISTORY_DIRECTORY,
-  NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
-  NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
 } from './constants'
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
 import {
@@ -32,6 +30,7 @@ import {
 import { evaluateNodeServerCapture } from './utils/evaluateNodeServerCapture'
 import { evaluateNodeServerLearning } from './utils/evaluateNodeServerLearning'
 import { maskSecretQueryValues } from './utils/maskSecretQueryValues'
+import { nodeServerHistoryHeaderFormatOf } from './utils/nodeServerHistoryHeaderFormat'
 import {
   acceptNodeServerEntry,
   newNodeServerJournalProgress,
@@ -128,11 +127,8 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
     ),
     stampHeader: (input) => ({
       ...input,
-      // A run that declared signIn writes format 3, which a Codebook without sign-in neither lists nor deletes; every other run keeps 2.
-      formatVersion:
-        input.configuration.signIn === undefined
-          ? NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION
-          : NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
+      // The format follows the configuration: 3 for signIn, 4 for Bun, 5 for both, else 2; an older Codebook lists the newer ones as saved by a newer Codebook and keeps their files.
+      formatVersion: nodeServerHistoryHeaderFormatOf(input.configuration),
     }),
     parseHeader: (value) => nodeServerHistoryHeaderSchema.parse(value),
     parseSeal: (value) => nodeServerHistorySealSchema.parse(value),

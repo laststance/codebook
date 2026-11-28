@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.46 is additive: a `node-server` configuration accepts `loader: "bun"`, which runs the entry on the Bun runtime (Bun 1.4.4 or later, the first `bun` on the PATH or `~/.bun/bin/bun`): Codebook preloads a bootstrap that opens Bun's `node:inspector` endpoint, attaches the native JavaScript debugger with the package root mapped for Bun's source maps, and arms the stops once the declared port listens, before any request. A missing or older Bun is refused with `NODE_SERVER_SOURCE_REFUSED` before anything is launched, and `codebook://help/node-server` documents the loader, its prerequisite and the module-scope limit (a stop in code that runs only while a module loads is not reached on Bun).
  * 1.45 is additive: a browser stop of a `next-dev-webpack` run (configuration version 3) may declare `afterOperation: 0`, a line of the app's own client code that runs while the entry page loads. Codebook arms it before the first navigation, accepts the pause with no input sent and labels it `attribution: "entry-load"`; a server stop of the entry load is declared before its browser stops, and a pause in the server's copy of a client component that holds such a stop is resumed (`breakpoint.server-copy-resumed`) and never recorded. A stop the page never reaches fails the run 20 s after the page finished loading with an uncoded sentence that names the declared browser stop (never `SERVER_STOP_NOT_REACHED`); other adapters still refuse `afterOperation: 0` on a browser stop. A run that declares such a stop is saved as format 25 ({@link ENTRY_BROWSER_STUDY_VERSION}), whatever else it declares, and a Codebook older than API 1.45 lists it as saved by a newer Codebook.
  * 1.44 is additive: the `SERVER_STOP_NOT_REACHED` error of an API stop (a `participant: "server"` stop of a run that declares `apiServer`) gains `details.apiProcess`, what the run measured of the API process when the not-reached deadline ran out: `{ state: "paused" | "not-paused" | "unknown", at?: { path, line } }`. `paused` means js-debug returned a stack frame for the API thread (`at` is that frame's repository-relative path and one-based line, present only when it maps to a repository file); `not-paused` means js-debug answered that the thread is not paused, so the API process was running, not paused at any breakpoint (a request that reached the API may be waiting inside the app, or no request reached the line); `unknown` means nothing was read within {@link API_PROCESS_PROBE_MS} (a failure to read is never `not-paused`). The failure text names the measured state before its possibilities. Live feature: `details.apiProcess` needs a Codebook that serves this API.
  * 1.43 is additive: a stop of a version 3 configuration may declare `hold: "record"` (top-level stop and `additionalStops` entries; `"explain"` or no field keeps today's hold). A recorded stop commits its observation as a held stop does, then the run resumes at once through the same path `codebook_continue` takes, without a chat call and without ever publishing `paused-browser` or `paused-server`, so a request the app bounds with its own deadline is not held while the chat explains. The run resource of a version 3 run gains `recordedStops`: the zero-based declared stop indexes recorded without a hold, in recording order (the top-level stop is 0, `additionalStops[i]` is i + 1), always present and empty when none. `hold: "record"` on a stop with `afterOperation: 0` is refused with the `hold` field's configuration path; versions 1 and 2 still refuse `hold` as an unknown field. `codebook_continue` with the arguments of a recorded stop is refused `STALE_PAUSE` (stale, foreign or unverified pause), also while a later held stop is paused, which stays paused. A recorded stop is saved as an ordinary observation, but a configuration in which any stop declares `hold` (`"explain"` or `"record"`) is saved as format 24 ({@link HOLD_STUDY_VERSION}), which an older Codebook lists as saved by a newer Codebook; a configuration without `hold` keeps its earlier format. Live feature: `hold: "record"` needs a Codebook that serves this API.
@@ -47,7 +48,22 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.45'
+export const API_VERSION = '1.46'
+
+/** The API that first accepts `loader: "bun"` in a node-server configuration (Cycle 0152). */
+export const BUN_LOADER_API = '1.46'
+
+/** The oldest Bun release a `loader: "bun"` node-server run accepts: the oldest one the Cycle 0152 inspector probes (E1-M1, M2) passed on; an older Bun is refused before launch. */
+export const BUN_MINIMUM_VERSION = '1.4.4'
+
+/** How long the identity read (`bun -e`, printing Bun's release and executable) may take when a `loader: "bun"` run resolves its Bun, in milliseconds; a Bun that does not answer in time is refused as not answering. */
+export const BUN_VERSION_READ_TIMEOUT_MS = 5_000
+
+/** The most output (bytes) the Bun identity probe may print before it is ended; its real answer is one short line. */
+export const BUN_VERSION_READ_MAX_OUTPUT_BYTES = 1_048_576
+
+/** The name prefix of the private, empty working folder the Bun identity read runs in (created inside the OS temp folder, removed after the read). */
+export const BUN_PROBE_FOLDER_PREFIX = 'codebook-bun-identity-'
 
 /** The API that first accepts a `press` operation in a version 3 configuration. */
 export const PRESS_MINIMUM_API = '1.39'
@@ -412,7 +428,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.147'
+export const EXTENSION_VERSION = '0.2.148'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2087,6 +2103,10 @@ export const NODE_SERVER_HISTORY_FORMAT_VERSION = 1
 export const NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION = 2
 /** The `formatVersion` a node-server history header is written with when its run declared `signIn`; a Codebook without it neither lists such a header nor deletes its files, and the header carries the `sign-in` entry's rules (format 3 if and only if the configuration has `signIn`). */
 export const NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION = 3
+/** The `formatVersion` of a node-server history header whose run declared `loader: "bun"` (and no `signIn`); a Codebook without it lists such a replay as saved by a newer Codebook instead of reading a loader it does not know as corrupt. */
+export const NODE_SERVER_HISTORY_BUN_HEADER_FORMAT_VERSION = 4
+/** The `formatVersion` of a node-server history header whose run declared both `loader: "bun"` and `signIn` (format 3's `sign-in` entry rules apply). */
+export const NODE_SERVER_HISTORY_BUN_SIGN_IN_HEADER_FORMAT_VERSION = 5
 /** The most entries one node-server history holds, `source` and `end` included. */
 export const NODE_SERVER_HISTORY_MAX_ENTRIES = 10_000
 /** The largest journal of a node-server history. */
@@ -3073,6 +3093,9 @@ export const PRESENTATION_SETTLE_CEILING_MS =
   REPLAY_DEBUG_INSPECTION_GRACE_MS +
   PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500
+/** The limitation a Bun stop's saved replay records instead of the top frame's scope values: Bun reports a function's own variables in the same kind of scope as an enclosing function's, so only declared inspections are saved. */
+export const BUN_SCOPES_NOT_SAVED_LIMITATION =
+  "A Bun stop's scopes are not saved: Bun reports a function's own variables in the same kind of scope as an enclosing function's, so only the stop's declared inspections are saved."
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64
 export const NODE_REPLAY_DEBUG_MAX_DEPTH = 2

@@ -309,7 +309,7 @@ test('the node-server help says the target’s own deadlines keep running while 
   assert.ok(matched, limits)
 })
 
-// protects=the NODE_SERVER_SOURCE_REFUSED row names every file a start can refuse (packageRoot, entry, a stop's file, the repository's tsx); fails_when=the row omits a stop's file, which resolveNodeServerStops refuses; no_claim=the recovery wording
+// protects=the NODE_SERVER_SOURCE_REFUSED row names every file a start can refuse (packageRoot, entry, a stop's file, the repository's tsx) and, since API 1.46, a declared loader bun with no usable Bun; fails_when=the row omits a stop's file, which resolveNodeServerStops refuses, or the Bun refusal resolveBunRuntime raises; no_claim=the recovery wording
 test('the node-server help names a stop’s file among the paths NODE_SERVER_SOURCE_REFUSED refuses', async () => {
   // Arrange
   const { body } = await servedHelp()
@@ -322,7 +322,7 @@ test('the node-server help names a stop’s file among the paths NODE_SERVER_SOU
   // Assert
   assert.equal(
     row.when,
-    "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository",
+    "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository, or a declared loader bun finds no Bun 1.4.4 or later (the first bun on the editor's PATH, then ~/.bun/bin/bun), or one that does not answer",
   )
 })
 
@@ -526,4 +526,18 @@ test('the node-server help tells the chat the sign-in password needs 8 character
       'it refuses a password shorter than 8 characters, so tell the learner to use a test account whose password has 8 or more characters.',
     ),
   )
+})
+
+// protects=the learner who reads the Bun section of the node-server help before declaring loader bun learns the exact command Codebook starts and that the repository's dependencies must be installed first; fails_when=the section names `bun --preload` without `--no-install`, or drops the install-first sentence, so a fresh checkout looks as if Bun would fetch the packages; no_claim=that the launch arguments match (nodeServerLaunchCommand.test.ts covers them)
+test('the node-server help names the Bun command with --no-install and says to install the dependencies first', async () => {
+  // Arrange
+  const { body } = await servedHelp()
+  // Act
+  const howItRuns = body.bun.howItRuns as string
+  // Assert
+  assert.match(
+    howItRuns,
+    /`bun --no-install --preload <Codebook's inspector bootstrap> <entry>`/,
+  )
+  assert.match(howItRuns, /install the repository's dependencies first/)
 })

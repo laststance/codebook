@@ -90,6 +90,8 @@ export async function buildPackage(
           wikiPageWorker: 'extension/dist/wikiPageWorker.js',
           // The Vite adapter spawns the app's dev server through this launcher, which sits beside the extension's bundle.
           viteLauncher: 'extension/dist/viteLauncher.js',
+          // A `loader: "bun"` server run preloads this bootstrap into the learner's Bun (`bun --preload`), so it sits beside the extension's bundle too.
+          bunInspectorBootstrap: 'extension/dist/bunInspectorBootstrap.js',
         },
         outdir: join(stage, 'dist'),
         bundle: true,
@@ -155,6 +157,7 @@ export async function buildPackage(
         'devinMcpBridge',
         'wikiPageWorker',
         'viteLauncher',
+        'bunInspectorBootstrap',
       ]) {
         const output = result.outputFiles.find(
           (file) => file.path === join(stage, 'dist', `${name}.js`),

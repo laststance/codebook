@@ -4,6 +4,8 @@ import {
   ACTIVE_TIMEOUT_MS,
   API_SERVER_PAGE_ROUTE_RULE,
   ASK_LEARNER_SECRET,
+  BUN_LOADER_API,
+  BUN_MINIMUM_VERSION,
   CONFIGURED_OBSERVATION_LIMIT,
   MILLISECONDS_PER_SECOND,
   NODE_SERVER_ACTION,
@@ -20,6 +22,7 @@ import {
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
 import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { nodeServerSaveHelp } from './nodeServerSaveHelp'
+import { BUN_LOOKUP_DESCRIPTION } from './utils/resolveBunRuntime'
 
 /**
  * Builds the start every Node profile sample shares: values that come from another answer are written as placeholders naming that answer, and a test replaces them before it parses each sample with the profile's live schema.
@@ -63,6 +66,19 @@ const SAMPLE_SOURCE = {
   line: 24,
   column: 5,
 }
+
+/** The `bun` section of `codebook://help/node-server`: when a declaration names loader bun, what the learner needs, how the run differs from a node launch, and its one limit (Cycle 0152). */
+const NODE_SERVER_BUN_HELP = {
+  api: BUN_LOADER_API,
+  when: 'The repository runs its server with Bun: its own start or dev script runs the entry with bun, or the entry calls Bun.serve or starts an Elysia app. A bun.lock alone only shows that Bun installs the packages; a server its scripts start with node keeps the node or tsx loader. Declare loader "bun"; it is never chosen by default.',
+  prerequisite: `Bun ${BUN_MINIMUM_VERSION} or later, found as ${BUN_LOOKUP_DESCRIPTION}. A missing, unreadable or older Bun is refused with NODE_SERVER_SOURCE_REFUSED before anything is launched; its message names what was found and how to install or update Bun.`,
+  howItRuns:
+    "Codebook starts `bun --no-install --preload <Codebook's inspector bootstrap> <entry>` with that Bun in packageRoot; the bootstrap opens Bun's node:inspector endpoint for the editor's JavaScript debugger. Bun never installs missing packages for the run, so install the repository's dependencies first: a missing dependency fails the server start with Bun's own output. Bun runs TypeScript itself, so no tsx is needed, and Bun's source maps let the stops bind on the TypeScript lines.",
+  stops:
+    "The stops are armed once the declared port accepts connections and before the declared request is sent, so every line the request runs pauses. Bun has no paused entry, so a stop in code that runs only while a module loads (a top-level line) has already run by then and is not reached: declare stops inside the route handler or a function it calls. Declare them in files inside packageRoot, where Bun's source maps are mapped; a stop in a file outside it (a workspace library) is not supported on Bun yet, and a stop that does not bind ends the run as an error before the request is sent. The first line Bun can pause at in a module (in a module that only declares functions, the first statement of its first function) holds the debugger's own module-entry breakpoint, so a stop there does not bind: declare it on a later line of that function.",
+  values:
+    "Bun reports a function's own scopes as closures, in the same kind of scope as an enclosing function's and the module's; the native debugger shows them live as Closure scopes. A declared inspection reads a name as the stopped code sees it, as on a Node run. A saved replay of a Bun stop keeps the call stack and the declared inspections (listed under Recorded inspections in the replay's native debugger) and saves no automatic copy of the stop's scopes, because Codebook cannot tell the stopped function's own closures from an enclosing function's with certainty. Declare an inspection for every value the explanation relies on.",
+} as const
 
 /** The four declarations the help shows: a minimal GET, a POST with a JSON body, a request behind sign-in and a server in a monorepo package. None names a repository's own code; each is a shape to adapt. */
 const NODE_SERVER_HELP_SAMPLES = {
@@ -158,7 +174,7 @@ const NODE_SERVER_SIGN_IN_HELP = {
 const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
   {
     code: 'NODE_SERVER_SOURCE_REFUSED',
-    when: "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository",
+    when: `start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository, or a declared loader bun finds no Bun ${BUN_MINIMUM_VERSION} or later (${BUN_LOOKUP_DESCRIPTION}), or one that does not answer`,
   },
   {
     code: 'PORT_UNAVAILABLE',
@@ -230,12 +246,12 @@ export function nodeServerHelp() {
     profile: NODE_SERVER_PROFILE,
     entry:
       API_SERVER_PAGE_ROUTE_RULE +
-      " Use codebook_start with profile node-server and one stable key to run the repository's own Node HTTP server, send one declared request, and stop in the route-handler source. Select the exact retained book revision/node that cites every stop, the server's entry file and the port its own code listens on. Codebook starts only `node [--import <the repository's tsx>] <entry>` in packageRoot: no command, environment, port assignment or node option can be declared.",
+      " Use codebook_start with profile node-server and one stable key to run the repository's own Node HTTP server, send one declared request, and stop in the route-handler source. Select the exact retained book revision/node that cites every stop, the server's entry file and the port its own code listens on. Codebook starts only `node [--import <the repository's tsx>] <entry>` in packageRoot, or `bun --no-install --preload <Codebook's inspector bootstrap> <entry>` when the configuration declares loader bun (API 1.46 or later; see bun): no command, environment, port assignment or node option can be declared.",
     configurationSchema: z.toJSONSchema(nodeServerConfigSchema, {
       io: 'input',
     }),
     walkthrough: [
-      "codebook_status: copy instanceId; the node-server profile is ready when Node, a listener tool (lsof, or ss on Linux), ps and a supported system (not native Windows) are present, and each missing item is named. The repository's tsx is checked at start, for a TypeScript entry only.",
+      "codebook_status: copy instanceId; the node-server profile is ready when Node, a listener tool (lsof, or ss on Linux), ps and a supported system (not native Windows) are present, and each missing item is named. The repository's tsx is checked at start, for a TypeScript entry only, and so is the learner's Bun for a declared loader bun.",
       'codebook://help/node-server (this resource): the configuration schema, the samples and these steps.',
       'codebook_sources, then codebook_source for the server entry, the route and the line to stop at: copy each path and its hash, and choose the stop lines from numberedText. Each stop is a line the declared request runs.',
       'codebook_publish_book: publish the article whose node cites the stop sources; copy bookId, revision and the node id.',
@@ -248,10 +264,11 @@ export function nodeServerHelp() {
       'codebook_stop releases the server and its debugger; read the run until it reads stopped. A stopped run frees the port.',
     ],
     save: nodeServerSaveHelp(),
+    bun: NODE_SERVER_BUN_HELP,
     signIn: NODE_SERVER_SIGN_IN_HELP,
     samples: NODE_SERVER_HELP_SAMPLES,
     supportedShape: [
-      "The entry is a .ts, .mts, .cts, .js, .mjs or .cjs file run by `node`, optionally through the repository's own tsx (loader tsx for TypeScript, the default for a TypeScript entry; node for JavaScript).",
+      "The entry is a .ts, .mts, .cts, .js, .mjs or .cjs file run by `node`, optionally through the repository's own tsx (loader tsx for TypeScript, the default for a TypeScript entry; node for JavaScript), or on Bun when the declaration says loader bun (read bun below).",
       "The server's environment is its own .env file plus Codebook's allowlist (PATH, HOME, locale and certificate variables); NODE_ENV is unset, so the server's own default applies. Codebook never reads or writes a .env file and never sets PORT.",
       'No watch mode and no process manager: the process Codebook starts is the one that must listen. A listener in a forked or cluster child, or in a foreign process, is refused as LISTENER_NOT_OWNED.',
       'A server bound to 0.0.0.0 or :: is accepted; Codebook sends its request to loopback (127.0.0.1, then ::1) only.',

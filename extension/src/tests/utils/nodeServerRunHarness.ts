@@ -21,6 +21,7 @@ import type {
   NodeServerCloseOptions,
   NodeServerExit,
 } from '../../utils/launchNodeServer'
+import type { NodeServerLoader } from '../../utils/resolveNodeServerLaunch'
 
 import { createManualClock } from './createManualClock'
 import { defer } from './defer'
@@ -44,13 +45,21 @@ export type HarnessOptions = {
   sourcesChanged?: StudyError
   attachFails?: Error
   armFails?: Error
+  /** The declared stop indexes the fake arming leaves unverified (no bound line), as js-debug leaves a breakpoint it cannot place. */
+  unboundStops?: number[]
   /** Runs inside the debugger's arming, before the release, to end the session or the process while the run prepares. */
   duringArm?: (debug: FakeNodeServerDebugger) => void
+  /** Holds the arming until the test settles it, so a test can try the request while the stops are not armed yet. */
+  armGate?: Promise<void>
+  /** The declared stop indexes the adapter withdrew after arming: the debugger's re-read of its bindings finds them unverified. */
+  withdrawnStops?: number[]
   /** Arming waits until the run aborts it, then throws the abort's reason, so a test can act while the run is still before its release. */
   armHangsUntilAborted?: boolean
   /** Runs inside the debugger's entry release, to emit pauses before readiness. */
   duringRelease?: (debug: FakeNodeServerDebugger) => void
   resolveLaunchFails?: StudyError
+  /** The loader the fake launch resolves to: node by default; a Bun loader makes the run arm its stops after readiness. */
+  launchLoader?: NodeServerLoader
   portTaken?: StudyError
   listener?: Awaited<ReturnType<NodeServerRunDependencies['verifyListener']>>
   /** Replaces the readiness wait; it gets the run's input. */
@@ -72,6 +81,8 @@ export type HarnessOptions = {
   connectionHolders?: number[]
   /** Holds the request's peer check (which process holds the connection) until the test settles it. */
   peerCheckGate?: Promise<void>
+  /** Called each time the request's peer check begins, so a test waits for that moment instead of guessing it from run-view changes. */
+  onPeerCheckEntered?: () => void
   inspectorPort?: number
   /** The server ends the close call by hand: the test settles `closeGate`. */
   holdClose?: boolean
@@ -108,6 +119,8 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
   lastSessionName = ''
   /** The adapter reported a stop whose stack the editor is still reading, so the run has not heard of it yet. */
   unreportedPause = false
+  /** The declared stop indexes the adapter withdraws once the run is prepared; a test adds one between the preparation and the request. */
+  readonly withdrawnAfterArming = new Set<number>()
   constructor(
     readonly input: NodeServerDebuggerInput,
     private readonly order: string[],
@@ -118,8 +131,13 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
     this.order.push('assertSourcesUnchanged')
     if (this.options.sourcesChanged) throw this.options.sourcesChanged
   }
-  async attach(): Promise<void> {
+  /** The runtime each attach named (`node` when the run named none). */
+  readonly attachedRuntimes: string[] = []
+  /** The options each entry release received (`{ entryPause: true }` when none were given). */
+  readonly releaseOptions: { entryPause: boolean }[] = []
+  async attach(input?: { runtime?: 'node' | 'bun' }): Promise<void> {
     this.order.push('attach')
+    this.attachedRuntimes.push(input?.runtime ?? 'node')
     if (this.options.attachFails) throw this.options.attachFails
   }
   subscribe(handlers: NodeServerDebuggerHandlers): { dispose(): void } {
@@ -138,15 +156,32 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
       )
       signal.throwIfAborted()
     }
+    await this.options.armGate
     if (this.options.armFails) throw this.options.armFails
     return stops.map((stop) => ({
       declaredStopIndex: stop.declaredStopIndex,
       breakpointId: 100 + stop.declaredStopIndex,
-      boundLine: stop.line,
+      boundLine: this.options.unboundStops?.includes(stop.declaredStopIndex)
+        ? undefined
+        : stop.line,
     }))
   }
-  async releaseEntry(): Promise<void> {
+  currentlyBoundStops(): NodeServerArmedStop[] {
+    return this.input.stops.map((stop) => ({
+      declaredStopIndex: stop.declaredStopIndex,
+      boundLine:
+        this.options.withdrawnStops?.includes(stop.declaredStopIndex) ||
+        this.withdrawnAfterArming.has(stop.declaredStopIndex)
+          ? undefined
+          : stop.line,
+    }))
+  }
+  async releaseEntry(
+    _signal?: AbortSignal,
+    options: { entryPause: boolean } = { entryPause: true },
+  ): Promise<void> {
     this.order.push('releaseEntry')
+    this.releaseOptions.push(options)
     this.options.duringRelease?.(this)
   }
   setRequestWindow(open: boolean): void {
@@ -357,6 +392,14 @@ export function fakeRequestSender(order: string[]) {
       void verified.then(
         () => {
           if (input.signal.aborted) return
+          // As the real sender: the run's last synchronous check, then the write; a refusal writes nothing.
+          try {
+            input.beforeWrite?.()
+          } catch (error) {
+            answers.written.reject(error)
+            answers.response.reject(error)
+            return
+          }
           this.bytesWritten += 1
           answers.written.resolve()
         },
@@ -495,7 +538,7 @@ export function createHarness(options: HarnessOptions = {}) {
       return {
         packageRoot: WORKSPACE,
         entry: `${WORKSPACE}/server.js`,
-        loader: { kind: 'node' },
+        loader: options.launchLoader ?? { kind: 'node' },
       }
     },
     resolveStops: async () => {
@@ -556,6 +599,7 @@ export function createHarness(options: HarnessOptions = {}) {
     },
     readListeningPorts: async () => options.listeningPorts ?? [],
     readConnectionServerPid: async () => {
+      options.onPeerCheckEntered?.()
       await options.peerCheckGate
       return options.connectionHolders ?? [server.pid]
     },

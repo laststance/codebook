@@ -35,7 +35,7 @@ test('API 1.44 note names details.apiProcess with its three states', async () =>
     '{@link API_PROCESS_PROBE_MS}',
   ].filter((phrase) => !constants.includes(phrase))
   // Assert
-  assert.equal(API_VERSION, '1.45')
+  assert.equal(API_VERSION, '1.46')
   assert.equal(API_PROCESS_PROBE_MS, 5_000)
   assert.deepEqual(missing, [])
 })
@@ -73,7 +73,7 @@ test('the skill and the README describe details.apiProcess of an unreached API s
     'never name a cause the run did not observe',
   ].filter((phrase) => !skill.includes(phrase))
   const missingFromReadme = [
-    'with **MCP API 1.45** (`codebook_status` reports the installed build). API 1.45 is additive:',
+    'with **MCP API 1.46** (`codebook_status` reports the installed build). API 1.46 is additive:',
     // pregate-literal: API_VERSION=1.44 the README sentence names the API that added details.apiProcess, not the current API
     '`SERVER_STOP_NOT_REACHED` also states what Codebook measured of the API process at that moment in `details.apiProcess` (MCP API 1.44)',
     '`not-paused` means the API process was running, not paused at any breakpoint, so a request that reached the API may be waiting inside the app',

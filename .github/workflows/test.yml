@@ -37,6 +37,13 @@ jobs:
         with:
           node-version-file: .node-version
 
+      # The Bun server-launch test (`launchNodeServerBun.test.ts`) runs a learner's `loader: "bun"` launch on a real Bun,
+      # found on the PATH as a learner's is; .bun-version pins it, as for the Format workflow and the exact-HEAD gate.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
       # Restoring the installed dependencies is faster than installing pnpm and linking them in every shard.
       # The steps below call node directly, so a restored shard needs no pnpm.
       - name: Restore installed dependencies
@@ -126,6 +133,13 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
+
+      # The Bun server-launch test (`launchNodeServerBun.test.ts`) runs a learner's `loader: "bun"` launch on a real Bun,
+      # found on the PATH as a learner's is; .bun-version pins it, as for the Format workflow and the exact-HEAD gate.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
 
       # Restoring the installed dependencies is faster than installing pnpm and linking them in every shard.
       # The steps below call node directly, so a restored shard needs no pnpm.

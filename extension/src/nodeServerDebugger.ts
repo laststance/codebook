@@ -36,6 +36,10 @@ export type NodeServerDebuggerPause = {
   declaredStopIndex?: number
   /** The top frame, repository-relative when inside the repository, else the file name alone. */
   location?: { path: string; line: number }
+  /**
+   * A Bun run: whether the request-attribution window was open when the adapter's `stopped` arrived. The run takes it as the pause's attribution and never re-derives it from the request state at classification time, so a pause that arrived before the request's bytes (the learner's Pause) is never read as a hit the request caused. Absent for a node run, whose declared stops cannot be hit before the request.
+   */
+  inRequestWindowAtStop?: boolean
 }
 
 /** What a captured owned pause reads, already redacted. */
@@ -68,18 +72,22 @@ export type NodeServerDebuggerHandlers = {
 
 /**
  * The debugger of a node-server run, behind a seam: the product binds the editor's `pwa-node` session ({@link createVscodeNodeServerDebugger}), real-process tests drive a direct inspector connection.
- * The run ({@link createOwnedNodeServerRun}) calls it in a fixed order: attach, subscribe, arm every stop, release the entry pause, then capture and resume pauses, retire the stops when the request ends, release at the stop.
+ * The run ({@link createOwnedNodeServerRun}) calls it in a fixed order: attach, subscribe, arm every stop, release the entry pause, then capture and resume pauses, retire the stops when the request ends, release at the stop. A Bun launch has no paused entry, so it attaches, subscribes and releases at once, and arms its stops once the server listens, before any request.
  */
 export interface NodeServerDebugger {
   /** Refuses (`SOURCE_CHANGED`) while the editor holds other text for a cited source than the article cites. */
   assertSourcesUnchanged(): void
-  /** Attaches to the announced inspector endpoint and verifies, at the entry pause, that the inspector belongs to the launched process (pid, group, working folder). */
+  /**
+   * Attaches to the announced inspector endpoint and verifies that the inspector belongs to the launched process (pid, group, working folder).
+   * `runtime` is `bun` for a `loader: "bun"` launch: its scripts carry source maps whose paths start at the package root (`/src/index.ts`), and its function scopes arrive as closures, so the debugger maps the one and reads the other accordingly.
+   */
   attach(input: {
     endpoint: string
     packageRoot: string
     pid: number
     processGroup: number
     signal: AbortSignal
+    runtime?: 'node' | 'bun'
   }): Promise<void>
   /** Starts the run's listening; called once after {@link attach}. */
   subscribe(handlers: NodeServerDebuggerHandlers): { dispose(): void }
@@ -88,8 +96,18 @@ export interface NodeServerDebugger {
     stops: NodeServerStopTarget[],
     signal: AbortSignal,
   ): Promise<NodeServerArmedStop[]>
-  /** Continues the entry pause exactly once; an owned hit that comes first is no entry pause and is reported as a pause instead. */
-  releaseEntry(signal: AbortSignal): Promise<void>
+  /**
+   * Re-reads where every armed stop stands now; a stop whose binding was withdrawn after arming has no `boundLine`. Implemented by the editor's debugger, which the run asks right before it marks a Bun launch prepared.
+   */
+  currentlyBoundStops?(): NodeServerArmedStop[]
+  /**
+   * Continues the entry pause exactly once; an owned hit that comes first is no entry pause and is reported as a pause instead.
+   * With `{ entryPause: false }` (a Bun launch, which has no paused entry) nothing is continued: the debugger only starts reporting stops.
+   */
+  releaseEntry(
+    signal: AbortSignal,
+    options?: { entryPause: boolean },
+  ): Promise<void>
   /** Opens or closes the causal window of the declared request, so the editor tells a stop of the request from the learner's. */
   setRequestWindow(open: boolean): void
   /** Reads an owned pause's declared inspections, its source hash and the redacted snapshot; refuses a pause that was resumed meanwhile. */

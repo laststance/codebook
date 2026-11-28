@@ -165,6 +165,40 @@ test('node-server started and closed events are reduced and an unknown type read
   })
 })
 
+// protects=the chat-visible started event names a Bun launch as loader bun with its release, and leaves node and tsx records unchanged; fails_when=a Bun launch reads as tsx with a null Node version, or a node or tsx record changes shape; no_claim=the launch journal's own fields
+test('node-server started event names the Bun loader and its release', () => {
+  // Arrange
+  const bunStarted = {
+    pid: 42,
+    args: ['--preload', '<inspector-bootstrap>', 'src/index.ts'],
+    cwd: '.',
+    loader: 'bun',
+    bunVersion: '1.4.4',
+  }
+  const nodeStarted = { pid: 7, loader: 'node', nodeVersion: 'v24.1.0' }
+  const tsxStarted = {
+    pid: 8,
+    loader: '<workspace>/tsx.mjs',
+    nodeVersion: 'v24.1.0',
+  }
+  // Act
+  const bunDetail = nodeServerEventDetail('node-server.started', bunStarted)
+  const nodeDetail = nodeServerEventDetail('node-server.started', nodeStarted)
+  const tsxDetail = nodeServerEventDetail('node-server.started', tsxStarted)
+  // Assert
+  assert.deepEqual(bunDetail, { pid: 42, loader: 'bun', bunVersion: '1.4.4' })
+  assert.deepEqual(nodeDetail, {
+    pid: 7,
+    loader: 'node',
+    nodeVersion: 'v24.1.0',
+  })
+  assert.deepEqual(tsxDetail, {
+    pid: 8,
+    loader: 'tsx',
+    nodeVersion: 'v24.1.0',
+  })
+})
+
 // protects=the events journal keeps the test run's bounds: after MAX_EVENTS events, or one event over the detail bound, one truncation marker ends it and later events are dropped; fails_when=the journal grows without bound or the marker is missing; no_claim=Output lines (they do not depend on the journal's room)
 test('node-server events stop at the journal bounds with one truncation marker', async (context) => {
   // Arrange

@@ -37,6 +37,8 @@ export async function editorHarness(
     stopFailures?: number
     /** The adapter rejects the stack trace of a pause after the entry pause. */
     stackTraceFails?: boolean
+    /** A Bun launch: no entry pause is continued, so every stack trace read is a pause's and the gate or failure above applies from the first one. */
+    noEntryPause?: boolean
     /** Holds the adapter's stack trace of a pause after the entry pause until the test settles it. */
     stackTraceGate?: Promise<void>
     /** Holds every `stopDebugging` call until the test settles it, so a release stays under way. */
@@ -47,8 +49,21 @@ export async function editorHarness(
     }>
     /** How long after js-debug's root session the target child session starts; the root is announced first, as in the real tree. */
     childStartDelayMs?: number
+    /** Replaces the adapter's registration reply for one owned breakpoint (its verified line and column, or a pending one); the id is the adapter's. */
+    breakpointReply?: (
+      requested: { line: number; column: number },
+      id: number,
+    ) => DebugProtocol.Breakpoint
+    /** Called for each owned breakpoint's binding lookup (`getDebugProtocolBreakpoint`); the editor's answer waits for the promise it returns, as a slow editor does. */
+    bindingLookupGate?: () => Promise<void>
     /** Runs the real {@link captureReplayDebugSnapshot} over the Local scope offering these variables, instead of the empty snapshot stand-in. */
     localVariables?: DebugProtocol.Variable[]
+    /** Scripts the stopped frame's scopes and each scope's variables (by `variablesReference`) and runs the real capture and the real declared inspections over them, as a Bun stop's closures need. */
+    scriptedScopes?: {
+      frameName?: string
+      scopes: DebugProtocol.Scope[]
+      variables: Record<number, DebugProtocol.Variable[]>
+    }
   } = {},
 ) {
   const calls: string[] = []
@@ -97,13 +112,17 @@ export async function editorHarness(
   let nextEditorBreakpointId = 0
   class SourceBreakpoint {
     readonly id = String(++nextEditorBreakpointId)
-    constructor(readonly location: Location) {}
+    constructor(
+      readonly location: Location,
+      /** The editor's checkbox of the breakpoint; a disabled one never pauses. */
+      readonly enabled = true,
+    ) {}
   }
   const editorBreakpoints: SourceBreakpoint[] = []
   const adapterReplies = new Map<SourceBreakpoint, DebugProtocol.Breakpoint>()
   let armed = 0
   // The entry pause is read normally; the pauses after it fail when asked.
-  let entryDone = false
+  let entryDone = options.noEntryPause === true
   /** Passes the editor's replacement of the file's breakpoints, and the adapter's reply, through the debugger's tracker. */
   const replaceBreakpoints = (): void => {
     const sequence = ++requestSequence
@@ -152,9 +171,13 @@ export async function editorHarness(
     name: '',
     workspaceFolder: undefined,
     configuration: { type: 'pwa-node', name: '', request: 'attach' },
-    getDebugProtocolBreakpoint: async (breakpoint: unknown) =>
-      editorBreakpoints.find((candidate) => candidate === breakpoint) &&
-      adapterReplies.get(breakpoint as SourceBreakpoint),
+    getDebugProtocolBreakpoint: async (breakpoint: unknown) => {
+      await options.bindingLookupGate?.()
+      return (
+        editorBreakpoints.find((candidate) => candidate === breakpoint) &&
+        adapterReplies.get(breakpoint as SourceBreakpoint)
+      )
+    },
     async customRequest(
       command: string,
       arguments_?: unknown,
@@ -190,7 +213,7 @@ export async function editorHarness(
             ? [
                 {
                   id: 1,
-                  name: 'getUser',
+                  name: options.scriptedScopes?.frameName ?? 'getUser',
                   line: currentFrame.line,
                   column: currentFrame.column ?? 3,
                   source: { path: currentFrame.file },
@@ -198,10 +221,21 @@ export async function editorHarness(
               ]
             : [],
         } satisfies DebugProtocol.StackTraceResponse['body']
-      if (command === 'scopes')
+      if (command === 'scopes') {
         return {
-          scopes: [{ name: 'Local', variablesReference: 1, expensive: false }],
+          scopes: options.scriptedScopes?.scopes ?? [
+            { name: 'Local', variablesReference: 1, expensive: false },
+          ],
         } satisfies DebugProtocol.ScopesResponse['body']
+      }
+      if (command === 'variables' && options.scriptedScopes) {
+        return {
+          variables:
+            options.scriptedScopes.variables[
+              (arguments_ as { variablesReference: number }).variablesReference
+            ] ?? [],
+        } satisfies DebugProtocol.VariablesResponse['body']
+      }
       if (command === 'variables' && options.localVariables)
         return {
           variables: options.localVariables,
@@ -225,12 +259,18 @@ export async function editorHarness(
         for (const breakpoint of added) {
           const id = OWNED_IDS[armed++]!
           const requested = breakpoint.location.range.start
-          adapterReplies.set(breakpoint, {
-            id,
-            verified: true,
-            line: options.verifiedLine ?? requested.line + 1,
-            column: requested.character + 1,
-          })
+          adapterReplies.set(
+            breakpoint,
+            options.breakpointReply?.(
+              { line: requested.line + 1, column: requested.character + 1 },
+              id,
+            ) ?? {
+              id,
+              verified: true,
+              line: options.verifiedLine ?? requested.line + 1,
+              column: requested.character + 1,
+            },
+          )
           editorBreakpoints.push(breakpoint)
         }
         if (tracker) queueMicrotask(replaceBreakpoints)
@@ -356,17 +396,27 @@ export async function editorHarness(
           }
         },
       },
-      './utils/inspectNodeTestVariables': {
-        inspectNodeTestVariables: async () => ({
-          variables: [],
-          facts: [
-            { path: 'user.id', mode: 'value', display: '7', type: 'number' },
-          ],
-          unavailable: [],
-        }),
-      },
+      // Scripted scopes run the real declared inspections over them.
+      ...(options.scriptedScopes
+        ? {}
+        : {
+            './utils/inspectNodeTestVariables': {
+              inspectNodeTestVariables: async () => ({
+                variables: [],
+                facts: [
+                  {
+                    path: 'user.id',
+                    mode: 'value',
+                    display: '7',
+                    type: 'number',
+                  },
+                ],
+                unavailable: [],
+              }),
+            },
+          }),
       // Absent, the real capture runs over the variables the Local scope offers.
-      ...(options.localVariables
+      ...(options.localVariables || options.scriptedScopes
         ? {}
         : {
             './utils/captureReplayDebugSnapshot': {
@@ -418,6 +468,17 @@ export async function editorHarness(
         ...(answer.rejected
           ? { message: 'the thread is not paused' }
           : { body: { allThreadsContinued: true } }),
+      })
+    },
+    /** The adapter's later news about a breakpoint it acknowledged (a DAP `breakpoint` event). */
+    breakpointNews(
+      breakpoint: DebugProtocol.Breakpoint,
+      reason: 'changed' | 'removed' = 'changed',
+    ): void {
+      tracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'breakpoint',
+        body: { reason, breakpoint },
       })
     },
     /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread. */

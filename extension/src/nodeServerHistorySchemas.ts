@@ -12,6 +12,8 @@ import {
   NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
   NODE_SERVER_HISTORY_MAX_STOPS,
+  NODE_SERVER_HISTORY_BUN_HEADER_FORMAT_VERSION,
+  NODE_SERVER_HISTORY_BUN_SIGN_IN_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION,
   NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS,
   NODE_SERVER_PROFILE,
@@ -27,6 +29,7 @@ import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { replayDebugSnapshotSchema } from './replayDebugSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { repositoryHashSchema } from './sourceSchemas'
+import { nodeServerHistoryHeaderFormatOf } from './utils/nodeServerHistoryHeaderFormat'
 
 /** The fields every entry of a node run's journal (server or script) carries: its consecutive `sequence` and the `elapsedMs` since launch. */
 export const nodeRunEntryBase = {
@@ -66,11 +69,13 @@ export const nodeRunSourceHashesSchema = z
  */
 export const nodeServerHistoryHeaderSchema = z
   .strictObject({
-    // Header 1 is a history saved before recorded caller locations; all are read, new ones write 2, or 3 when the run declared `signIn`.
+    // Header 1 is a history saved before recorded caller locations; all are read, new ones write 2, 3 when the run declared `signIn`, 4 for `loader: "bun"` and 5 for both.
     formatVersion: z.union([
       z.literal(NODE_SERVER_HISTORY_FORMAT_VERSION),
       z.literal(NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION),
       z.literal(NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION),
+      z.literal(NODE_SERVER_HISTORY_BUN_HEADER_FORMAT_VERSION),
+      z.literal(NODE_SERVER_HISTORY_BUN_SIGN_IN_HEADER_FORMAT_VERSION),
     ]),
     profile: z.literal(NODE_SERVER_PROFILE),
     workspaceKey: repositoryHashSchema,
@@ -95,10 +100,13 @@ export const nodeServerHistoryHeaderSchema = z
   )
   .refine(
     (value) =>
-      (value.formatVersion ===
-        NODE_SERVER_HISTORY_SIGN_IN_HEADER_FORMAT_VERSION) ===
-      (value.configuration.signIn !== undefined),
-    'Node server history format 3 belongs to a configuration with signIn, and only to it.',
+      // The format follows the configuration; a plain run may also keep the first format.
+      value.formatVersion ===
+        nodeServerHistoryHeaderFormatOf(value.configuration) ||
+      (value.formatVersion === NODE_SERVER_HISTORY_FORMAT_VERSION &&
+        nodeServerHistoryHeaderFormatOf(value.configuration) ===
+          NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION),
+    'Node server history format 3 belongs to a configuration with signIn, 4 to one with loader bun and 5 to both, and only to them.',
   )
 
 const stopSource = z.strictObject({

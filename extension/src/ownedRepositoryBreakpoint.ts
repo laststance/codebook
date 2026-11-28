@@ -9,6 +9,7 @@ import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
+import { canonicalFsPath } from './utils/canonicalFsPath'
 import { completeBindingPlace } from './utils/completeBindingPlace'
 
 const requestSourceSchema = z.object({ source: z.object({ path: z.string() }) })
@@ -107,6 +108,7 @@ export class OwnedBreakpointMovedError extends Error {
 }
 /** The breakpoint of a DAP `breakpoint` event: the adapter's later news about a breakpoint it acknowledged, for example a pending one verified when its module loads. */
 const breakpointEventSchema = z.object({
+  reason: z.string().optional(),
   breakpoint: z.object({
     id: z.number().int(),
     verified: z.boolean(),
@@ -127,6 +129,8 @@ type RegistrationReceipt = {
 /** Where the adapter verified a registration, and whether its latest news about the acknowledged breakpoint called it unverified since (a reloaded script), which {@link OwnedRepositoryBreakpoint.adapterVerifiedPlace} honours. */
 type VerifiedRegistration = {
   verifiedAt?: VerifiedPlace
+  /** The line of the adapter's latest verified report: a reply, news with a whole position, or news that named a line but no column (also one the owner refuses); read only by {@link OwnedRepositoryBreakpoint.boundPlace}, which a Bun run's late arming and its pause judgment use (an editor may drop the column). */
+  verifiedLine?: number
   unverifiedByNews?: boolean
 }
 
@@ -441,6 +445,8 @@ export class OwnedRepositoryBreakpoint {
       } else {
         const { verifiedAt, ...moved } = this.verifiedPlaces(binding)
         registration.verifiedAt = verifiedAt
+        // A verified reply without a column still says on which line the breakpoint stands.
+        registration.verifiedLine = binding.verified ? binding.line : undefined
         registration.receipt = {
           sessionId: session.id,
           requestSequence: response.request_seq,
@@ -731,6 +737,19 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Says whether the editor still lists the owned breakpoint as enabled, for {@link boundPlace}: a disabled breakpoint sends no stop even while the adapter's registration is cached.
+   * @returns `false` when the editor's copy of the owned breakpoint is disabled; `true` otherwise (removal is {@link isRetiredOrRemoved}'s question).
+   * @example
+   * if (!this.isEnabledInEditor()) return undefined
+   */
+  private isEnabledInEditor(): boolean {
+    return vscode.debug.breakpoints.some(
+      (breakpoint) =>
+        breakpoint.id === this.breakpoint.id && breakpoint.enabled !== false,
+    )
+  }
+
+  /**
    * Fails a registration read whose adapter refused the request or moved the breakpoint to a place the owner refuses; called by {@link registration} for the session's current registration, after the removal check and before the receipt is copied.
    * @param registration - The session's current registration: the adapter's refusal text, and the refused place of its latest news.
    * @throws A plain error with the adapter's refusal when the registration failed, otherwise an {@link OwnedBreakpointMovedError} while a refused place stands.
@@ -783,6 +802,7 @@ export class OwnedRepositoryBreakpoint {
    * Both editors answer a breakpoint requested at column 1 without a column once the adapter sent news about it, so the binding is read as {@link ConfiguredBrowserRun} reads it: a missing column is taken from the adapter's own report ({@link reportedPlace}, {@link completeBindingPlace}), and without one the line decides. A verified binding on the declared line refuses nothing here, at any column or with none, and the owner's check of its pause at the declared column remains.
    * @param session - The debug session whose adapter holds the breakpoint.
    * @param signal - The caller's cancellation: an adapter that never answers this read must not hold a run that is being stopped.
+   * @param timeoutMs - The read's own bound; a caller that already runs under a shared deadline passes that deadline's length, so only the signal ends the wait. Defaults to the active bound.
    * @throws When the adapter reports the breakpoint verified on another line than declared ({@link boundElsewhereRefusalText}); the text names both positions, or the bound line when no column is known. Any column of the declared line is accepted. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
    * @example
    * await owned.assertBoundAsDeclared(session, signal) // throws 'Declared breakpoint 20:5 is bound at 21:12; …'
@@ -790,12 +810,14 @@ export class OwnedRepositoryBreakpoint {
   async assertBoundAsDeclared(
     session: vscode.DebugSession,
     signal: AbortSignal,
+    timeoutMs?: number,
   ): Promise<void> {
     const answered = verifiedLineSchema.safeParse(
       await awaitResponse(
         session.getDebugProtocolBreakpoint(this.breakpoint),
         'owned breakpoint binding',
         signal,
+        timeoutMs,
       ),
     ).data
     if (!answered) return
@@ -838,6 +860,37 @@ export class OwnedRepositoryBreakpoint {
    */
   verifiedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
     return this.standingRegistration(session)?.verifiedAt
+  }
+
+  /**
+   * Reads where the adapter has this breakpoint verified now, with the column only when the adapter or the editor named one, for a Bun run's late arming and for the judgment of a pause by its place ({@link VscodeNodeServerDebugger}).
+   * Unlike {@link verifiedPlace} a verified binding that names a line alone counts; unlike it, a binding the adapter's latest news withdrew (unverified) counts as none. The adapter's latest report decides: news without a column that names another line than the standing position moves the place to that line, column unknown, and news without a column on a line the owner refuses leaves no place, as refused news with a column does. Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns The verified line and, when known, the column; `undefined` while pending, refused, withdrawn (by unverified news or by news on a refused line) or gone.
+   * @example
+   * owned.boundPlace(session) // => { line: 14, column: 3 }, or { line: 14 } for a reply without a column; undefined after news { verified: true, line: 15 } for an owner requested at 14
+   */
+  boundPlace(
+    session: vscode.DebugSession,
+  ): { line: number; column?: number } | undefined {
+    const registration = this.standingRegistration(session)
+    if (!registration || registration.unverifiedByNews) return undefined
+    // The learner removed or disabled the owned breakpoint in the editor: the adapter's cached place is not authority until it processes the replacement.
+    if (this.isRetiredOrRemoved() || !this.isEnabledInEditor()) return undefined
+    const { verifiedAt, verifiedLine } = registration
+    // The adapter's latest line decides: news that put the breakpoint on a line the owner refuses leaves it no place.
+    if (
+      verifiedLine !== undefined &&
+      !this.acknowledgesPosition({ verified: true, line: verifiedLine })
+    )
+      return undefined
+    // A whole position stands while the latest line agrees with it; news without a column on another line gives that line alone.
+    if (
+      verifiedAt &&
+      (verifiedLine === undefined || verifiedLine === verifiedAt.line)
+    )
+      return verifiedAt
+    return verifiedLine === undefined ? undefined : { line: verifiedLine }
   }
 
   /**
@@ -920,9 +973,10 @@ export class OwnedRepositoryBreakpoint {
     breakpoint: z.infer<typeof breakpointEventSchema>['breakpoint'],
   ): boolean {
     if (!breakpoint.verified) return false
+    // Two spellings of one file (symlinked folder, /private prefix, case on macOS and Windows) are the owned source; only another file differs.
     return !(
       breakpoint.source?.path &&
-      resolve(breakpoint.source.path) !== resolve(this.path)
+      canonicalFsPath(breakpoint.source.path) !== canonicalFsPath(this.path)
     )
   }
 
@@ -946,22 +1000,26 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Tells whether a `breakpoint` event calls the acknowledged owned breakpoint unverified, for {@link takeBreakpointNews}: js-debug sends such news when the script that held the binding is reloaded.
+   * Tells whether a `breakpoint` event withdraws the acknowledged owned breakpoint, for {@link takeBreakpointNews}: the adapter calls it unverified (js-debug sends such news when the script that held the binding is reloaded), removes it (reason `removed`), or moves the same id to another source file.
    * @param event - A DAP `breakpoint` event of the session.
    * @param receipt - The receipt whose breakpoint id tells the owned breakpoint from every other.
-   * @returns `true` for news about the owned id with `verified: false`; `false` for every other event.
+   * @returns `true` for news about the owned id that is unverified, a removal, or a verified binding in another file; `false` for every other event.
    * @example
-   * this.isUnverifiedNewsOfOwned({ seq: 9, type: 'event', event: 'breakpoint', body: { reason: 'changed', breakpoint: { id: 4, verified: false } } }, receipt) // => true for a receipt of id 4
+   * this.isWithdrawalNewsOfOwned({ seq: 9, type: 'event', event: 'breakpoint', body: { reason: 'removed', breakpoint: { id: 4, verified: true, line: 14 } } }, receipt) // => true for a receipt of id 4
    */
-  private isUnverifiedNewsOfOwned(
+  private isWithdrawalNewsOfOwned(
     event: DebugProtocol.Event,
     receipt: RegistrationReceipt,
   ): boolean {
     const parsed = breakpointEventSchema.safeParse(event.body)
+    if (!parsed.success) return false
+    const { reason, breakpoint } = parsed.data
+    if (breakpoint.id !== receipt.breakpointId) return false
+    // A removal, an unverified report, or the same id in another file leaves no binding in the owned source.
     return (
-      parsed.success &&
-      parsed.data.breakpoint.id === receipt.breakpointId &&
-      !parsed.data.breakpoint.verified
+      reason === 'removed' ||
+      !breakpoint.verified ||
+      !this.isVerifiedInOwnedSource(breakpoint)
     )
   }
 
@@ -981,15 +1039,32 @@ export class OwnedRepositoryBreakpoint {
     receipt: RegistrationReceipt,
     event: DebugProtocol.Event,
   ): void {
-    // News that calls the acknowledged breakpoint unverified leaves its earlier place standing for every reader but the adapter stand-in, which must not bind a place the adapter withdrew.
-    if (this.isUnverifiedNewsOfOwned(event, receipt)) {
+    // News that withdraws the acknowledged breakpoint (unverified, removed, or moved to another file) leaves its earlier place standing for every reader but the adapter stand-in and {@link boundPlace}, which must not bind a place the adapter withdrew.
+    if (this.isWithdrawalNewsOfOwned(event, receipt)) {
       registration.unverifiedByNews = true
       return
     }
     const breakpoint = this.ownedBreakpointOfEvent(event, receipt)
     if (!breakpoint) return
     const { verifiedAt, ...moved } = this.verifiedPlaces(breakpoint)
-    if (!verifiedAt) return
+    if (!verifiedAt) {
+      if (breakpoint.line === undefined) return
+      // News that names a line but no column is the adapter's latest word on the line, for {@link boundPlace}: a line the owner refuses withdraws the bound place.
+      registration.verifiedLine = breakpoint.line
+      // A line the owner accepts still verifies the breakpoint there, which lifts an earlier withdrawal and an earlier refusal.
+      if (this.acknowledgesPosition(breakpoint)) {
+        const columnIsStale = Boolean(
+          registration.refusedAt || registration.unverifiedByNews,
+        )
+        registration.unverifiedByNews = false
+        // A refused or withdrawn place no longer stands, and the column of the place before it is unknown now: a column-bearing report must come before it is used again.
+        if (columnIsStale) {
+          registration.refusedAt = undefined
+          registration.verifiedAt = undefined
+        }
+      }
+      return
+    }
     // The adapter moved the acknowledged breakpoint to a place the owner refuses: the earlier receipt no longer stands.
     if (!this.acknowledgesPosition(breakpoint)) {
       registration.refusedAt = verifiedAt
@@ -1020,6 +1095,8 @@ export class OwnedRepositoryBreakpoint {
   ): void {
     registration.refusedAt = undefined
     registration.verifiedAt = verifiedAt
+    // The whole position is the latest report, so a line named earlier without a column no longer decides {@link boundPlace}.
+    registration.verifiedLine = verifiedAt.line
     registration.receipt = {
       sessionId: receipt.sessionId,
       requestSequence: receipt.requestSequence,

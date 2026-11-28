@@ -27,6 +27,10 @@ export type DeclaredRequestInput = {
     localPort: number
     remotePort: number
   }) => Promise<void>
+  /**
+   * Called synchronously after `verifyPeer` accepted the peer and immediately before the first request byte is handed to the socket; it throws to refuse (the socket is then destroyed with zero bytes sent). The run rechecks its declared stops here, because the peer check awaits a process lookup during which a stop may be withdrawn.
+   */
+  beforeWrite?: () => void
   /** Aborts the request: the socket is destroyed and `response` rejects with the signal's reason. */
   signal: AbortSignal
   /** Hides the run's private roots in the response body; applied before the body is cut for display ({@link shapeResponseBody}). */
@@ -272,6 +276,13 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
       return
     }
     if (settled || !outgoing) return
+    // Nothing awaits between this check and the write: a refusal here sends zero bytes.
+    try {
+      input.beforeWrite?.()
+    } catch (error) {
+      fail(error)
+      return
+    }
     handedToSocket = true
     outgoing.end(body, resolveWritten)
   }
